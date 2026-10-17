@@ -444,6 +444,8 @@ object WebHost {
 
     private fun allowedHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false
+        // Google sign-in hops between many Google domains (google.co.uk, accounts.google.*, ...).
+        if (GOOGLE_COUNTRY.matches(h)) return true
         return ALLOWED.any { h == it || h.endsWith(".$it") }
     }
 
@@ -551,9 +553,11 @@ object WebHost {
         override fun onPermissionRequest(request: PermissionRequest) = request.deny()
     }
 
+    private val GOOGLE_COUNTRY = Regex("^([a-z0-9-]+\\.)*google\\.[a-z]{2,3}(\\.[a-z]{2})?$")
+
     private val ALLOWED = listOf(
         "youtube.com", "youtu.be", "youtube-nocookie.com", "google.com", "gstatic.com",
-        "googleusercontent.com", "ytimg.com", "googlevideo.com", "ggpht.com", "gvt1.com",
+        "googleusercontent.com", "googleapis.com", "recaptcha.net", "ytimg.com", "googlevideo.com", "ggpht.com", "gvt1.com",
     )
 
     private val BLOCKED_HOSTS = listOf(
