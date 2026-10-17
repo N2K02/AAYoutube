@@ -85,11 +85,11 @@ object WebHost {
     var requestLink: (() -> Unit)? = null
 
     @Volatile var activityVisible = false
+        private set
 
     /** The video is being shown on the car screen (see CarVideoService). */
     @Volatile var carShown = false
     val shown: Boolean get() = activityVisible || carShown
-        private set
 
     fun init(application: Application) {
         app = application
