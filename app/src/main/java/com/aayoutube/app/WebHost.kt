@@ -290,6 +290,7 @@ object WebHost {
         val w = web ?: return
         if (frozen) return
         frozen = true
+        AppLog.add("POWER", "Page frozen")
         w.onPause()
         w.pauseTimers()
     }
@@ -298,12 +299,14 @@ object WebHost {
         val w = web ?: return
         if (!frozen) return
         frozen = false
+        AppLog.add("POWER", "Page resumed")
         w.onResume()
         w.resumeTimers()
     }
 
     /** Frees the WebView completely (nothing is playing and no screen is open). */
     fun release() {
+        AppLog.add("POWER", "WebView released")
         exitFullscreen()
         val w = web ?: return
         web = null
@@ -324,6 +327,7 @@ object WebHost {
      * paused with no screen open), or by Android if it needs the memory.
      */
     fun onLinkUnbound() {
+        AppLog.add("LINK", "Media service disconnected")
         link = null
         if (!shown && !snapshot.value.playing) scheduleFreeze()
     }
@@ -332,6 +336,7 @@ object WebHost {
 
     fun onCommand(m: Message) {
         val d = m.data ?: Bundle.EMPTY
+        AppLog.add("LINK", "From media process: what=${m.what} data=${d.keySet().joinToString { k -> "$k=${d.get(k)}" }}")
         if (m.what != Msg.FREEZE) unfreeze()
         when (m.what) {
             Msg.REGISTER -> {
@@ -426,7 +431,14 @@ object WebHost {
         main.post { publish(s) }
     }
 
+    private var lastLogged = ""
+
     private fun publish(s: Snap) {
+        val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
+        if (key != lastLogged) {
+            lastLogged = key
+            AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
+        }
         snapshot.value = s
         send(Msg.STATE, s.toBundle())
         if (!s.playing && !shown) scheduleFreeze()
@@ -465,6 +477,7 @@ object WebHost {
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
+            AppLog.add("NAV", "Navigate ${uri} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
             if (scheme != "http" && scheme != "https") return true
             val host = uri.host.orEmpty()
@@ -473,6 +486,7 @@ object WebHost {
                 return true
             }
             if (!allowedHost(host)) {
+                AppLog.add("NAV", "Blocked host $host, opening outside the app=${request.isForMainFrame}")
                 if (request.isForMainFrame) {
                     runCatching {
                         app.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -493,10 +507,13 @@ object WebHost {
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             if (!Features.current.blockAds) return null
             val uri = request.url
-            return if (isAdRequest(uri.host.orEmpty().lowercase(), uri.path.orEmpty())) emptyResponse else null
+            val ad = isAdRequest(uri.host.orEmpty().lowercase(), uri.path.orEmpty())
+            if (ad) AppLog.add("ADS", "Blocked request ${uri.host}${uri.path}")
+            return if (ad) emptyResponse else null
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            AppLog.add("PAGE", "Started $url")
             progress.value = 5
             offline.value = false
             // Older WebViews cannot run a script before the page: inject as early as possible instead.
@@ -504,6 +521,7 @@ object WebHost {
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
+            AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
             canGoBack.value = view.canGoBack()
@@ -515,11 +533,13 @@ object WebHost {
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            AppLog.add("NET", "Error ${error.errorCode} ${error.description} for ${request.url} main=${request.isForMainFrame}")
             if (request.isForMainFrame) offline.value = true
         }
 
         // The page's renderer died (out of memory, crash): rebuild the WebView instead of crashing the app.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            AppLog.add("CRASH", "Renderer gone, crashed=${detail.didCrash()} url=$lastUrl")
             val resume = lastUrl
             val visible = shown
             release()
@@ -532,6 +552,11 @@ object WebHost {
     }
 
     private val chrome = object : WebChromeClient() {
+        override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+            AppLog.add("JS", "${m.messageLevel()} ${m.message()} (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
+            return true
+        }
+
         override fun onProgressChanged(view: WebView, newProgress: Int) {
             progress.value = newProgress
         }
@@ -540,11 +565,13 @@ object WebHost {
             customCallback?.onCustomViewHidden()
             customCallback = callback
             fullscreenView.value = view
+            AppLog.add("VIEW", "Fullscreen player opened")
         }
 
         override fun onHideCustomView() {
             customCallback = null
             fullscreenView.value = null
+            AppLog.add("VIEW", "Fullscreen player closed")
         }
 
         // No grey play-button poster while a video loads.

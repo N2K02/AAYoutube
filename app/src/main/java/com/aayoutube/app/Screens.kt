@@ -8,6 +8,7 @@ import android.content.pm.ActivityInfo
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
@@ -49,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -58,6 +61,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -75,6 +85,7 @@ fun Context.findActivity(): MainActivity? {
 private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("YouTube", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
+    Logs("Logs", Icons.Filled.BugReport),
     Update("Update", Icons.Filled.SystemUpdate),
 }
 
@@ -88,6 +99,8 @@ fun AppRoot(activity: MainActivity) {
     val updater by AppUpdater.state.collectAsState()
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
+    LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
+    LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
     // Fullscreen video: landscape, no system bars.
     DisposableEffect(fullscreen != null) {
@@ -158,6 +171,7 @@ fun AppRoot(activity: MainActivity) {
             when (Tab.entries[tab]) {
                 Tab.Watch -> WebPane(Modifier.fillMaxSize())
                 Tab.Features -> FeaturesPage()
+                Tab.Logs -> LogsPage()
                 Tab.Update -> UpdatePage()
             }
         }
@@ -350,4 +364,76 @@ private fun Notes(release: AppUpdater.Release) {
         Text("What's new", style = MaterialTheme.typography.labelLarge)
         release.notes.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
     }
+}
+
+// ---------------------------------------------------------------------------- logs
+
+@Composable
+fun LogsPage() {
+    val context = LocalContext.current
+    val enabled by AppLog.enabled.collectAsState()
+    val version by AppLog.version.collectAsState()
+    var page by rememberSaveable { mutableIntStateOf(0) }
+    var follow by rememberSaveable { mutableStateOf(true) }
+
+    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("Logs", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            Switch(checked = enabled, onCheckedChange = { AppLog.setEnabled(it) })
+        }
+        if (!enabled) return@Column
+
+        val lineStyle = MaterialTheme.typography.labelSmall.copy(
+            fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp,
+        )
+        Card(
+            Modifier.fillMaxWidth().weight(1f),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp)) {
+                val lineDp = with(LocalDensity.current) { 14.sp.toDp() }
+                val perPage = (maxHeight / lineDp).toInt().coerceAtLeast(1)
+                val total = version.let { AppLog.size }
+                val pages = ((total + perPage - 1) / perPage).coerceAtLeast(1)
+                val current = if (follow) pages - 1 else page.coerceIn(0, pages - 1)
+
+                Column(Modifier.fillMaxSize()) {
+                    AppLog.slice(current * perPage, perPage).forEach {
+                        Text(it, style = lineStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                // Page controls live in the row under the card; share the numbers with it.
+                LogPaging.pages = pages
+                LogPaging.current = current
+            }
+        }
+
+        val pages = LogPaging.pages
+        val current = LogPaging.current
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                enabled = current > 0,
+                onClick = { page = current - 1; follow = false },
+            ) { Text("Prev") }
+            Text("${current + 1} / $pages", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
+            OutlinedButton(
+                enabled = current < pages - 1,
+                onClick = { page = current + 1; follow = page >= pages - 1 },
+            ) { Text("Next") }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val cm = context.getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("AAYoutube logs", AppLog.all()))
+                Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
+            }) { Text("Copy") }
+            OutlinedButton(onClick = { AppLog.clear(); follow = true }) { Text("Clear all") }
+        }
+    }
+}
+
+/** Passes the page numbers from the measured card to the buttons below it. */
+private object LogPaging {
+    var pages by mutableIntStateOf(1)
+    var current by mutableIntStateOf(0)
 }

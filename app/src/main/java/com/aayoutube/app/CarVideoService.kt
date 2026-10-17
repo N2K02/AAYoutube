@@ -84,6 +84,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun start(c: SurfaceContainer) {
         stop()
+        AppLog.add("CAR", "Surface ${c.width}x${c.height} dpi=${c.dpi}")
         val surface = c.surface ?: return
         density = c.dpi / 160f
         val manager = carContext.getSystemService(DisplayManager::class.java)
@@ -116,6 +117,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun stop() {
+        AppLog.add("CAR", "Surface released")
         val frame = container
         container = null
         if (frame != null) {
@@ -129,6 +131,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun tap(x: Float, y: Float) {
+        AppLog.add("CAR", "Tap $x,$y")
         val target = container ?: return
         val down = SystemClock.uptimeMillis()
         target.dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
