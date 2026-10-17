@@ -75,7 +75,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!bridge.isPlaying()) exitApp()
+        if (!bridge.playingNow()) exitApp()
     }
 
     override fun onDestroy() {

@@ -67,7 +67,7 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
         handler.postDelayed(expireIntent, INTENT_MS + 50)
     }
 
-    fun isPlaying(): Boolean = snap.playing || (now() < intentUntil && intentPlay)
+    fun playingNow(): Boolean = snap.playing || (now() < intentUntil && intentPlay)
 
     /** A new report from the page. */
     fun update(s: Snap) {
