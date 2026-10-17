@@ -226,7 +226,7 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
-    fun setCarShown(on: Boolean) {
+    fun showOnCar(on: Boolean) {
         carShown = on
         if (on) {
             main.removeCallbacks(freezeSoon)

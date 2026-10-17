@@ -98,7 +98,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         p.show()
         presentation = p
         container = frame
-        WebHost.setCarShown(true)
+        WebHost.showOnCar(true)
         show(p, frame)
         // YouTube's fullscreen player is a separate view: show it instead of the page while it is open.
         scope.launch { WebHost.fullscreenView.collect { show(p, frame) } }
@@ -120,7 +120,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         container = null
         if (frame != null) {
             WebHost.detach(frame)
-            WebHost.setCarShown(false)
+            WebHost.showOnCar(false)
         }
         runCatching { presentation?.dismiss() }
         presentation = null
