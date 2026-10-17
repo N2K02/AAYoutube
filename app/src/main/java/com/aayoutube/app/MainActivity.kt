@@ -84,8 +84,8 @@ class MainActivity : ComponentActivity() {
                 val controller = future.get()
                 controller.sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
             }
-            // The link is made by the service; the controller is not needed any more.
-            releaseController()
+            // Kept until the screen stops: if it were released now, the service would shut down
+            // again straight away and take the link to the web process with it.
         }, MoreExecutors.directExecutor())
     }
 
@@ -115,6 +115,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        WebHost.noteVisibilityChange()
         WebHost.inPip.value = isInPictureInPictureMode
         WebHost.pip(isInPictureInPictureMode)
     }

@@ -42,12 +42,15 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -126,54 +129,61 @@ fun AppRoot(activity: MainActivity) {
         }
     }
 
-    val full = fullscreen
-    if (full != null || inPip) {
-        Box(Modifier.fillMaxSize()) {
-            if (full != null) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        FrameLayout(ctx).also { frame ->
-                            (full.parent as? ViewGroup)?.removeView(full)
-                            frame.addView(full, FrameLayout.LayoutParams(-1, -1))
+    // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
+    // moved between parents, because detaching a WebView from its window pauses the video.
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                if (fullscreen == null && !inPip) {
+                    NavigationBar {
+                        Tab.entries.forEachIndexed { i, t ->
+                            NavigationBarItem(
+                                selected = tab == i,
+                                onClick = { tab = i },
+                                icon = {
+                                    if (t == Tab.Update && updater is AppUpdater.State.Available) {
+                                        BadgedBox(badge = { Badge() }) { Icon(t.icon, null) }
+                                    } else {
+                                        Icon(t.icon, null)
+                                    }
+                                },
+                                label = { Text(t.label) },
+                            )
                         }
-                    },
-                    onRelease = { it.removeAllViews() },
-                )
-            } else {
+                    }
+                }
+            },
+        ) { padding ->
+            Box(Modifier.padding(padding).fillMaxSize()) {
+                // The page stays in place under the other tabs, so playback carries on while you look at them.
                 WebPane(Modifier.fillMaxSize())
-            }
-        }
-        return
-    }
-
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                Tab.entries.forEachIndexed { i, t ->
-                    NavigationBarItem(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        icon = {
-                            if (t == Tab.Update && updater is AppUpdater.State.Available) {
-                                BadgedBox(badge = { Badge() }) { Icon(t.icon, null) }
-                            } else {
-                                Icon(t.icon, null)
-                            }
-                        },
-                        label = { Text(t.label) },
-                    )
+                if (tab != 0) {
+                    Surface(
+                        Modifier.fillMaxSize().pointerInput(Unit) { },
+                        color = MaterialTheme.colorScheme.background,
+                    ) {
+                        when (Tab.entries[tab]) {
+                            Tab.Watch -> Unit
+                            Tab.Features -> FeaturesPage()
+                            Tab.Logs -> LogsPage()
+                            Tab.Update -> UpdatePage()
+                        }
+                    }
                 }
             }
-        },
-    ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            when (Tab.entries[tab]) {
-                Tab.Watch -> WebPane(Modifier.fillMaxSize())
-                Tab.Features -> FeaturesPage()
-                Tab.Logs -> LogsPage()
-                Tab.Update -> UpdatePage()
-            }
+        }
+        val full = fullscreen
+        if (full != null) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    FrameLayout(ctx).also { frame ->
+                        (full.parent as? ViewGroup)?.removeView(full)
+                        frame.addView(full, FrameLayout.LayoutParams(-1, -1))
+                    }
+                },
+                onRelease = { it.removeAllViews() },
+            )
         }
     }
 }
@@ -368,6 +378,27 @@ private fun Notes(release: AppUpdater.Release) {
 
 // ---------------------------------------------------------------------------- logs
 
+/** Splits log entries into screen rows of [cols] characters, so long lines wrap. */
+private fun wrapRows(entries: List<String>, cols: Int): List<String> {
+    val rows = ArrayList<String>(entries.size + 16)
+    for (entry in entries) {
+        for (part in entry.split('\n')) {
+            if (part.length <= cols) {
+                rows.add(part)
+                continue
+            }
+            rows.add(part.substring(0, cols))
+            var at = cols
+            val room = (cols - 2).coerceAtLeast(1)
+            while (at < part.length) {
+                rows.add("  " + part.substring(at, minOf(at + room, part.length)))
+                at += room
+            }
+        }
+    }
+    return rows
+}
+
 @Composable
 fun LogsPage() {
     val context = LocalContext.current
@@ -375,6 +406,8 @@ fun LogsPage() {
     val version by AppLog.version.collectAsState()
     var page by rememberSaveable { mutableIntStateOf(0) }
     var follow by rememberSaveable { mutableStateOf(true) }
+    var pages by remember { mutableIntStateOf(1) }
+    var current by remember { mutableIntStateOf(0) }
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -391,25 +424,27 @@ fun LogsPage() {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) {
             BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp)) {
-                val lineDp = with(LocalDensity.current) { 14.sp.toDp() }
-                val perPage = (maxHeight / lineDp).toInt().coerceAtLeast(1)
-                val total = version.let { AppLog.size }
-                val pages = ((total + perPage - 1) / perPage).coerceAtLeast(1)
-                val current = if (follow) pages - 1 else page.coerceIn(0, pages - 1)
+                val density = LocalDensity.current
+                val rowDp = with(density) { 14.sp.toDp() }
+                // A monospace character is about 0.6 of the font size wide.
+                val charDp = with(density) { (11.sp * 0.6f).toDp() }
+                val cols = ((maxWidth / charDp).toInt() - 1).coerceAtLeast(10)
+                val perPage = (maxHeight / rowDp).toInt().coerceAtLeast(1)
+
+                val rows = remember(version, cols) { wrapRows(AppLog.slice(0, Int.MAX_VALUE), cols) }
+                val count = (rows.size + perPage - 1) / perPage
+                val total = count.coerceAtLeast(1)
+                val shown = if (follow) total - 1 else page.coerceIn(0, total - 1)
+                SideEffect { pages = total; current = shown }
 
                 Column(Modifier.fillMaxSize()) {
-                    AppLog.slice(current * perPage, perPage).forEach {
-                        Text(it, style = lineStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    rows.drop(shown * perPage).take(perPage).forEach {
+                        Text(it, style = lineStyle, maxLines = 1, softWrap = false)
                     }
                 }
-                // Page controls live in the row under the card; share the numbers with it.
-                LogPaging.pages = pages
-                LogPaging.current = current
             }
         }
 
-        val pages = LogPaging.pages
-        val current = LogPaging.current
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 enabled = current > 0,
@@ -430,10 +465,4 @@ fun LogsPage() {
             OutlinedButton(onClick = { AppLog.clear(); follow = true }) { Text("Clear all") }
         }
     }
-}
-
-/** Passes the page numbers from the measured card to the buttons below it. */
-private object LogPaging {
-    var pages by mutableIntStateOf(1)
-    var current by mutableIntStateOf(0)
 }

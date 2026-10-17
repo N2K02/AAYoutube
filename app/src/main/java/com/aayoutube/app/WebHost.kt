@@ -210,6 +210,7 @@ object WebHost {
     }
 
     fun onActivityVisible(visible: Boolean) {
+        noteVisibilityChange()
         activityVisible = visible
         if (visible) {
             main.removeCallbacks(freezeSoon)
@@ -222,7 +223,10 @@ object WebHost {
     }
 
     /** Player buttons for the car screen: play, pause, next, prev. */
-    fun cmd(name: String) = js("window.__aay&&window.__aay.cmd('$name')")
+    fun cmd(name: String) {
+        if (name == "pause") userPausedAt = SystemClock.elapsedRealtime()
+        js("window.__aay&&window.__aay.cmd('$name')")
+    }
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
@@ -346,7 +350,7 @@ object WebHost {
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
             Msg.PLAY -> cmd("play")
-            Msg.PAUSE -> cmd("pause")
+            Msg.PAUSE -> { userPausedAt = SystemClock.elapsedRealtime(); cmd("pause") }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
             Msg.NEXT -> cmd("next")
             Msg.PREV -> cmd("prev")
@@ -432,8 +436,28 @@ object WebHost {
     }
 
     private var lastLogged = ""
+    private var visibilityChangedAt = 0L
+    private var userPausedAt = 0L
+
+    /** The screen went to the background, into picture in picture, or came back. */
+    fun noteVisibilityChange() {
+        visibilityChangedAt = SystemClock.elapsedRealtime()
+    }
+
+    // The page sometimes pauses by itself when the screen changes state. If that happens right
+    // after such a change, and nobody asked for a pause, carry on playing.
+    private fun resumeIfDropped(old: Snap, new: Snap) {
+        if (!Features.current.backgroundPlay) return
+        if (!old.playing || new.playing || new.ended || new.id != old.id) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - visibilityChangedAt < 4_000 && now - userPausedAt > 4_000) {
+            AppLog.add("PLAY", "Paused by the page right after a screen change: resuming")
+            cmd("play")
+        }
+    }
 
     private fun publish(s: Snap) {
+        resumeIfDropped(snapshot.value, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
         if (key != lastLogged) {
             lastLogged = key
