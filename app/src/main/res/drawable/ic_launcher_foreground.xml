@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A play button inside a ring, with sound arcs: original AAYoutube icon -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- ring -->
+    <path
+        android:pathData="M54,32a22,22 0 1,1 0,44a22,22 0 1,1 0,-44z"
+        android:strokeWidth="5"
+        android:strokeColor="#FF6A3D"
+        android:strokeLineCap="round" />
+    <!-- play triangle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,43.5L48,64.5L66,54z" />
+    <!-- sound arcs on the right -->
+    <path
+        android:pathData="M78,45A12,12 0 0,1 78,63"
+        android:strokeWidth="3.5"
+        android:strokeColor="#4FC3F7"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M83,40A19,19 0 0,1 83,68"
+        android:strokeWidth="3.5"
+        android:strokeColor="#4FC3F7"
+        android:strokeLineCap="round" />
+</vector>
