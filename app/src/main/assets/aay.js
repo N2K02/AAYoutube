@@ -37,6 +37,34 @@
     document.addEventListener('webkitvisibilitychange', stopVis, true);
   } catch (e) {}
 
+  /* ---------- 1b. Keep playing when the screen is hidden or in picture in picture ---------- */
+  // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
+  // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
+  var allowPause = false;
+  function holding() { return CFG.backgroundPlay !== false && (A.isBg || A.inPip); }
+  try {
+    var origPause = HTMLMediaElement.prototype.pause;
+    HTMLMediaElement.prototype.pause = function () {
+      var stack = '';
+      try { stack = String(new Error().stack).split('\n').slice(2, 5).join(' | '); } catch (e) {}
+      if (!allowPause && holding() && !this.ended) {
+        console.log('[aay] pause() ignored (bg=' + A.isBg + ' pip=' + A.inPip + ') from ' + stack);
+        return;
+      }
+      console.log('[aay] pause() called, allowed=' + allowPause + ' from ' + stack);
+      return origPause.apply(this, arguments);
+    };
+    window.addEventListener('pause', function (e) {
+      if (e.target && e.target.tagName === 'VIDEO') {
+        console.log('[aay] video paused event: realHidden=' + (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) +
+          ' focus=' + document.hasFocus() + ' ready=' + e.target.readyState + ' bg=' + A.isBg + ' pip=' + A.inPip);
+      }
+    }, true);
+    window.addEventListener('play', function (e) {
+      if (e.target && e.target.tagName === 'VIDEO') console.log('[aay] video play event');
+    }, true);
+  } catch (e) {}
+
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
   function strip(o, depth) {
@@ -445,7 +473,7 @@
     try {
       switch (c) {
         case 'play': if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
-        case 'pause': if (v) v.pause(); break;
+        case 'pause': if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
         case 'next': next(); break;
@@ -462,6 +490,7 @@
   };
 
   A.pip = function (on) {
+    A.inPip = !!on;
     document.documentElement.classList.toggle('aay-pip', !!on);
     window.dispatchEvent(new Event('resize'));
   };

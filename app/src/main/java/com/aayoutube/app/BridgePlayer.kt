@@ -206,7 +206,7 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(s.title.ifEmpty { "YouTube" })
-                    .setArtist(s.artist.ifEmpty { null })
+                    .setArtist(s.artist.ifEmpty { "YouTube" })
                     .setArtworkUri(art)
                     .setIsPlayable(true)
                     .setIsBrowsable(false)

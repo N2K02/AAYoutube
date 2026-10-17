@@ -205,7 +205,7 @@ class PlaybackService : MediaLibraryService() {
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(title.ifEmpty { "YouTube video" })
-                .setArtist(artist.ifEmpty { null })
+                .setArtist(artist.ifEmpty { "YouTube" })
                 .setArtworkUri(Uri.parse("https://i.ytimg.com/vi/$id/mqdefault.jpg"))
                 .setIsPlayable(true)
                 .setIsBrowsable(false)

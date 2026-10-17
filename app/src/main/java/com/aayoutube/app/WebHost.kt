@@ -438,9 +438,11 @@ object WebHost {
     private var lastLogged = ""
     private var visibilityChangedAt = 0L
     private var userPausedAt = 0L
+    private var resumeTries = 0
 
     /** The screen went to the background, into picture in picture, or came back. */
     fun noteVisibilityChange() {
+        resumeTries = 0
         visibilityChangedAt = SystemClock.elapsedRealtime()
     }
 
@@ -450,8 +452,9 @@ object WebHost {
         if (!Features.current.backgroundPlay) return
         if (!old.playing || new.playing || new.ended || new.id != old.id) return
         val now = SystemClock.elapsedRealtime()
-        if (now - visibilityChangedAt < 4_000 && now - userPausedAt > 4_000) {
-            AppLog.add("PLAY", "Paused by the page right after a screen change: resuming")
+        if (now - visibilityChangedAt < 4_000 && now - userPausedAt > 4_000 && resumeTries < 2) {
+            resumeTries++
+            AppLog.add("PLAY", "Paused by the page right after a screen change: resuming ($resumeTries/2)")
             cmd("play")
         }
     }
