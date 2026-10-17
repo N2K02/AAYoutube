@@ -85,6 +85,10 @@ object WebHost {
     var requestLink: (() -> Unit)? = null
 
     @Volatile var activityVisible = false
+
+    /** The video is being shown on the car screen (see CarVideoService). */
+    @Volatile var carShown = false
+    val shown: Boolean get() = activityVisible || carShown
         private set
 
     fun init(application: Application) {
@@ -191,16 +195,18 @@ object WebHost {
     // ---------------------------------------------------------------- screens
 
     /** Called by the screen: hands over the WebView (re-based onto the activity). */
-    fun attach(activity: Activity): WebView {
+    fun attach(context: android.content.Context): WebView {
         val w = ensureWeb()
-        wrapper?.setBaseContext(activity)
+        wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
         return w
     }
 
     fun detach(container: ViewGroup) {
+        val mine = web?.parent === container
         container.removeAllViews()
-        wrapper?.setBaseContext(app)
+        // Another screen (phone or car) may already have taken the page over; leave it alone then.
+        if (mine) wrapper?.setBaseContext(app)
     }
 
     fun onActivityVisible(visible: Boolean) {
@@ -212,7 +218,23 @@ object WebHost {
             scheduleFreeze()
         }
         // Hidden screen = background mode: lowest video quality saves data and battery.
-        js("window.__aay&&window.__aay.setBg(${!visible})")
+        js("window.__aay&&window.__aay.setBg(${!shown})")
+    }
+
+    /** Player buttons for the car screen: play, pause, next, prev. */
+    fun cmd(name: String) = js("window.__aay&&window.__aay.cmd('$name')")
+
+    fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
+
+    fun setCarShown(on: Boolean) {
+        carShown = on
+        if (on) {
+            main.removeCallbacks(freezeSoon)
+            unfreeze()
+        } else if (!snapshot.value.playing) {
+            scheduleFreeze()
+        }
+        js("window.__aay&&window.__aay.setBg(${!shown})")
     }
 
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
@@ -256,7 +278,7 @@ object WebHost {
 
     // Nothing playing and no screen open: stop the page's timers and scripts after a short wait.
     private val freezeSoon = Runnable {
-        if (!activityVisible && !snapshot.value.playing) freeze()
+        if (!shown && !snapshot.value.playing) freeze()
     }
 
     private fun scheduleFreeze() {
@@ -303,7 +325,7 @@ object WebHost {
      */
     fun onLinkUnbound() {
         link = null
-        if (!activityVisible && !snapshot.value.playing) scheduleFreeze()
+        if (!shown && !snapshot.value.playing) scheduleFreeze()
     }
 
     // ---------------------------------------------------------------- commands from the media process
@@ -326,9 +348,9 @@ object WebHost {
             Msg.RATE -> cmd("rate", d.getFloat("rate", 1f).toString())
             Msg.STOP -> {
                 cmd("pause")
-                if (!activityVisible) release()
+                if (!shown) release()
             }
-            Msg.FREEZE -> if (!activityVisible && !snapshot.value.playing) freeze()
+            Msg.FREEZE -> if (!shown && !snapshot.value.playing) freeze()
         }
     }
 
@@ -407,7 +429,7 @@ object WebHost {
     private fun publish(s: Snap) {
         snapshot.value = s
         send(Msg.STATE, s.toBundle())
-        if (!s.playing && !activityVisible) scheduleFreeze()
+        if (!s.playing && !shown) scheduleFreeze()
         // The media service is not linked (it stopped while a screen was open): ask it to link again.
         if (link == null && s.playing) {
             val now = SystemClock.elapsedRealtime()
@@ -497,7 +519,7 @@ object WebHost {
         // The page's renderer died (out of memory, crash): rebuild the WebView instead of crashing the app.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             val resume = lastUrl
-            val visible = activityVisible
+            val visible = shown
             release()
             if (visible) {
                 pendingUrl = resume

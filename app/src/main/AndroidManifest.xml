@@ -18,6 +18,9 @@
         - ":web" process: the WebView and the app screens
         A WebView crash or freeze therefore can never take Android Auto down with it.
     -->
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
+
     <application
         android:name=".AAYoutubeApp"
         android:allowBackup="false"
@@ -58,6 +61,21 @@
         </activity>
 
         <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="1" />
+
+        <!-- Shows the YouTube page on the car screen. Lives in the web process, next to the WebView. -->
+        <service
+            android:name=".CarVideoService"
+            android:process=":web"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".WebHostService"
             android:process=":web"

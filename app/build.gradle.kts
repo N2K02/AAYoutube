@@ -54,6 +54,7 @@ dependencies {
 
     // WebView extras: script injection at document start, header control
     implementation("androidx.webkit:webkit:1.14.0")
+    implementation("androidx.car.app:app:1.7.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }
