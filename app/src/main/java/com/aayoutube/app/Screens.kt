@@ -99,7 +99,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("YouTube", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Logs("Logs", Icons.Filled.BugReport),
-    Update("Update", Icons.Filled.SystemUpdate),
+    Update("Update & Version", Icons.Filled.SystemUpdate),
 }
 
 @Composable
@@ -184,7 +184,7 @@ fun AppRoot(activity: MainActivity) {
                                         Icon(t.icon, null)
                                     }
                                 },
-                                label = { Text(t.label) },
+                                label = { Text(t.label, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
                             )
                         }
                         // Quit: same power icon as MRadio. Stops playback and closes the app.
@@ -384,14 +384,51 @@ fun UpdatePage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Update", style = MaterialTheme.typography.headlineMedium)
+        Text("Update & Version", style = MaterialTheme.typography.headlineMedium)
+
+        // What the app runs on: device, WebView and library versions.
+        val groups = remember { Versions.collect(context) }
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Under the hood", style = MaterialTheme.typography.titleMedium)
+                groups.forEach { g ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(g.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    g.rows.forEach { r ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(r.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text(
+                                r.value,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Installed version", style = MaterialTheme.typography.labelLarge)
-                Text("v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
+                        "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
+                        "in the background and in picture in picture. In the car it plays through the media player and, " +
+                        "on Android 15+, shows the full screen on the car display. The page runs in its own process, so a " +
+                        "WebView problem can't freeze Android Auto. Updates come from GitHub releases (N2K02/AAYoutube).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 

@@ -9,6 +9,16 @@ val appVersion = (findProperty("appVersion") as String?) ?: "1.0"
 require(Regex("""\d+\.\d""").matches(appVersion)) { "appVersion must look like 1.0, got $appVersion" }
 val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt() * 10 + minor.toInt() }
 
+// Library versions in one place: used for the dependencies and shown on the Update & Version page.
+val v = mapOf(
+    "material3" to "1.5.0-beta01",
+    "media3" to "1.8.0",
+    "webkit" to "1.14.0",
+    "carApp" to "1.7.0",
+    "activityCompose" to "1.11.0",
+    "coroutines" to "1.10.2",
+)
+
 android {
     namespace = "com.aayoutube.app"
     compileSdk = 37
@@ -20,6 +30,7 @@ android {
         // One decimal place: 1.0, 1.1 … 1.9, 2.0. versionCode 1.4 -> 14 (always goes up).
         versionName = appVersion
         versionCode = appVersionCode
+        v.forEach { (name, version) -> buildConfigField("String", "LIB_" + name.uppercase(), "\"$version\"") }
     }
 
     buildTypes {
@@ -34,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -44,17 +56,17 @@ android {
 
 dependencies {
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
-    implementation("androidx.compose.material3:material3:1.5.0-beta01")
+    implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
     implementation("androidx.graphics:graphics-shapes:1.0.1")
-    implementation("androidx.activity:activity-compose:1.11.0")
+    implementation("androidx.activity:activity-compose:${v["activityCompose"]}")
 
     // Media session for the notification, lock screen, Bluetooth and Android Auto
-    implementation("androidx.media3:media3-session:1.8.0")
+    implementation("androidx.media3:media3-session:${v["media3"]}")
 
     // WebView extras: script injection at document start, header control
-    implementation("androidx.webkit:webkit:1.14.0")
-    implementation("androidx.car.app:app:1.7.0")
+    implementation("androidx.webkit:webkit:${v["webkit"]}")
+    implementation("androidx.car.app:app:${v["carApp"]}")
 
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${v["coroutines"]}")
 }
