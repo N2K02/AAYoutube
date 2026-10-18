@@ -31,6 +31,17 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.foundation.layout.width
@@ -119,32 +130,33 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("YouTube", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Logs("Logs", Icons.Filled.BugReport),
-    Update("Info", Icons.Filled.Info),
+    Update("Update", Icons.Filled.SystemUpdate),
+    Info("Info", Icons.Filled.Info),
 }
 
 @Composable
 fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val features by Features.state.collectAsState()
-    // Auto-hide: the menu bar slides away after a few seconds without a touch, and comes back on the next one.
+    // The round menu button fades after a few seconds without a touch, and comes back on the next one.
     var touches by remember { mutableIntStateOf(0) }
-    var barShown by remember { mutableStateOf(true) }
+    var faded by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
-    val canGoBack by WebHost.canGoBack.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val updater by AppUpdater.state.collectAsState()
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
-    LaunchedEffect(touches, tab, features.autoHideMenu, features.autoHideSecs) {
-        barShown = true
-        if (features.autoHideMenu) {
+    LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
+        faded = false
+        if (features.autoHideMenu && !menuOpen) {
             delay(features.autoHideSecs * 1000L)
-            barShown = false
+            faded = true
         }
     }
     // Picture in picture always shows the video: go back to the YouTube tab.
-    LaunchedEffect(inPip) { if (inPip) tab = 0 }
+    LaunchedEffect(inPip) { if (inPip) { tab = 0; menuOpen = false } }
     LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
@@ -164,10 +176,10 @@ fun AppRoot(activity: MainActivity) {
         }
     }
 
-    // Back: close fullscreen, then other tabs, then the page's own history (asked live from the
-    // WebView, because YouTube changes pages without reloading), then YouTube home. On the home
-    // page, back sends the app to the background (it keeps playing) instead of closing it.
-    BackHandler(enabled = true) {
+    // Back (gesture, button, or Back in the menu): close fullscreen, then other tabs, then the
+    // page's own history (asked live from the WebView, because YouTube changes pages without
+    // reloading), then YouTube home. On the home page the app goes to the background (it keeps playing).
+    val goBack: () -> Unit = {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
             tab != 0 -> tab = 0
@@ -183,6 +195,9 @@ fun AppRoot(activity: MainActivity) {
             }
         }
     }
+    BackHandler(enabled = true) {
+        if (menuOpen) menuOpen = false else goBack()
+    }
 
     // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
     // moved between parents, because detaching a WebView from its window pauses the video.
@@ -197,41 +212,10 @@ fun AppRoot(activity: MainActivity) {
             }
         },
     ) {
-        val barAllowed = fullscreen == null && !inPip
-        val bar: @Composable () -> Unit = {
-            NavigationBar {
-                Tab.entries.forEachIndexed { i, t ->
-                    NavigationBarItem(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        icon = {
-                            if (t == Tab.Update && updater is AppUpdater.State.Available) {
-                                BadgedBox(badge = { Badge() }) { Icon(t.icon, null) }
-                            } else {
-                                Icon(t.icon, null)
-                            }
-                        },
-                        label = { Text(t.label, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
-                    )
-                }
-                // Quit: same power icon as MRadio. Stops playback and closes the app.
-                NavigationBarItem(
-                    selected = false,
-                    onClick = { activity.quit() },
-                    icon = { Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Quit") },
-                    label = { Text("Quit") },
-                )
-            }
-        }
-        Scaffold(
-            bottomBar = {
-                // Auto-hide off: the bar is part of the layout as usual.
-                if (!features.autoHideMenu && barAllowed) bar()
-            },
-        ) { padding ->
+        Scaffold { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
-                WebPane(Modifier.fillMaxSize(), bottomInset = if (features.autoHideMenu) 80.dp else 0.dp)
+                WebPane(Modifier.fillMaxSize())
                 if (tab != 0 && !inPip) {
                     Surface(
                         Modifier.fillMaxSize().pointerInput(Unit) { },
@@ -242,20 +226,11 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Features -> FeaturesPage()
                             Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
+                            Tab.Info -> InfoPage()
                         }
                     }
                 }
             }
-        }
-        // Auto-hide on: the bar floats over the bottom of the page, so showing or hiding it never
-        // resizes the page (resizing in the middle of a swipe broke YouTube's swipe-down gesture).
-        if (features.autoHideMenu) {
-            AnimatedVisibility(
-                visible = barAllowed && barShown,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                enter = slideInVertically { it },
-                exit = slideOutVertically { it },
-            ) { bar() }
         }
         val full = fullscreen
         if (full != null) {
@@ -269,6 +244,150 @@ fun AppRoot(activity: MainActivity) {
                 },
                 onRelease = { it.removeAllViews() },
             )
+        }
+        if (full == null && !inPip) {
+            MenuButton(
+                selected = tab,
+                open = menuOpen,
+                faded = faded,
+                updateAvailable = updater is AppUpdater.State.Available,
+                onOpenChange = { menuOpen = it },
+                onSelect = { tab = it; menuOpen = false },
+                onBack = { menuOpen = false; goBack() },
+                onQuit = { menuOpen = false; activity.quit() },
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- menu button
+
+/**
+ * The round menu button: floats over everything, can be dragged anywhere (its place is
+ * remembered), and opens the menu (pages, Back, Quit) next to itself.
+ */
+@Composable
+private fun MenuButton(
+    selected: Int,
+    open: Boolean,
+    faded: Boolean,
+    updateAvailable: Boolean,
+    onOpenChange: (Boolean) -> Unit,
+    onSelect: (Int) -> Unit,
+    onBack: () -> Unit,
+    onQuit: () -> Unit,
+) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        val density = LocalDensity.current
+        val fab = 56.dp
+        val gap = 12.dp
+        val fabPx = with(density) { fab.toPx() }
+        val gapPx = with(density) { gap.toPx() }
+        val maxX = (constraints.maxWidth - fabPx - gapPx).coerceAtLeast(gapPx)
+        val maxY = (constraints.maxHeight - fabPx - gapPx).coerceAtLeast(gapPx)
+        // Saved as fractions, so the place survives rotation and different screens (phone / car).
+        var fx by remember { mutableStateOf(prefs.getFloat("fabX", 1f)) }
+        var fy by remember { mutableStateOf(prefs.getFloat("fabY", 0.72f)) }
+        val x = gapPx + (maxX - gapPx) * fx.coerceIn(0f, 1f)
+        val y = gapPx + (maxY - gapPx) * fy.coerceIn(0f, 1f)
+
+        if (open) {
+            Box(
+                Modifier.fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .pointerInput(Unit) { detectTapGestures { onOpenChange(false) } },
+            )
+            val right = x + fabPx / 2 > constraints.maxWidth / 2
+            val up = y + fabPx / 2 > constraints.maxHeight / 2
+            val wDp = with(density) { constraints.maxWidth.toDp() }
+            val hDp = with(density) { constraints.maxHeight.toDp() }
+            val xDp = with(density) { x.toDp() }
+            val yDp = with(density) { y.toDp() }
+            val place = Modifier
+                .align(
+                    when {
+                        up && right -> Alignment.BottomEnd
+                        up -> Alignment.BottomStart
+                        right -> Alignment.TopEnd
+                        else -> Alignment.TopStart
+                    },
+                )
+                .padding(
+                    start = if (right) 0.dp else xDp,
+                    end = if (right) (wDp - xDp - fab).coerceAtLeast(0.dp) else 0.dp,
+                    top = if (up) 0.dp else yDp + fab + 8.dp,
+                    bottom = if (up) (hDp - yDp + 8.dp).coerceAtLeast(0.dp) else 0.dp,
+                )
+            Column(
+                place,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = if (right) Alignment.End else Alignment.Start,
+            ) {
+                Tab.entries.forEachIndexed { i, t ->
+                    MenuItem(t.label, t.icon, right, selected == i, badge = t == Tab.Update && updateAvailable) { onSelect(i) }
+                }
+                MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() }
+                MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() }
+            }
+        }
+
+        Box(
+            Modifier
+                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+                .size(fab)
+                .graphicsLayer { alpha = if (faded && !open) 0.35f else 1f }
+                .pointerInput(maxX, maxY) {
+                    detectDragGestures(
+                        onDragEnd = { prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply() },
+                    ) { change, drag ->
+                        change.consume()
+                        val span = (maxX - gapPx).coerceAtLeast(1f)
+                        val spanY = (maxY - gapPx).coerceAtLeast(1f)
+                        fx = (fx + drag.x / span).coerceIn(0f, 1f)
+                        fy = (fy + drag.y / spanY).coerceIn(0f, 1f)
+                    }
+                },
+        ) {
+            androidx.compose.material3.FloatingActionButton(
+                onClick = { onOpenChange(!open) },
+                shape = androidx.compose.foundation.shape.CircleShape,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (updateAvailable && !open) {
+                    BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
+                } else {
+                    Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuItem(label: String, icon: ImageVector, iconRight: Boolean, selected: Boolean, badge: Boolean = false, onClick: () -> Unit) {
+    val container = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+    val content = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+        color = container,
+        contentColor = content,
+        shadowElevation = 3.dp,
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val ic: @Composable () -> Unit = {
+                if (badge) BadgedBox(badge = { Badge() }) { Icon(icon, null, Modifier.size(22.dp)) }
+                else Icon(icon, null, Modifier.size(22.dp))
+            }
+            if (!iconRight) ic()
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            if (iconRight) ic()
         }
     }
 }
@@ -439,16 +558,16 @@ fun FeaturesPage() {
                 }
             }
         }
-        Text("Menu bar", style = MaterialTheme.typography.titleMedium)
+        Text("Menu button", style = MaterialTheme.typography.titleMedium)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
             Toggle(
-                "Auto-hide menu bar",
-                "Hides the bottom menu when you don't touch the screen. Touch anywhere to bring it back.",
+                "Fade the menu button",
+                "The round menu button turns see-through when you don't touch the screen. Touch anywhere to bring it back. Drag it to move it.",
                 f.autoHideMenu,
             ) { s, v -> s.copy(autoHideMenu = v) }
             if (f.autoHideMenu) {
                 Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
-                    Text("Hide after", style = MaterialTheme.typography.labelLarge)
+                    Text("Fade after", style = MaterialTheme.typography.labelLarge)
                     Spacer(Modifier.height(8.dp))
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         (1..5).forEach { secs ->
@@ -488,35 +607,7 @@ fun UpdatePage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Info", style = MaterialTheme.typography.headlineMedium)
-
-        // What the app runs on: device, WebView and library versions.
-        val groups = remember { Versions.collect(context) }
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Under the hood", style = MaterialTheme.typography.titleMedium)
-                groups.forEach { g ->
-                    Spacer(Modifier.height(6.dp))
-                    Text(g.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    g.rows.forEach { r ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(r.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                            Text(
-                                r.value,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
+        Text("Update", style = MaterialTheme.typography.headlineMedium)
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -524,15 +615,6 @@ fun UpdatePage() {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Installed version", style = MaterialTheme.typography.labelLarge)
                 Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
-                Text(
-                    "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
-                        "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
-                        "in the background and in picture in picture. In the car it plays through the media player and, " +
-                        "on Android 15+, shows the full screen on the car display. The page runs in its own process, so a " +
-                        "WebView problem can't freeze Android Auto. Updates come from GitHub releases (N2K02/AAYoutube).",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
@@ -591,6 +673,66 @@ fun UpdatePage() {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------- info
+
+@Composable
+fun InfoPage() {
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Info", style = MaterialTheme.typography.headlineMedium)
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("About", style = MaterialTheme.typography.labelLarge)
+                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
+                        "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
+                        "in the background and in picture in picture. In the car it plays through the media player and, " +
+                        "on Android 15+, shows the full screen on the car display. The page runs in its own process, so a " +
+                        "WebView problem can't freeze Android Auto. Updates come from GitHub releases (N2K02/AAYoutube).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+
+        // What the app runs on: device, WebView and library versions.
+        val groups = remember { Versions.collect(context) }
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Under the hood", style = MaterialTheme.typography.titleMedium)
+                groups.forEach { g ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(g.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    g.rows.forEach { r ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(r.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text(
+                                r.value,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }
 
