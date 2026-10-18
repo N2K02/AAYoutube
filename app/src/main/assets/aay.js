@@ -12,6 +12,7 @@
 
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
+  var BROWSE = !!window.__AAY_BROWSE;
   var A = window.__aay = { H: {}, isBg: false };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
 
@@ -87,6 +88,12 @@
       console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + a.getAttribute('href') : ' (no link)'));
       if (!a) return;
       var href = a.href, before = location.href;
+      // Browse page (under the mini player): a video opens in the player, not here.
+      if (BROWSE && /\/watch\?|\/shorts\/|\/live\/|youtu\.be\//.test(href)) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        try { window.AAYBrowse.open(href); } catch (x) {}
+        return;
+      }
       // A video or mix link that YouTube's page ignored (seen with Mix playlists): open it ourselves.
       if (/\/watch\?|[?&]list=|\/playlist\?/.test(href) && href !== before) {
         later(function () {
@@ -123,7 +130,12 @@
       if (e.target && e.target.tagName === 'VIDEO') startedAt = Date.now();
     }, true);
     var unmute = function (v) {
-      if (!v || !v.muted) return;
+      if (!v || !v.muted || BROWSE) return;
+      // Feed previews (small videos that play by themselves) stay muted, as YouTube intends.
+      if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+      if (v.closest && v.closest('ytm-inline-playback-renderer,ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-reel-shelf-renderer,[class*="inline-player"],[class*="preview"]')) return;
+      var mainV = document.querySelector('#player-container-id video, #player video, video.html5-main-video');
+      if (mainV && v !== mainV) return;
       if (typeof adSped !== 'undefined' && adSped) return;         // the ad skipper muted it
       if (Date.now() - lastTap < 1500) return;                     // you just tapped mute
       if (Date.now() - startedAt > 15000) return;                  // only at the start of a video
@@ -140,6 +152,30 @@
         if (e.target && e.target.tagName === 'VIDEO') later(function () { unmute(e.target); }, 50);
       }, true);
     });
+  } catch (e) {}
+
+  /* ---------- 1e. Swipe down on the playing video: mini player, keep browsing ---------- */
+  try {
+    if (!BROWSE) {
+      var sw = null;
+      document.addEventListener('touchstart', function (e) {
+        sw = null;
+        if (e.touches.length !== 1 || A.inPip || A.isMini || document.fullscreenElement) return;
+        if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+        var t = e.target;
+        if (!t || !t.closest || !t.closest('.html5-video-player,#player-container-id,#player')) return;
+        sw = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+      }, { capture: true, passive: true });
+      document.addEventListener('touchend', function (e) {
+        if (!sw) return;
+        var c = e.changedTouches[0], dx = c.clientX - sw.x, dy = c.clientY - sw.y, dt = Date.now() - sw.t;
+        sw = null;
+        if (dy > 90 && Math.abs(dx) < dy / 2 && dt < 900) {
+          console.log('[aay] swipe down on the video: mini player');
+          try { N && N.mini(); } catch (x) {}
+        }
+      }, { capture: true, passive: true });
+    }
   } catch (e) {}
 
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
@@ -223,7 +259,9 @@
     'transform:none!important;z-index:2147483647!important}' +
     'html.aay-pip .ytp-chrome-top,html.aay-pip .ytp-chrome-bottom,html.aay-pip .ytp-gradient-top,' +
     'html.aay-pip .ytp-gradient-bottom,html.aay-pip .ytp-pause-overlay,html.aay-pip .ytp-ce-element,' +
-    'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}';
+    'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}' +
+    'html.aay-fit:not(.aay-pip) video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
+    'height:100%!important;object-fit:contain!important}';
 
   var styleEl = null;
   function applyCss() {
@@ -627,10 +665,44 @@
     }
   }
 
+  // After the small layout ends, YouTube keeps the small video size it measured (black border
+  // around a small picture). Tell it the size changed a few times while the window grows back,
+  // and if the picture still does not fill the player, stretch it ourselves.
+  function fixLayout() {
+    [150, 500, 1000, 2000].forEach(function (ms) {
+      later(function () {
+        window.dispatchEvent(new Event('resize'));
+        var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+        try { if (p && p.setSize) p.setSize(); } catch (e) {}
+        var v = getVideo();
+        if (ms === 2000 && v && p) {
+          var vr = v.getBoundingClientRect(), pr = p.getBoundingClientRect();
+          if (pr.width > 0 && vr.width < pr.width * 0.92 && vr.height < pr.height * 0.92) {
+            console.log('[aay] video smaller than the player after resize (' + Math.round(vr.width) + 'x' + Math.round(vr.height) +
+              ' in ' + Math.round(pr.width) + 'x' + Math.round(pr.height) + '): stretching it');
+            document.documentElement.classList.add('aay-fit');
+          }
+        }
+      }, ms);
+    });
+  }
+  function smallLayout() {
+    var on = !!(A.inPip || A.isMini);
+    liftAncestors(getVideo(), on);
+    document.documentElement.classList.toggle('aay-pip', on);
+    if (!on) fixLayout();
+  }
+
+  A.mini = function (on) {
+    A.isMini = !!on;
+    smallLayout();
+    window.dispatchEvent(new Event('resize'));
+  };
+
   A.pip = function (on) {
     A.inPip = !!on;
-    liftAncestors(getVideo(), !!on);
-    document.documentElement.classList.toggle('aay-pip', !!on);
+    smallLayout();
     clearInterval(pipTimer); pipTimer = 0; pipLast = null;
     var v = getVideo();
     if (v) console.log('[aay] pip=' + !!on + ' video ' + videoInfo(v).text);

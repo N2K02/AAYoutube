@@ -31,6 +31,12 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -164,6 +170,11 @@ fun AppRoot(activity: MainActivity) {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
             tab != 0 -> tab = 0
+            // Browsing under the mini player (or after closing it): back moves through the browse page.
+            WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
+            WebHost.mode.value != WebHost.PlayerMode.FULL -> activity.moveTaskToBack(true)
+            // Watching: back shrinks the video into the mini player, like the YouTube app.
+            snap.playing && WebHost.isOnWatchPage() -> WebHost.enterMini()
             WebHost.goBack() -> Unit
             else -> {
                 AppLog.add("UI", "Back on YouTube home: app to background")
@@ -219,7 +230,7 @@ fun AppRoot(activity: MainActivity) {
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
-                WebPane(Modifier.fillMaxSize())
+                WebPane(Modifier.fillMaxSize(), bottomInset = if (features.autoHideMenu) 80.dp else 0.dp)
                 if (tab != 0 && !inPip) {
                     Surface(
                         Modifier.fillMaxSize().pointerInput(Unit) { },
@@ -264,15 +275,52 @@ fun AppRoot(activity: MainActivity) {
 // ---------------------------------------------------------------------------- web
 
 @Composable
-fun WebPane(modifier: Modifier = Modifier) {
+fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit.Dp = 0.dp) {
     val version by WebHost.webVersion.collectAsState()
     val progress by WebHost.progress.collectAsState()
     val offline by WebHost.offline.collectAsState()
+    val mode by WebHost.mode.collectAsState()
+    val inPip by WebHost.inPip.collectAsState()
+    val snap by WebHost.snapshot.collectAsState()
+    val browseOn by BrowseHost.created.collectAsState()
+    // Picture in picture always shows the video full size, whatever the mode.
+    val small = mode == WebHost.PlayerMode.MINI && !inPip
+    val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
+
+    // The browse page only works while you can see it.
+    LaunchedEffect(mode) {
+        if (mode == WebHost.PlayerMode.FULL) BrowseHost.pause() else BrowseHost.resume()
+    }
 
     Box(modifier) {
-        key(version) {
+        // Browse page (behind): made the first time the mini player opens.
+        if (browseOn) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    val activity = ctx.findActivity()!!
+                    FrameLayout(ctx).also { frame ->
+                        frame.addView(BrowseHost.attach(activity), FrameLayout.LayoutParams(-1, -1))
+                    }
+                },
+                onRelease = { BrowseHost.detach(it) },
+            )
+        }
+
+        // Player page: never moved to another parent (that would pause the video); only its size changes.
+        val miniBox = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 12.dp, bottom = 12.dp + bottomInset)
+            .width(224.dp)
+            .aspectRatio(16f / 9f)
+        val playerMod = when {
+            small -> miniBox.clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+            hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
+            else -> Modifier.fillMaxSize()
+        }
+        key(version) {
+            AndroidView(
+                modifier = playerMod,
                 factory = { ctx ->
                     val activity = ctx.findActivity()!!
                     FrameLayout(ctx).also { frame ->
@@ -282,13 +330,38 @@ fun WebPane(modifier: Modifier = Modifier) {
                 onRelease = { WebHost.detach(it) },
             )
         }
-        if (progress in 0..99) {
+
+        // Mini player controls: tap to open it again, pause/play, close.
+        if (small) {
+            Box(
+                miniBox.pointerInput(Unit) {
+                    androidx.compose.foundation.gestures.detectTapGestures(onTap = { WebHost.expandPlayer() })
+                },
+            ) {
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = { WebHost.closePlayer() },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(32.dp),
+                ) { Icon(Icons.Filled.Close, contentDescription = "Close", modifier = Modifier.size(18.dp)) }
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
+                    modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(32.dp),
+                ) {
+                    Icon(
+                        if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (snap.playing) "Pause" else "Play",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+
+        if (progress in 0..99 && mode == WebHost.PlayerMode.FULL) {
             LinearProgressIndicator(
                 progress = { progress / 100f },
                 modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
             )
         }
-        if (offline) {
+        if (offline && mode == WebHost.PlayerMode.FULL) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Card(Modifier.padding(24.dp)) {
                     Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

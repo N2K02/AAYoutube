@@ -103,7 +103,7 @@ object WebHost {
 
     // ---------------------------------------------------------------- the WebView
 
-    private fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
+    internal fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
 
     private fun ensureWeb(): WebView {
         web?.let { return it }
@@ -173,7 +173,7 @@ object WebHost {
         w.webChromeClient = chrome
     }
 
-    private fun userAgent(desktop: Boolean): String {
+    internal fun userAgent(desktop: Boolean): String {
         val chrome = Regex("Chrome/[\\d.]+").find(WebSettings.getDefaultUserAgent(app))?.value ?: "Chrome/130.0.0.0"
         return if (desktop) {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) $chrome Safari/537.36"
@@ -184,7 +184,7 @@ object WebHost {
 
     // ---------------------------------------------------------------- the page script
 
-    private fun script(): String {
+    internal fun script(): String {
         val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
         return "window.__AAY_CFG=" + Features.current.toJson() + ";\n" + source
     }
@@ -279,7 +279,53 @@ object WebHost {
 
     fun openUrl(url: String) {
         unfreeze()
+        mode.value = PlayerMode.FULL
         load(normalise(url))
+    }
+
+    // ---------------------------------------------------------------- mini player
+
+    /** FULL: the page fills the screen. MINI: small floating video over the browse page. HIDDEN: closed. */
+    enum class PlayerMode { FULL, MINI, HIDDEN }
+
+    val mode = MutableStateFlow(PlayerMode.FULL)
+
+    fun isOnWatchPage(): Boolean =
+        runCatching { Uri.parse(web?.url.orEmpty()).path.orEmpty() }.getOrDefault("").let {
+            it.startsWith("/watch") || it.startsWith("/live/")
+        }
+
+    /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
+    fun enterMini() {
+        if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
+        AppLog.add("VIEW", "Mini player on")
+        mode.value = PlayerMode.MINI
+        BrowseHost.showFrom(browseStartUrl())
+        js("window.__aay&&window.__aay.mini(true)")
+    }
+
+    fun expandPlayer() {
+        if (mode.value == PlayerMode.FULL) return
+        AppLog.add("VIEW", "Mini player expanded")
+        mode.value = PlayerMode.FULL
+        js("window.__aay&&window.__aay.mini(false)")
+    }
+
+    fun closePlayer() {
+        AppLog.add("VIEW", "Mini player closed")
+        cmd("pause")
+        mode.value = PlayerMode.HIDDEN
+    }
+
+    /** Where to start browsing when the video shrinks: the page you came from, else YouTube home. */
+    fun browseStartUrl(): String {
+        val list = web?.copyBackForwardList() ?: return home()
+        for (i in list.currentIndex - 1 downTo 0) {
+            val u = list.getItemAtIndex(i)?.url ?: continue
+            val path = Uri.parse(u).path.orEmpty()
+            if (!path.startsWith("/watch") && !path.startsWith("/shorts") && Uri.parse(u).host.orEmpty().endsWith("youtube.com")) return u
+        }
+        return home()
     }
 
     /** Goes back in the page. False when there is nowhere to go (already on YouTube home). */
@@ -534,14 +580,14 @@ object WebHost {
 
     // ---------------------------------------------------------------- WebView clients
 
-    private fun allowedHost(host: String?): Boolean {
+    internal fun allowedHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false
         // Google sign-in hops between many Google domains (google.co.uk, accounts.google.*, ...).
         if (GOOGLE_COUNTRY.matches(h)) return true
         return ALLOWED.any { h == it || h.endsWith(".$it") }
     }
 
-    private fun isAdRequest(host: String, path: String): Boolean {
+    internal fun isAdRequest(host: String, path: String): Boolean {
         if (BLOCKED_HOSTS.any { host == it || host.endsWith(".$it") }) return true
         if (host.endsWith("youtube.com")) {
             return path.startsWith("/pagead/") || path.startsWith("/api/stats/ads") ||
@@ -551,7 +597,7 @@ object WebHost {
         return false
     }
 
-    private val emptyResponse: WebResourceResponse
+    internal val emptyResponse: WebResourceResponse
         get() = WebResourceResponse("text/plain", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(ByteArray(0)))
 
     private val client = object : WebViewClient() {
@@ -601,6 +647,7 @@ object WebHost {
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
+            if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
@@ -685,5 +732,11 @@ class WebBridge {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json)
+    }
+
+    /** Swipe down on the playing video. */
+    @JavascriptInterface
+    fun mini() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { WebHost.enterMini() }
     }
 }

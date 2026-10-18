@@ -7,3 +7,7 @@
 -keepclassmembers class com.aayoutube.app.WebBridge {
     @android.webkit.JavascriptInterface <methods>;
 }
+-keep class com.aayoutube.app.BrowseBridge { *; }
+-keepclassmembers class com.aayoutube.app.BrowseBridge {
+    @android.webkit.JavascriptInterface <methods>;
+}

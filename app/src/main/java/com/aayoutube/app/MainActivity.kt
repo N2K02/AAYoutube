@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         sayHello()
         WebHost.onActivityVisible(true)
+        if (WebHost.mode.value != WebHost.PlayerMode.FULL) BrowseHost.resume()
     }
 
     override fun onPause() {
@@ -85,6 +86,7 @@ class MainActivity : ComponentActivity() {
         WebHost.requestLink = null
         releaseController()
         WebHost.onActivityVisible(false)
+        BrowseHost.pause()
     }
 
     private fun sayHello() {

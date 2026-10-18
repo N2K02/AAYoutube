@@ -12,6 +12,7 @@ class AAYoutubeApp : Application() {
         if (isWebProcess()) {
             Features.init(this)
             WebHost.init(this)
+            BrowseHost.init(this)
         } else {
             Library.init(this)
         }
