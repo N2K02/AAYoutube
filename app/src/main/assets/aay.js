@@ -77,6 +77,42 @@
     }, true);
   } catch (e) {}
 
+  /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
+  try {
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      var a = t && t.closest ? t.closest('a[href]') : null;
+      var tag = t ? (t.tagName || '').toLowerCase() : '?';
+      var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
+      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + a.getAttribute('href') : ' (no link)'));
+      if (!a) return;
+      var href = a.href, before = location.href;
+      // A video or mix link that YouTube's page ignored (seen with Mix playlists): open it ourselves.
+      if (/\/watch\?|[?&]list=|\/playlist\?/.test(href) && href !== before) {
+        later(function () {
+          if (location.href === before) {
+            console.log('[aay] link did nothing after 1.5 s, opening it: ' + href);
+            location.href = href;
+          }
+        }, 1500);
+      }
+    }, true);
+    var origPush = history.pushState;
+    history.pushState = function (st, title, url) {
+      console.log('[aay] page change ' + url);
+      return origPush.apply(this, arguments);
+    };
+    ['waiting', 'stalled', 'error', 'emptied', 'loadstart', 'loadedmetadata', 'resize', 'seeking', 'ended'].forEach(function (type) {
+      document.addEventListener(type, function (e) {
+        var v = e.target;
+        if (!v || v.tagName !== 'VIDEO') return;
+        var err = v.error ? ' error=' + v.error.code + ' ' + (v.error.message || '') : '';
+        console.log('[aay] video ' + type + ' ' + v.videoWidth + 'x' + v.videoHeight + ' t=' + v.currentTime.toFixed(1) +
+          ' ready=' + v.readyState + ' net=' + v.networkState + ' paused=' + v.paused + err);
+      }, true);
+    });
+  } catch (e) {}
+
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
   function strip(o, depth) {
@@ -577,14 +613,22 @@
   };
 
   // Screen hidden = background: ask for the lowest video quality (less data, less decoding, less battery).
+  var lowered = false;
   A.setBg = function (on) {
     A.isBg = !!on;
-    if (!CFG.lowQuality) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p || !p.setPlaybackQualityRange) return;
     try {
-      if (on) p.setPlaybackQualityRange('tiny', 'tiny');
-      else p.setPlaybackQualityRange('tiny', 'highres');
+      if (on && CFG.lowQuality && !lowered) {
+        lowered = true;
+        console.log('[aay] background: lowest video quality');
+        p.setPlaybackQualityRange('tiny', 'tiny');
+      } else if (!on && lowered) {
+        // Only undo our own change; a quality the user picked in the player is left alone.
+        lowered = false;
+        console.log('[aay] foreground: video quality back to automatic');
+        p.setPlaybackQualityRange('tiny', 'highres');
+      }
     } catch (e) {}
   };
 })();
