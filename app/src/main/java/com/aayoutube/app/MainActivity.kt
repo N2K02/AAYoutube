@@ -61,8 +61,14 @@ class MainActivity : ComponentActivity() {
         WebHost.onActivityVisible(true)
     }
 
+    override fun onPause() {
+        super.onPause()
+        WebHost.setHold(true)
+    }
+
     override fun onResume() {
         super.onResume()
+        if (!isInPictureInPictureMode) WebHost.setHold(false)
         AppUpdater.onResume(this)
         updatePip()
     }
@@ -117,6 +123,10 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         WebHost.noteVisibilityChange()
         WebHost.inPip.value = isInPictureInPictureMode
+        AppLog.add("VIEW", "Picture in picture=$isInPictureInPictureMode")
+        if (!isInPictureInPictureMode && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            WebHost.setHold(false)
+        }
         WebHost.pip(isInPictureInPictureMode)
     }
 }

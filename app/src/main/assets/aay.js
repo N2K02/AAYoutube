@@ -35,13 +35,22 @@
     var stopVis = function (e) { if (CFG.backgroundPlay !== false) e.stopImmediatePropagation(); };
     document.addEventListener('visibilitychange', stopVis, true);
     document.addEventListener('webkitvisibilitychange', stopVis, true);
+    // Picture in picture and the background also take the focus away; YouTube treats that as "left".
+    var realHasFocus = Document.prototype.hasFocus;
+    document.hasFocus = function () { return CFG.backgroundPlay !== false ? true : realHasFocus.call(document); };
+    ['blur', 'pagehide', 'freeze'].forEach(function (t) {
+      window.addEventListener(t, function (e) {
+        if (CFG.backgroundPlay !== false && (e.target === window || e.target === document)) e.stopImmediatePropagation();
+      }, true);
+    });
+    document.addEventListener('freeze', stopVis, true);
   } catch (e) {}
 
   /* ---------- 1b. Keep playing when the screen is hidden or in picture in picture ---------- */
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false;
-  function holding() { return CFG.backgroundPlay !== false && (A.isBg || A.inPip); }
+  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip); }
   try {
     var origPause = HTMLMediaElement.prototype.pause;
     HTMLMediaElement.prototype.pause = function () {
@@ -57,7 +66,7 @@
     window.addEventListener('pause', function (e) {
       if (e.target && e.target.tagName === 'VIDEO') {
         console.log('[aay] video paused event: realHidden=' + (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) +
-          ' focus=' + document.hasFocus() + ' ready=' + e.target.readyState + ' bg=' + A.isBg + ' pip=' + A.inPip);
+          ' focus=' + document.hasFocus() + ' ready=' + e.target.readyState + ' bg=' + A.isBg + ' pip=' + A.inPip + ' hold=' + A.hold);
       }
     }, true);
     window.addEventListener('play', function (e) {
@@ -488,6 +497,9 @@
     applyCss();
     schedTick();
   };
+
+  // Set by the app as soon as the screen starts to leave (before PiP or the background kick in).
+  A.setHold = function (on) { A.hold = !!on; };
 
   A.pip = function (on) {
     A.inPip = !!on;

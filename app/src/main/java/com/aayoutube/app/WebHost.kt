@@ -241,6 +241,13 @@ object WebHost {
         js("window.__aay&&window.__aay.setBg(${!shown})")
     }
 
+    /** The screen is leaving the foreground (or came back): page pauses are ignored until it returns. */
+    fun setHold(on: Boolean) {
+        noteVisibilityChange()
+        AppLog.add("VIEW", "Hold playback=$on")
+        js("window.__aay&&window.__aay.setHold($on)")
+    }
+
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
 
     fun openUrl(url: String) {
