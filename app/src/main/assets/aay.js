@@ -51,7 +51,7 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0;
-  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip); }
+  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini); }
   try {
     var origPause = HTMLMediaElement.prototype.pause;
     HTMLMediaElement.prototype.pause = function () {
@@ -153,6 +153,16 @@
       }, true);
     });
   } catch (e) {}
+
+  /* ---------- 1f. Browse page: no video plays here (feed previews would fight the mini player) ---------- */
+  if (BROWSE) {
+    try {
+      HTMLMediaElement.prototype.play = function () {
+        try { this.pause(); } catch (e) {}
+        return Promise.reject(new DOMException('Videos play in the AAYoutube player', 'NotAllowedError'));
+      };
+    } catch (e) {}
+  }
 
   /* ---------- 1e. Swipe down on the playing video: mini player, keep browsing ---------- */
   try {

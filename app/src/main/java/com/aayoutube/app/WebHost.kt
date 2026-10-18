@@ -300,7 +300,8 @@ object WebHost {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
         AppLog.add("VIEW", "Mini player on")
         mode.value = PlayerMode.MINI
-        BrowseHost.showFrom(browseStartUrl())
+        // Like the YouTube app: Home underneath (or wherever you were browsing before).
+        BrowseHost.showFrom(home())
         js("window.__aay&&window.__aay.mini(true)")
     }
 

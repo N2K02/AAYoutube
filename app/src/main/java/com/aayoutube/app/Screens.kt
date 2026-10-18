@@ -427,49 +427,92 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             )
         }
 
-        // Player page: never moved to another parent (that would pause the video); only its size changes.
-        val miniBox = Modifier
-            .align(Alignment.BottomEnd)
-            .padding(end = 12.dp, bottom = 12.dp + bottomInset)
-            .width(224.dp)
-            .aspectRatio(16f / 9f)
-        val playerMod = when {
-            small -> miniBox.clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-            hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
-            else -> Modifier.fillMaxSize()
-        }
-        key(version) {
-            AndroidView(
-                modifier = playerMod,
-                factory = { ctx ->
-                    val activity = ctx.findActivity()!!
-                    FrameLayout(ctx).also { frame ->
-                        frame.addView(WebHost.attach(activity), FrameLayout.LayoutParams(-1, -1))
-                    }
-                },
-                onRelease = { WebHost.detach(it) },
-            )
-        }
+        // Player page: never moved to another parent (that would pause the video); only its size
+        // and place change. Mini player: a floating window like the YouTube app's, draggable,
+        // starting above YouTube's own bottom menu so it covers nothing important.
+        val context = LocalContext.current
+        val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
+        val density = LocalDensity.current
+        var mx by remember { mutableStateOf(prefs.getFloat("miniX", 1f)) }
+        var my by remember { mutableStateOf(prefs.getFloat("miniY", 1f)) }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val miniW = 224.dp
+            val miniH = 126.dp
+            val edge = with(density) { 12.dp.toPx() }
+            val ytMenu = with(density) { 64.dp.toPx() } // YouTube's bottom menu (Home, Subscriptions, You)
+            val wPx = with(density) { miniW.toPx() }
+            val hPx = with(density) { miniH.toPx() }
+            val minX = edge
+            val maxX = (constraints.maxWidth - wPx - edge).coerceAtLeast(minX)
+            val minY = edge
+            val maxY = (constraints.maxHeight - hPx - edge - ytMenu).coerceAtLeast(minY)
+            val px = minX + (maxX - minX) * mx
+            val py = minY + (maxY - minY) * my
+            val miniMod = Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH)
 
-        // Mini player controls: tap to open it again, pause/play, close.
-        if (small) {
-            Box(
-                miniBox.pointerInput(Unit) {
-                    detectTapGestures(onTap = { WebHost.expandPlayer() })
-                },
-            ) {
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = { WebHost.closePlayer() },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(32.dp),
-                ) { Icon(Icons.Filled.Close, contentDescription = "Close", modifier = Modifier.size(18.dp)) }
-                androidx.compose.material3.FilledTonalIconButton(
-                    onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
-                    modifier = Modifier.align(Alignment.BottomStart).padding(4.dp).size(32.dp),
+            val playerMod = when {
+                small -> miniMod.clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
+                else -> Modifier.fillMaxSize()
+            }
+            key(version) {
+                AndroidView(
+                    modifier = playerMod,
+                    factory = { ctx ->
+                        val activity = ctx.findActivity()!!
+                        FrameLayout(ctx).also { frame ->
+                            frame.addView(WebHost.attach(activity), FrameLayout.LayoutParams(-1, -1))
+                        }
+                    },
+                    onRelease = { WebHost.detach(it) },
+                )
+            }
+
+            // Mini player controls (like the YouTube app): play/pause top left, close top right,
+            // red progress line at the bottom. Tap to open it again, drag to move it.
+            if (small) {
+                // Progress: the page reports now and then; move it along in between.
+                var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+                LaunchedEffect(snap) {
+                    while (true) {
+                        now = android.os.SystemClock.elapsedRealtime()
+                        delay(500)
+                    }
+                }
+                val seenAt = remember(snap) { android.os.SystemClock.elapsedRealtime() }
+                val pos = if (snap.playing) snap.posMs + ((now - seenAt) * snap.rate).toLong() else snap.posMs
+                val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
+
+                Box(
+                    miniMod
+                        .pointerInput(maxX, maxY) {
+                            detectDragGestures(
+                                onDragEnd = { prefs.edit().putFloat("miniX", mx).putFloat("miniY", my).apply() },
+                            ) { change, drag ->
+                                change.consume()
+                                mx = (mx + drag.x / (maxX - minX).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                my = (my + drag.y / (maxY - minY).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            }
+                        }
+                        .pointerInput(Unit) { detectTapGestures(onTap = { WebHost.expandPlayer() }) },
                 ) {
-                    Icon(
-                        if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (snap.playing) "Pause" else "Play",
-                        modifier = Modifier.size(18.dp),
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(36.dp),
+                    ) {
+                        Icon(
+                            if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (snap.playing) "Pause" else "Play",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.closePlayer() },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
+                    ) { Icon(Icons.Filled.Close, contentDescription = "Close", modifier = Modifier.size(20.dp)) }
+                    Box(
+                        Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
+                            .background(Color(0xFFFF0033)),
                     )
                 }
             }
