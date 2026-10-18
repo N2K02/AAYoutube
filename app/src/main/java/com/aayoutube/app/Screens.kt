@@ -62,8 +62,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -157,11 +157,18 @@ fun AppRoot(activity: MainActivity) {
         }
     }
 
-    BackHandler(enabled = fullscreen != null || (tab == 0 && canGoBack) || tab != 0) {
+    // Back: close fullscreen, then other tabs, then the page's own history (asked live from the
+    // WebView, because YouTube changes pages without reloading), then YouTube home. On the home
+    // page, back sends the app to the background (it keeps playing) instead of closing it.
+    BackHandler(enabled = true) {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
             tab != 0 -> tab = 0
-            else -> WebHost.goBack()
+            WebHost.goBack() -> Unit
+            else -> {
+                AppLog.add("UI", "Back on YouTube home: app to background")
+                activity.moveTaskToBack(true)
+            }
         }
     }
 
@@ -178,37 +185,36 @@ fun AppRoot(activity: MainActivity) {
             }
         },
     ) {
+        val barAllowed = fullscreen == null && !inPip
+        val bar: @Composable () -> Unit = {
+            NavigationBar {
+                Tab.entries.forEachIndexed { i, t ->
+                    NavigationBarItem(
+                        selected = tab == i,
+                        onClick = { tab = i },
+                        icon = {
+                            if (t == Tab.Update && updater is AppUpdater.State.Available) {
+                                BadgedBox(badge = { Badge() }) { Icon(t.icon, null) }
+                            } else {
+                                Icon(t.icon, null)
+                            }
+                        },
+                        label = { Text(t.label, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
+                    )
+                }
+                // Quit: same power icon as MRadio. Stops playback and closes the app.
+                NavigationBarItem(
+                    selected = false,
+                    onClick = { activity.quit() },
+                    icon = { Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Quit") },
+                    label = { Text("Quit") },
+                )
+            }
+        }
         Scaffold(
             bottomBar = {
-                AnimatedVisibility(
-                    visible = fullscreen == null && !inPip && barShown,
-                    enter = expandVertically(expandFrom = Alignment.Top),
-                    exit = shrinkVertically(shrinkTowards = Alignment.Top),
-                ) {
-                    NavigationBar {
-                        Tab.entries.forEachIndexed { i, t ->
-                            NavigationBarItem(
-                                selected = tab == i,
-                                onClick = { tab = i },
-                                icon = {
-                                    if (t == Tab.Update && updater is AppUpdater.State.Available) {
-                                        BadgedBox(badge = { Badge() }) { Icon(t.icon, null) }
-                                    } else {
-                                        Icon(t.icon, null)
-                                    }
-                                },
-                                label = { Text(t.label, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center) },
-                            )
-                        }
-                        // Quit: same power icon as MRadio. Stops playback and closes the app.
-                        NavigationBarItem(
-                            selected = false,
-                            onClick = { activity.quit() },
-                            icon = { Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Quit") },
-                            label = { Text("Quit") },
-                        )
-                    }
-                }
+                // Auto-hide off: the bar is part of the layout as usual.
+                if (!features.autoHideMenu && barAllowed) bar()
             },
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
@@ -228,6 +234,16 @@ fun AppRoot(activity: MainActivity) {
                     }
                 }
             }
+        }
+        // Auto-hide on: the bar floats over the bottom of the page, so showing or hiding it never
+        // resizes the page (resizing in the middle of a swipe broke YouTube's swipe-down gesture).
+        if (features.autoHideMenu) {
+            AnimatedVisibility(
+                visible = barAllowed && barShown,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically { it },
+                exit = slideOutVertically { it },
+            ) { bar() }
         }
         val full = fullscreen
         if (full != null) {

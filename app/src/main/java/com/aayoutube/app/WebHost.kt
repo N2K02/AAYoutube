@@ -282,8 +282,21 @@ object WebHost {
         load(normalise(url))
     }
 
-    fun goBack() {
-        web?.takeIf { it.canGoBack() }?.goBack()
+    /** Goes back in the page. False when there is nowhere to go (already on YouTube home). */
+    fun goBack(): Boolean {
+        val w = web ?: return false
+        if (w.canGoBack()) {
+            AppLog.add("NAV", "Back in page history")
+            w.goBack()
+            return true
+        }
+        val path = runCatching { Uri.parse(w.url.orEmpty()).path.orEmpty() }.getOrDefault("")
+        if (path.isNotEmpty() && path != "/") {
+            AppLog.add("NAV", "Back with no history: YouTube home")
+            w.loadUrl(home())
+            return true
+        }
+        return false
     }
 
     fun reload() {
