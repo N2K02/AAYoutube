@@ -113,6 +113,35 @@
     });
   } catch (e) {}
 
+  /* ---------- 1d. No "Tap to unmute": YouTube mutes videos that start without a tap ---------- */
+  // During the first seconds of each video, a mute that did not come from you is undone.
+  // A mute you choose later (or the ad skipper's) is left alone.
+  try {
+    var startedAt = 0, lastTap = 0;
+    document.addEventListener('pointerdown', function () { lastTap = Date.now(); }, true);
+    document.addEventListener('loadstart', function (e) {
+      if (e.target && e.target.tagName === 'VIDEO') startedAt = Date.now();
+    }, true);
+    var unmute = function (v) {
+      if (!v || !v.muted) return;
+      if (typeof adSped !== 'undefined' && adSped) return;         // the ad skipper muted it
+      if (Date.now() - lastTap < 1500) return;                     // you just tapped mute
+      if (Date.now() - startedAt > 15000) return;                  // only at the start of a video
+      var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      try { if (p && p.unMute) p.unMute(); } catch (e) {}
+      try { if (p && p.setVolume && p.getVolume && p.getVolume() === 0) p.setVolume(100); } catch (e) {}
+      v.muted = false;
+      var b = document.querySelector('.ytp-unmute, .ytmUnmuteButton, ytm-unmute-button button, button[class*="unmute" i]');
+      if (b && b.offsetParent !== null) { try { b.click(); } catch (e) {} }
+      console.log('[aay] unmuted the video (YouTube started it muted)');
+    };
+    ['volumechange', 'play', 'playing', 'loadedmetadata'].forEach(function (type) {
+      document.addEventListener(type, function (e) {
+        if (e.target && e.target.tagName === 'VIDEO') later(function () { unmute(e.target); }, 50);
+      }, true);
+    });
+  } catch (e) {}
+
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
   function strip(o, depth) {
