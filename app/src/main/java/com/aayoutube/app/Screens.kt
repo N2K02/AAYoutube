@@ -24,6 +24,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -268,7 +280,7 @@ fun WebPane(modifier: Modifier = Modifier) {
                         Spacer(Modifier.height(8.dp))
                         Text("Check your connection and try again.")
                         Spacer(Modifier.height(16.dp))
-                        Button(onClick = { WebHost.reload() }) { Text("Retry") }
+                        AppButton("Retry", Icons.Filled.Refresh) { WebHost.reload() }
                     }
                 }
             }
@@ -360,10 +372,11 @@ fun FeaturesPage() {
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { WebHost.reload() }) { Text("Reload") }
-            OutlinedButton(onClick = { WebHost.clearCache() }) { Text("Clear cache") }
-            OutlinedButton(onClick = { WebHost.clearSession() }) { Text("Sign out") }
+        // Left, centre, right.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            AppButton("Reload", Icons.Filled.Refresh) { WebHost.reload() }
+            AppButton("Clear cache", Icons.Filled.DeleteSweep) { WebHost.clearCache() }
+            AppButton("Sign out", Icons.AutoMirrored.Filled.Logout) { WebHost.clearSession() }
         }
         Text(
             "Ad blocking, dislikes and background play rely on how YouTube's website works today, and may need an update when it changes.",
@@ -441,14 +454,7 @@ fun UpdatePage() {
                 when (val s = state) {
                     is AppUpdater.State.Idle -> {
                         Text("Check GitHub for a new version.")
-                        Button(
-                            onClick = { AppUpdater.check(manual = true) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.size(8.dp))
-                            Text("Check for updates")
-                        }
+                        AppButton("Check for updates", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
                     }
                     is AppUpdater.State.Checking -> {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -458,22 +464,13 @@ fun UpdatePage() {
                     }
                     is AppUpdater.State.UpToDate -> {
                         Text("You're on the latest version.", style = MaterialTheme.typography.titleMedium)
-                        Button(
-                            onClick = { AppUpdater.check(manual = true) },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.size(8.dp))
-                            Text("Check again")
-                        }
+                        AppButton("Check again", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
                     }
                     is AppUpdater.State.Available -> {
                         Text("v${s.release.versionName} is available", style = MaterialTheme.typography.titleMedium)
                         Notes(s.release)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { AppUpdater.update(s.release) }) { Text("Download & install") }
-                            TextButton(onClick = { AppUpdater.skip(s.release) }) { Text("Skip") }
-                        }
+                        AppButton("Download & install", Icons.Filled.Download, Modifier.fillMaxWidth()) { AppUpdater.update(s.release) }
+                        AppButton("Skip this version", Icons.Filled.SkipNext, Modifier.fillMaxWidth()) { AppUpdater.skip(s.release) }
                     }
                     is AppUpdater.State.Downloading -> {
                         Text("Downloading v${s.release.versionName}", style = MaterialTheme.typography.titleMedium)
@@ -484,24 +481,22 @@ fun UpdatePage() {
                     is AppUpdater.State.NeedsPermission -> {
                         Text("Allow installs from AAYoutube", style = MaterialTheme.typography.titleMedium)
                         Text("Android needs “install unknown apps” turned on for this app. The install continues when you come back.")
-                        Button(onClick = { activity?.let { AppUpdater.openInstallPermission(it) } }) { Text("Open settings") }
+                        AppButton("Open settings", Icons.Filled.Settings, Modifier.fillMaxWidth()) { activity?.let { AppUpdater.openInstallPermission(it) } }
                     }
                     is AppUpdater.State.Ready -> {
                         Text("v${s.release.versionName} is ready", style = MaterialTheme.typography.titleMedium)
-                        Button(onClick = { AppUpdater.install(s.release) }) { Text("Install") }
+                        AppButton("Install", Icons.Filled.InstallMobile, Modifier.fillMaxWidth()) { AppUpdater.install(s.release) }
                     }
                     is AppUpdater.State.Failed -> {
                         Text(s.message, style = MaterialTheme.typography.titleMedium)
                         if (s.diagnostics.isNotBlank()) {
                             Text(s.diagnostics, style = MaterialTheme.typography.bodySmall)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { AppUpdater.check(manual = true) }) { Text("Try again") }
-                            if (activity != null) {
-                                androidx.compose.material3.FilledTonalButton(onClick = { AppUpdater.openReleasePage(activity, s.release) }) { Text("Release page") }
-                            }
-                            TextButton(onClick = { AppUpdater.dismiss() }) { Text("Dismiss") }
+                        AppButton("Try again", Icons.Filled.Refresh, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
+                        if (activity != null) {
+                            AppButton("Release page", Icons.AutoMirrored.Filled.OpenInNew, Modifier.fillMaxWidth()) { AppUpdater.openReleasePage(activity, s.release) }
                         }
+                        AppButton("Dismiss", Icons.Filled.Close, Modifier.fillMaxWidth()) { AppUpdater.dismiss() }
                     }
                 }
             }
@@ -587,24 +582,42 @@ fun LogsPage() {
             }
         }
 
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                enabled = current > 0,
-                onClick = { page = current - 1; follow = false },
-            ) { Text("Prev") }
-            Text("${current + 1} / $pages", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-            OutlinedButton(
-                enabled = current < pages - 1,
-                onClick = { page = current + 1; follow = page >= pages - 1 },
-            ) { Text("Next") }
+        // Left, centre, right.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            AppButton("Prev", Icons.AutoMirrored.Filled.KeyboardArrowLeft, enabled = current > 0) { page = current - 1; follow = false }
+            Text("${current + 1} / $pages", style = MaterialTheme.typography.labelLarge)
+            AppButton("Next", Icons.AutoMirrored.Filled.KeyboardArrowRight, enabled = current < pages - 1) {
+                page = current + 1; follow = page >= pages - 1
+            }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            AppButton("Copy", Icons.Filled.ContentCopy) {
                 val cm = context.getSystemService(ClipboardManager::class.java)
                 cm.setPrimaryClip(ClipData.newPlainText("AAYoutube logs", AppLog.all()))
                 Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
-            }) { Text("Copy") }
-            OutlinedButton(onClick = { AppLog.clear(); follow = true }) { Text("Clear all") }
+            }
+            AppButton("Clear all", Icons.Filled.DeleteSweep) { AppLog.clear(); follow = true }
         }
+    }
+}
+
+/** The one button style used everywhere in the app: filled, icon then label (like "Check again"). */
+@Composable
+fun AppButton(
+    text: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.size(6.dp))
+        Text(text, maxLines = 1, softWrap = false)
     }
 }
