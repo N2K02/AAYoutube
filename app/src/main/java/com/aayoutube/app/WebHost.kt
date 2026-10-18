@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.MutableContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.Context
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -113,14 +114,36 @@ object WebHost {
         configure(w)
         web = w
         installScript(w)
-        val url = pendingUrl ?: home()
+        val url = pendingUrl ?: savedUrl() ?: home()
         pendingUrl = null
         w.loadUrl(url)
         return w
     }
 
+    // ---------------------------------------------------------------- resume last page
+
+    private val webPrefs by lazy { app.getSharedPreferences("aay_web", Context.MODE_PRIVATE) }
+
+    private fun savedUrl(): String? {
+        if (!Features.current.resumeLast) return null
+        val u = webPrefs.getString("lastUrl", null) ?: return null
+        val host = Uri.parse(u).host.orEmpty()
+        return u.takeIf { host.endsWith("youtube.com") }
+    }
+
+    private fun saveUrl(url: String) {
+        val u = Uri.parse(url)
+        if (!u.host.orEmpty().endsWith("youtube.com")) return
+        // Without our autoplay flags: opening the app should not start a video on its own.
+        val clean = u.buildUpon().clearQuery().apply {
+            u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
+        }.build().toString()
+        webPrefs.edit().putString("lastUrl", clean).apply()
+    }
+
     private fun configure(w: WebView) {
         val s = w.settings
+        s.textZoom = Features.current.pageZoom
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.mediaPlaybackRequiresUserGesture = false
@@ -183,6 +206,7 @@ object WebHost {
             w.loadUrl(home())
             return
         }
+        w.settings.textZoom = f.pageZoom
         installScript(w)
         js("window.__aay&&window.__aay.config(${f.toJson()})")
     }
@@ -572,7 +596,10 @@ object WebHost {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             canGoBack.value = view.canGoBack()
-            if (!url.isNullOrEmpty() && url != "about:blank") lastUrl = url
+            if (!url.isNullOrEmpty() && url != "about:blank") {
+                lastUrl = url
+                saveUrl(url)
+            }
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -620,7 +647,12 @@ object WebHost {
         // No grey play-button poster while a video loads.
         override fun getDefaultVideoPoster(): Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
 
-        override fun onPermissionRequest(request: PermissionRequest) = request.deny()
+        // Protected (Widevine) video is allowed, so paid/rented YouTube films can play; camera and microphone stay off.
+        override fun onPermissionRequest(request: PermissionRequest) {
+            val drm = request.resources.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
+            AppLog.add("PERM", "Page asked for ${request.resources.joinToString()} -> granted ${drm.joinToString().ifEmpty { "nothing" }}")
+            if (drm.isNotEmpty()) request.grant(drm.toTypedArray()) else request.deny()
+        }
     }
 
     private val GOOGLE_COUNTRY = Regex("^([a-z0-9-]+\\.)*google\\.[a-z]{2,3}(\\.[a-z]{2})?$")

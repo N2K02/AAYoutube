@@ -27,7 +27,8 @@
         android:icon="@mipmap/ic_launcher"
         android:label="AAYoutube"
         android:theme="@style/Theme.AAYoutube"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:appCategory="game">
 
         <!-- Tells Android Auto this is a media app -->
         <meta-data
@@ -46,7 +47,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- Android 15+: Android Auto lists this screen in the car launcher and runs it on the car display (same approach as AABrowser). -->
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
             </intent-filter>
+            <!-- Personal use: keep the screen usable on the car display while driving (sideloaded, your responsibility). -->
+            <meta-data
+                android:name="distractionOptimized"
+                android:value="true" />
             <!-- Opens YouTube links in this app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -68,6 +75,7 @@
         <!-- Shows the YouTube page on the car screen. Lives in the web process, next to the WebView. -->
         <service
             android:name=".CarVideoService"
+            android:enabled="@bool/legacy_car_screen"
             android:process=":web"
             android:exported="true">
             <intent-filter>

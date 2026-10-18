@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         WebHost.requestLink = { runOnUiThread { sayHello() } }
+        AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         sayHello()
         WebHost.onActivityVisible(true)
     }
@@ -137,17 +138,23 @@ class MainActivity : ComponentActivity() {
 
     // ---------------------------------------------------------------- picture in picture
 
+    /** False when Android Auto is showing this screen on the car display (no picture in picture there). */
+    private fun onPhoneScreen(): Boolean {
+        val id = if (Build.VERSION.SDK_INT >= 30) display?.displayId else @Suppress("DEPRECATION") windowManager.defaultDisplay.displayId
+        return id == null || id == android.view.Display.DEFAULT_DISPLAY
+    }
+
     fun updatePip() {
         if (Build.VERSION.SDK_INT < 26) return
         val playing = WebHost.snapshot.value.playing
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
-        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing)
+        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && onPhoneScreen())
         runCatching { setPictureInPictureParams(builder.build()) }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing) {
+        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && onPhoneScreen()) {
             runCatching {
                 enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
             }

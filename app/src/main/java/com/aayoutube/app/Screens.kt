@@ -313,6 +313,29 @@ fun FeaturesPage() {
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use www.youtube.com instead of the mobile site.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
         }
+        Text("Display", style = MaterialTheme.typography.titleMedium)
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Toggle("Resume where you left off", "Opens the last page when the app starts.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp, top = 4.dp)) {
+                Text("Text size", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Bigger text is easier to read on a car screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                val zooms = listOf(80, 90, 100, 115, 130)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    zooms.forEachIndexed { i, z ->
+                        SegmentedButton(
+                            selected = f.pageZoom == z,
+                            onClick = { Features.update { it.copy(pageZoom = z) } },
+                            shape = SegmentedButtonDefaults.itemShape(index = i, count = zooms.size),
+                        ) { Text("$z%") }
+                    }
+                }
+            }
+        }
         Text("Menu bar", style = MaterialTheme.typography.titleMedium)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
             Toggle(
