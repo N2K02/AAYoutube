@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
@@ -335,7 +336,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         if (small) {
             Box(
                 miniBox.pointerInput(Unit) {
-                    androidx.compose.foundation.gestures.detectTapGestures(onTap = { WebHost.expandPlayer() })
+                    detectTapGestures(onTap = { WebHost.expandPlayer() })
                 },
             ) {
                 androidx.compose.material3.FilledTonalIconButton(
