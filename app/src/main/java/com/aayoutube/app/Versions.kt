@@ -9,7 +9,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.util.UUID
 
-/** What the app runs on, for the Update & Version page (web process). */
+/** What the app runs on, for the Info page (web process). */
 object Versions {
     class Row(val label: String, val value: String)
     class Group(val title: String, val rows: List<Row>)

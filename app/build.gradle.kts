@@ -9,7 +9,7 @@ val appVersion = (findProperty("appVersion") as String?) ?: "1.0"
 require(Regex("""\d+\.\d""").matches(appVersion)) { "appVersion must look like 1.0, got $appVersion" }
 val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt() * 10 + minor.toInt() }
 
-// Library versions in one place: used for the dependencies and shown on the Update & Version page.
+// Library versions in one place: used for the dependencies and shown on the Info page.
 val v = mapOf(
     "material3" to "1.5.0-beta01",
     "media3" to "1.8.0",

@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -99,7 +100,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("YouTube", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Logs("Logs", Icons.Filled.BugReport),
-    Update("Update & Version", Icons.Filled.SystemUpdate),
+    Update("Info", Icons.Filled.Info),
 }
 
 @Composable
@@ -384,7 +385,7 @@ fun UpdatePage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Update & Version", style = MaterialTheme.typography.headlineMedium)
+        Text("Info", style = MaterialTheme.typography.headlineMedium)
 
         // What the app runs on: device, WebView and library versions.
         val groups = remember { Versions.collect(context) }
