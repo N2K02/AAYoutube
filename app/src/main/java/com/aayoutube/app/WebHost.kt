@@ -108,7 +108,7 @@ object WebHost {
         web?.let { return it }
         val context = MutableContextWrapper(app)
         wrapper = context
-        val w = WebView(context)
+        val w = BackgroundWebView(context)
         w.setBackgroundColor(Color.BLACK)
         configure(w)
         web = w

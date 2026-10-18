@@ -49,7 +49,7 @@
   /* ---------- 1b. Keep playing when the screen is hidden or in picture in picture ---------- */
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
-  var allowPause = false;
+  var allowPause = false, ignored = 0;
   function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip); }
   try {
     var origPause = HTMLMediaElement.prototype.pause;
@@ -57,7 +57,10 @@
       var stack = '';
       try { stack = String(new Error().stack).split('\n').slice(2, 5).join(' | '); } catch (e) {}
       if (!allowPause && holding() && !this.ended) {
-        console.log('[aay] pause() ignored (bg=' + A.isBg + ' pip=' + A.inPip + ') from ' + stack);
+        ignored++;
+        if (ignored <= 3 || ignored % 40 === 0) {
+          console.log('[aay] pause() ignored x' + ignored + ' (bg=' + A.isBg + ' pip=' + A.inPip + ' hold=' + A.hold + ') from ' + stack);
+        }
         return;
       }
       console.log('[aay] pause() called, allowed=' + allowPause + ' from ' + stack);
@@ -148,8 +151,11 @@
     'html.aay-pip .html5-video-player,html.aay-pip .html5-video-player *{visibility:visible!important}' +
     'html.aay-pip .html5-video-player{position:fixed!important;top:0!important;left:0!important;' +
     'width:100vw!important;height:100vh!important;z-index:2147483647!important;margin:0!important}' +
-    'html.aay-pip video{position:absolute!important;top:0!important;left:0!important;width:100%!important;' +
-    'height:100%!important;object-fit:contain!important}' +
+    'html.aay-pip .html5-video-container{position:fixed!important;top:0!important;left:0!important;' +
+    'width:100vw!important;height:100vh!important;z-index:2147483646!important}' +
+    'html.aay-pip video{position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
+    'height:100vh!important;max-width:none!important;max-height:none!important;object-fit:contain!important;' +
+    'transform:none!important;z-index:2147483647!important}' +
     'html.aay-pip .ytp-chrome-top,html.aay-pip .ytp-chrome-bottom,html.aay-pip .ytp-gradient-top,' +
     'html.aay-pip .ytp-gradient-bottom,html.aay-pip .ytp-pause-overlay,html.aay-pip .ytp-ce-element,' +
     'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}';
@@ -536,8 +542,29 @@
     pipLast = i;
   }
 
+  var lifted = [];
+  function liftAncestors(v, on) {
+    lifted.forEach(function (el) {
+      el.style.removeProperty('transform'); el.style.removeProperty('contain'); el.style.removeProperty('filter');
+      el.style.removeProperty('will-change');
+    });
+    lifted = [];
+    if (!on || !v) return;
+    for (var el = v.parentElement; el && el !== document.documentElement; el = el.parentElement) {
+      var cs = getComputedStyle(el);
+      if (cs.transform !== 'none' || (cs.contain && cs.contain !== 'none') || cs.filter !== 'none' || cs.willChange.indexOf('transform') >= 0) {
+        el.style.setProperty('transform', 'none', 'important');
+        el.style.setProperty('contain', 'none', 'important');
+        el.style.setProperty('filter', 'none', 'important');
+        el.style.setProperty('will-change', 'auto', 'important');
+        lifted.push(el);
+      }
+    }
+  }
+
   A.pip = function (on) {
     A.inPip = !!on;
+    liftAncestors(getVideo(), !!on);
     document.documentElement.classList.toggle('aay-pip', !!on);
     clearInterval(pipTimer); pipTimer = 0; pipLast = null;
     var v = getVideo();
