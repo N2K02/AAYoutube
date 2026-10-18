@@ -105,6 +105,7 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
             Player.COMMAND_GET_TIMELINE,
             Player.COMMAND_GET_METADATA,
             Player.COMMAND_SET_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_MEDIA_ITEM,
             Player.COMMAND_CHANGE_MEDIA_ITEMS,
             Player.COMMAND_SET_SPEED_AND_PITCH,
         ).build()
@@ -124,13 +125,21 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
 
         if (hasItem) {
             val seekable = !s.live && s.durMs > 0
-            val data = MediaItemData.Builder(if (s.id.isNotEmpty()) "v:" + s.id else "pending")
-                .setMediaItem(mediaItem(s))
-                .setDurationUs(if (seekable) s.durMs * 1000L else C.TIME_UNSET)
-                .setIsSeekable(seekable)
-                .build()
-            builder.setPlaylist(ImmutableList.of(data))
-                .setCurrentMediaItemIndex(0)
+            val list = queueOf(s)
+            val current = currentIndex(s, list)
+            val used = HashSet<String>()
+            val items = list.mapIndexed { i, q ->
+                // Unique ids; the current video keeps "v:<id>" so a queue update is not seen as a track change.
+                var uid = "v:" + q.id
+                if (!used.add(uid)) uid = "v:" + q.id + "#" + i
+                val b = MediaItemData.Builder(uid).setMediaItem(mediaItem(q, if (i == current) s else null))
+                if (i == current) {
+                    b.setDurationUs(if (seekable) s.durMs * 1000L else C.TIME_UNSET).setIsSeekable(seekable)
+                }
+                b.build()
+            }
+            builder.setPlaylist(ImmutableList.copyOf(items))
+                .setCurrentMediaItemIndex(current)
                 .setContentPositionMs(
                     if (s.playing) PositionSupplier.getExtrapolating(s.posMs, s.rate)
                     else PositionSupplier.getConstant(s.posMs),
@@ -156,9 +165,28 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
     override fun handleRelease(): ListenableFuture<*> = Futures.immediateVoidFuture()
 
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
+        val s = snap
+        val list = queueOf(s)
+        val current = currentIndex(s, list)
+        // A tap on another entry of the queue (Android Auto): open that video.
+        if (mediaItemIndex != C.INDEX_UNSET && mediaItemIndex != current && mediaItemIndex in list.indices) {
+            val q = list[mediaItemIndex]
+            snap = s.copy(id = q.id, title = q.title, artist = q.artist, art = "", posMs = 0, durMs = 0, playing = false, buffering = true)
+            setIntent(true)
+            host.open(q.id, 0L)
+            return Futures.immediateVoidFuture()
+        }
         if (positionMs != C.TIME_UNSET) host.seekTo(positionMs)
         return Futures.immediateVoidFuture()
     }
+
+    /** The queue to show: the page's playlist / Up next when it contains the current video. */
+    private fun queueOf(s: Snap): List<QItem> =
+        if (s.id.isNotEmpty() && s.queue.any { it.id == s.id }) s.queue
+        else listOf(QItem(s.id, s.title, s.artist))
+
+    private fun currentIndex(s: Snap, list: List<QItem>): Int =
+        list.indexOfFirst { it.id == s.id }.coerceAtLeast(0)
 
     override fun handleSetPlaybackParameters(playbackParameters: PlaybackParameters): ListenableFuture<*> {
         host.rate(playbackParameters.speed)
@@ -195,18 +223,22 @@ class BridgePlayer(looper: Looper) : SimpleBasePlayer(looper) {
         return Futures.immediateVoidFuture()
     }
 
-    private fun mediaItem(s: Snap): MediaItem {
+    /** [now]: the snapshot when this is the playing video (its title and picture win). */
+    private fun mediaItem(q: QItem, now: Snap?): MediaItem {
+        val id = q.id
+        val title = now?.title?.ifEmpty { null } ?: q.title
+        val artist = now?.artist?.ifEmpty { null } ?: q.artist
         val art = when {
-            s.art.isNotEmpty() -> Uri.parse(s.art)
-            s.id.isNotEmpty() -> Uri.parse("https://i.ytimg.com/vi/${s.id}/hqdefault.jpg")
+            now != null && now.art.isNotEmpty() -> Uri.parse(now.art)
+            id.isNotEmpty() -> Uri.parse("https://i.ytimg.com/vi/$id/hqdefault.jpg")
             else -> null
         }
         return MediaItem.Builder()
-            .setMediaId(if (s.id.isNotEmpty()) "v:" + s.id else "pending")
+            .setMediaId(if (id.isNotEmpty()) "v:$id" else "pending")
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle(s.title.ifEmpty { "YouTube" })
-                    .setArtist(s.artist.ifEmpty { "YouTube" })
+                    .setTitle(title.ifEmpty { "YouTube" })
+                    .setArtist(artist.ifEmpty { "YouTube" })
                     .setArtworkUri(art)
                     .setIsPlayable(true)
                     .setIsBrowsable(false)

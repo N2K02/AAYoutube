@@ -529,6 +529,11 @@ object WebHost {
                 rate = o.optDouble("rate", 1.0).toFloat(),
                 canNext = o.optBoolean("next"),
                 canPrev = o.optBoolean("prev"),
+                queue = o.optJSONArray("queue")?.let { a ->
+                    (0 until minOf(a.length(), 40)).mapNotNull { i ->
+                        a.optJSONObject(i)?.let { q -> QItem(q.optString("id"), q.optString("t"), q.optString("a")) }
+                    }.filter { it.id.isNotEmpty() }
+                }.orEmpty(),
             )
         }.getOrNull() ?: return
         main.post { publish(s) }

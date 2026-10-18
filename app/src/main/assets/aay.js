@@ -193,11 +193,63 @@
     return o;
   }
 
+  /* ---------- 2b. Queue for Android Auto: playlist / Mix, or Up next ---------- */
+  var Q = { kind: '', items: [] };
+  function textOf(x) {
+    if (!x) return '';
+    if (typeof x === 'string') return x;
+    if (x.simpleText) return x.simpleText;
+    if (x.content) return x.content;
+    if (x.runs) return x.runs.map(function (r) { return r.text; }).join('');
+    return '';
+  }
+  function grabQueue(o) {
+    try {
+      var c = o && o.contents;
+      var w = c && (c.singleColumnWatchNextResults || c.twoColumnWatchNextResults);
+      if (!w) return;
+      var pl = [], up = [], seen = {}, count = 0;
+      (function walk(n, depth) {
+        if (!n || typeof n !== 'object' || depth > 16 || count > 6000) return;
+        count++;
+        if (Array.isArray(n)) { for (var i = 0; i < n.length; i++) walk(n[i], depth + 1); return; }
+        var r = n.playlistPanelVideoRenderer;
+        if (r && r.videoId) { pl.push({ id: r.videoId, t: textOf(r.title), a: textOf(r.shortBylineText || r.longBylineText) }); return; }
+        r = n.compactVideoRenderer || n.videoWithContextRenderer;
+        if (r && r.videoId) {
+          if (!seen[r.videoId]) { seen[r.videoId] = 1; up.push({ id: r.videoId, t: textOf(r.title || r.headline), a: textOf(r.shortBylineText || r.longBylineText) }); }
+          return;
+        }
+        r = n.lockupViewModel;
+        if (r && r.contentId && /VIDEO/.test(r.contentType || '')) {
+          var md = r.metadata && r.metadata.lockupMetadataViewModel;
+          if (!seen[r.contentId]) { seen[r.contentId] = 1; up.push({ id: r.contentId, t: textOf(md && md.title), a: '' }); }
+          return;
+        }
+        for (var k in n) { if (Object.prototype.hasOwnProperty.call(n, k)) walk(n[k], depth + 1); }
+      })(w, 0);
+      if (pl.length) Q = { kind: 'playlist', items: pl };
+      else if (up.length) Q = { kind: 'upnext', items: up.slice(0, 25) };
+      else return;
+      console.log('[aay] queue for Android Auto: ' + Q.kind + ', ' + Q.items.length + ' videos');
+      schedReport(300);
+    } catch (e) {}
+  }
+  try {
+    var yid;
+    Object.defineProperty(window, 'ytInitialData', {
+      configurable: true,
+      get: function () { return yid; },
+      set: function (v) { yid = v; if (!BROWSE) grabQueue(v); }
+    });
+  } catch (e) {}
+
   try {
     var origParse = JSON.parse;
     JSON.parse = function (text, reviver) {
       var o = origParse.call(JSON, text, reviver);
       try { if (CFG.blockAds && o && typeof o === 'object') strip(o); } catch (e) {}
+      try { if (!BROWSE && o && o.contents) grabQueue(o); } catch (e) {}
       return o;
     };
   } catch (e) {}
@@ -207,6 +259,9 @@
     window.fetch = function (input) {
       var url = typeof input === 'string' ? input : ((input && input.url) || '');
       var p = origFetch.apply(this, arguments);
+      if (!BROWSE && /\/youtubei\/v1\/next/.test(url)) {
+        p.then(function (res) { try { res.clone().json().then(grabQueue).catch(function () {}); } catch (e) {} }).catch(function () {});
+      }
       if (!CFG.blockAds || !/\/youtubei\/v1\/(player|next|browse|search|get_watch)/.test(url)) return p;
       return p.then(function (res) {
         try {
@@ -365,16 +420,39 @@
     if (reportTimer) return;
     reportTimer = setTimeout(function () { reportTimer = 0; try { report(); } catch (e) {} }, ms || 120);
   }
+  // The player knows which video it really plays; the page address can lag behind (for example
+  // when the next video of a Mix starts while the screen is off).
+  function playerVideo() {
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { var d = p && p.getVideoData && p.getVideoData(); if (d && d.video_id) return d; } catch (e) {}
+    return null;
+  }
+  function queueFor(id, mi) {
+    var q = Q.items;
+    if (!q.length) return [];
+    var i = -1;
+    for (var k = 0; k < q.length; k++) { if (q[k].id === id) { i = k; break; } }
+    if (i < 0) {
+      if (Q.kind !== 'upnext') return [];
+      q = [{ id: id, t: mi.t, a: mi.a }].concat(q); i = 0;
+    }
+    return q.slice(Math.max(0, i - 10), i + 25);
+  }
   function report() {
     if (!N) return;
     var v = getVideo();
-    var id = urlId();
+    var pv = playerVideo();
+    var id = (pv && pv.video_id) || urlId();
     if (id) lastId = id; else if (v && !v.paused) id = lastId; else id = '';
     if (!v || !id) return;
     var mi = metaInfo(id);
+    if (pv && pv.video_id === id) {
+      if (pv.title) mi.t = pv.title;
+      if (pv.author) mi.a = pv.author;
+    }
     var d = v.duration;
     N.state(JSON.stringify({
-      id: id, title: mi.t, artist: mi.a, art: mi.art,
+      id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
       ended: !!v.ended,
       buffering: !v.paused && !v.ended && v.readyState < 3,

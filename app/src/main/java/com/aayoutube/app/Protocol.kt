@@ -40,6 +40,9 @@ object Commands {
     val EXIT = SessionCommand("com.aayoutube.app.EXIT", Bundle.EMPTY)
 }
 
+/** One entry of the queue shown in Android Auto (playlist, Mix, or Up next). */
+data class QItem(val id: String, val title: String, val artist: String)
+
 /** What the YouTube page is doing right now, as reported by the injected script. */
 data class Snap(
     val id: String = "",
@@ -56,6 +59,8 @@ data class Snap(
     val rate: Float = 1f,
     val canNext: Boolean = false,
     val canPrev: Boolean = false,
+    /** Playlist / Mix / Up next, including the current video. Empty: only the current video. */
+    val queue: List<QItem> = emptyList(),
 ) {
     fun toBundle(): Bundle = Bundle().apply {
         putString("id", id)
@@ -72,6 +77,9 @@ data class Snap(
         putFloat("rate", rate)
         putBoolean("next", canNext)
         putBoolean("prev", canPrev)
+        putStringArrayList("qid", ArrayList(queue.map { it.id }))
+        putStringArrayList("qt", ArrayList(queue.map { it.title }))
+        putStringArrayList("qa", ArrayList(queue.map { it.artist }))
         // Both processes share the device clock, so the receiver can add the travel time.
         putLong("stamp", SystemClock.elapsedRealtime())
     }
@@ -97,6 +105,12 @@ data class Snap(
                 rate = rate,
                 canNext = b.getBoolean("next"),
                 canPrev = b.getBoolean("prev"),
+                queue = run {
+                    val ids = b.getStringArrayList("qid").orEmpty()
+                    val ts = b.getStringArrayList("qt").orEmpty()
+                    val ars = b.getStringArrayList("qa").orEmpty()
+                    ids.indices.map { i -> QItem(ids[i], ts.getOrElse(i) { "" }, ars.getOrElse(i) { "" }) }
+                },
             )
         }
     }
