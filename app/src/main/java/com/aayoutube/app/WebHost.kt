@@ -84,6 +84,9 @@ object WebHost {
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
 
+    /** Set by the open screen: closes it (Exit in the notification). */
+    var onQuit: (() -> Unit)? = null
+
     @Volatile var activityVisible = false
         private set
 
@@ -365,6 +368,12 @@ object WebHost {
             Msg.STOP -> {
                 cmd("pause")
                 if (!shown) release()
+            }
+            Msg.QUIT -> {
+                AppLog.add("LINK", "Exit")
+                cmd("pause")
+                val close = onQuit
+                if (close != null) close() else release()
             }
             Msg.FREEZE -> if (!shown && !snapshot.value.playing) freeze()
         }

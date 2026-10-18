@@ -129,6 +129,9 @@ class HostLink(private val context: Context, private val player: BridgePlayer) :
     override fun prev() = send(Msg.PREV)
     override fun stop() = send(Msg.STOP)
 
+    /** Exit: stop the page and close the app screen if it is open. */
+    fun quit() = send(Msg.QUIT)
+
     /** Paused for a while with no screen open: freeze the page to stop all its background work. */
     fun freeze() = send(Msg.FREEZE)
 }

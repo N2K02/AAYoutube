@@ -134,7 +134,7 @@ class PlaybackService : MediaLibraryService() {
     private fun exitApp() {
         main.removeCallbacks(freezeTask)
         main.removeCallbacks(stopTask)
-        link.stop()
+        link.quit()
         link.release()
         bridge.reset()
         setWake(false)

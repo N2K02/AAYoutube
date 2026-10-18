@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
@@ -152,6 +153,13 @@ fun AppRoot(activity: MainActivity) {
                                 label = { Text(t.label) },
                             )
                         }
+                        // Quit: same power icon as MRadio. Stops playback and closes the app.
+                        NavigationBarItem(
+                            selected = false,
+                            onClick = { activity.quit() },
+                            icon = { Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Quit") },
+                            label = { Text("Quit") },
+                        )
                     }
                 }
             },

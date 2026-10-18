@@ -26,6 +26,7 @@ object Msg {
     const val RATE = 9       // rate
     const val STOP = 10
     const val FREEZE = 11
+    const val QUIT = 12      // Exit pressed: close the screen too
 
     // web process -> media process
     const val STATE = 101

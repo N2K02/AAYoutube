@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         handleIntent(intent)
+        WebHost.onQuit = { runOnUiThread { closeEverything() } }
         setContent { AAYoutubeTheme { AppRoot(this) } }
     }
 
@@ -73,6 +74,11 @@ class MainActivity : ComponentActivity() {
         updatePip()
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) WebHost.onQuit = null
+    }
+
     override fun onStop() {
         super.onStop()
         WebHost.requestLink = null
@@ -93,6 +99,35 @@ class MainActivity : ComponentActivity() {
             // Kept until the screen stops: if it were released now, the service would shut down
             // again straight away and take the link to the web process with it.
         }, MoreExecutors.directExecutor())
+    }
+
+    /** Quit (menu): stop playback and the media service, then close the screen and the page. */
+    fun quit() {
+        AppLog.add("UI", "Quit")
+        val future = controllerFuture
+        if (future != null && future.isDone) {
+            runCatching { future.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
+        } else {
+            // Not connected yet: connect just to send Exit.
+            val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+            val f = MediaController.Builder(applicationContext, token).buildAsync()
+            f.addListener({
+                runCatching { f.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
+                MediaController.releaseFuture(f)
+            }, MoreExecutors.directExecutor())
+        }
+        closeEverything()
+    }
+
+    private fun closeEverything() {
+        WebHost.onQuit = null
+        WebHost.cmd("pause")
+        finishAndRemoveTask()
+        // Give Exit a moment to reach the media service, then end this process (the WebView with it).
+        android.os.Handler(mainLooper).postDelayed({
+            WebHost.release()
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }, 500)
     }
 
     private fun releaseController() {
