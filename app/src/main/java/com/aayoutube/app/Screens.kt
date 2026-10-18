@@ -102,6 +102,8 @@ fun AppRoot(activity: MainActivity) {
     val updater by AppUpdater.state.collectAsState()
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
+    // Picture in picture always shows the video: go back to the YouTube tab.
+    LaunchedEffect(inPip) { if (inPip) tab = 0 }
     LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
@@ -157,7 +159,7 @@ fun AppRoot(activity: MainActivity) {
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
                 WebPane(Modifier.fillMaxSize())
-                if (tab != 0) {
+                if (tab != 0 && !inPip) {
                     Surface(
                         Modifier.fillMaxSize().pointerInput(Unit) { },
                         color = MaterialTheme.colorScheme.background,

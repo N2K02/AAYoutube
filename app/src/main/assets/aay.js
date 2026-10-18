@@ -501,9 +501,51 @@
   // Set by the app as soon as the screen starts to leave (before PiP or the background kick in).
   A.setHold = function (on) { A.hold = !!on; };
 
+  // While in picture in picture, check every 2 s that video frames still arrive. If the sound
+  // plays but the picture is stuck (black), seek to the current position: that restarts the
+  // video decoder without stopping the sound for more than a moment.
+  var pipTimer = 0, pipLast = null, pipFixAt = 0;
+  function videoInfo(v) {
+    var q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+    var r = v.getBoundingClientRect();
+    return {
+      frames: q ? q.totalVideoFrames : -1,
+      dropped: q ? q.droppedVideoFrames : -1,
+      t: v.currentTime,
+      text: v.videoWidth + 'x' + v.videoHeight + ' frames=' + (q ? q.totalVideoFrames : '?') +
+        ' dropped=' + (q ? q.droppedVideoFrames : '?') + ' ready=' + v.readyState +
+        ' box=' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) +
+        ' vis=' + getComputedStyle(v).visibility + ' realHidden=' +
+        Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document) +
+        ' win=' + innerWidth + 'x' + innerHeight
+    };
+  }
+  function pipCheck() {
+    var v = getVideo();
+    if (!v) return;
+    var i = videoInfo(v);
+    if (pipLast && !v.paused && i.t > pipLast.t + 0.5 && i.frames >= 0 && i.frames === pipLast.frames) {
+      var now = Date.now();
+      console.log('[aay] pip: sound plays but no new video frames (' + i.text + ')');
+      if (now - pipFixAt > 6000) {
+        pipFixAt = now;
+        console.log('[aay] pip: restarting the picture');
+        try { v.currentTime = v.currentTime; } catch (e) {}
+      }
+    }
+    pipLast = i;
+  }
+
   A.pip = function (on) {
     A.inPip = !!on;
     document.documentElement.classList.toggle('aay-pip', !!on);
+    clearInterval(pipTimer); pipTimer = 0; pipLast = null;
+    var v = getVideo();
+    if (v) console.log('[aay] pip=' + !!on + ' video ' + videoInfo(v).text);
+    if (on) {
+      pipTimer = setInterval(pipCheck, 2000);
+      later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
+    }
     window.dispatchEvent(new Event('resize'));
   };
 
