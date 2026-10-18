@@ -46,6 +46,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import kotlinx.coroutines.delay
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -96,6 +105,10 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 @Composable
 fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val features by Features.state.collectAsState()
+    // Auto-hide: the menu bar slides away after a few seconds without a touch, and comes back on the next one.
+    var touches by remember { mutableIntStateOf(0) }
+    var barShown by remember { mutableStateOf(true) }
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val canGoBack by WebHost.canGoBack.collectAsState()
@@ -103,6 +116,13 @@ fun AppRoot(activity: MainActivity) {
     val updater by AppUpdater.state.collectAsState()
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
+    LaunchedEffect(touches, tab, features.autoHideMenu, features.autoHideSecs) {
+        barShown = true
+        if (features.autoHideMenu) {
+            delay(features.autoHideSecs * 1000L)
+            barShown = false
+        }
+    }
     // Picture in picture always shows the video: go back to the YouTube tab.
     LaunchedEffect(inPip) { if (inPip) tab = 0 }
     LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
@@ -134,10 +154,24 @@ fun AppRoot(activity: MainActivity) {
 
     // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
     // moved between parents, because detaching a WebView from its window pauses the video.
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    // Initial pass: seen before the page or any button handles the touch.
+                    val e = awaitPointerEvent(PointerEventPass.Initial)
+                    if (e.type == PointerEventType.Press) touches++
+                }
+            }
+        },
+    ) {
         Scaffold(
             bottomBar = {
-                if (fullscreen == null && !inPip) {
+                AnimatedVisibility(
+                    visible = fullscreen == null && !inPip && barShown,
+                    enter = expandVertically(expandFrom = Alignment.Top),
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top),
+                ) {
                     NavigationBar {
                         Tab.entries.forEachIndexed { i, t ->
                             NavigationBarItem(
@@ -278,6 +312,29 @@ fun FeaturesPage() {
             Toggle("Also skip intros and outros", "Self-promo, intro, outro and reminders.", f.sponsorExtra) { s, v -> s.copy(sponsorExtra = v) }
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use www.youtube.com instead of the mobile site.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
+        }
+        Text("Menu bar", style = MaterialTheme.typography.titleMedium)
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+            Toggle(
+                "Auto-hide menu bar",
+                "Hides the bottom menu when you don't touch the screen. Touch anywhere to bring it back.",
+                f.autoHideMenu,
+            ) { s, v -> s.copy(autoHideMenu = v) }
+            if (f.autoHideMenu) {
+                Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+                    Text("Hide after", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(8.dp))
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        (1..5).forEach { secs ->
+                            SegmentedButton(
+                                selected = f.autoHideSecs == secs,
+                                onClick = { Features.update { it.copy(autoHideSecs = secs) } },
+                                shape = SegmentedButtonDefaults.itemShape(index = secs - 1, count = 5),
+                            ) { Text("${secs}s") }
+                        }
+                    }
+                }
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { WebHost.reload() }) { Text("Reload") }
