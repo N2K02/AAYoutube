@@ -440,7 +440,14 @@ fun UpdatePage() {
                 when (val s = state) {
                     is AppUpdater.State.Idle -> {
                         Text("Check GitHub for a new version.")
-                        Button(onClick = { AppUpdater.check(manual = true) }) { Text("Check for updates") }
+                        Button(
+                            onClick = { AppUpdater.check(manual = true) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text("Check for updates")
+                        }
                     }
                     is AppUpdater.State.Checking -> {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -450,7 +457,14 @@ fun UpdatePage() {
                     }
                     is AppUpdater.State.UpToDate -> {
                         Text("You're on the latest version.", style = MaterialTheme.typography.titleMedium)
-                        OutlinedButton(onClick = { AppUpdater.check(manual = true) }) { Text("Check again") }
+                        Button(
+                            onClick = { AppUpdater.check(manual = true) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Filled.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text("Check again")
+                        }
                     }
                     is AppUpdater.State.Available -> {
                         Text("v${s.release.versionName} is available", style = MaterialTheme.typography.titleMedium)
@@ -483,7 +497,7 @@ fun UpdatePage() {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = { AppUpdater.check(manual = true) }) { Text("Try again") }
                             if (activity != null) {
-                                OutlinedButton(onClick = { AppUpdater.openReleasePage(activity, s.release) }) { Text("Release page") }
+                                androidx.compose.material3.FilledTonalButton(onClick = { AppUpdater.openReleasePage(activity, s.release) }) { Text("Release page") }
                             }
                             TextButton(onClick = { AppUpdater.dismiss() }) { Text("Dismiss") }
                         }
