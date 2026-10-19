@@ -378,11 +378,18 @@ class PlaybackService : MediaLibraryService() {
             return Futures.immediateFuture(resolved)
         }
 
-        /** Android Auto / Bluetooth "play" with nothing queued: resume the last video. */
+        /** Only Android Auto may implicitly resume the last video; unrelated media clients must not. */
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            // Media3 may request playback resumption from other system/media clients when
+            // they interact with audio. Never let those clients start AAYoutube implicitly.
+            if (controller.packageName != ANDROID_AUTO_PACKAGE) {
+                return Futures.immediateFailedFuture(
+                    UnsupportedOperationException("Playback resumption is restricted to Android Auto"),
+                )
+            }
             val last = Library.last
                 ?: return Futures.immediateFailedFuture(UnsupportedOperationException("Nothing played yet"))
             return Futures.immediateFuture(
@@ -396,6 +403,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private companion object {
+        const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
         const val ROOT = "root"
         const val RECENT = "recent"
         const val FAVOURITES = "favourites"
