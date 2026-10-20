@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
         ) {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Opened from the icon (not a link, not after rotation): start on YouTube Home.
+        if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) WebHost.goHomeIfIdle()
         handleIntent(intent)
         WebHost.onQuit = { runOnUiThread { closeEverything() } }
         setContent { AAYoutubeTheme { AppRoot(this) } }
@@ -161,13 +163,13 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT < 26) return
         val playing = WebHost.snapshot.value.playing
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
-        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && onPhoneScreen())
+        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
         runCatching { setPictureInPictureParams(builder.build()) }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && onPhoneScreen()) {
+        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && WebHost.isOnWatchPage() && onPhoneScreen()) {
             runCatching {
                 enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
             }

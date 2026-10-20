@@ -359,6 +359,17 @@ object WebHost {
     }
 
     /** Goes back in the page. False when there is nowhere to go (already on YouTube home). */
+    /** Opening the app from its icon: YouTube Home, unless something is playing. */
+    fun goHomeIfIdle() {
+        val w = web ?: return
+        if (snapshot.value.playing || Features.current.resumeLast) return
+        val path = runCatching { Uri.parse(w.url.orEmpty()).path.orEmpty() }.getOrDefault("")
+        if (path.isEmpty() || path == "/") return
+        AppLog.add("NAV", "App opened: YouTube home")
+        mode.value = PlayerMode.FULL
+        w.loadUrl(home())
+    }
+
     fun goBack(): Boolean {
         val w = web ?: return false
         if (w.canGoBack()) {

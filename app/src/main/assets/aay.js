@@ -465,8 +465,18 @@
     }
     return q.slice(Math.max(0, i - 10), i + 25);
   }
+  var lastSent = null;
   function report() {
     if (!N) return;
+    // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
+    // nothing is playing (no picture in picture, no media controls for a preview).
+    if (!/^\/(watch|live\/)/.test(location.pathname)) {
+      if (lastSent && lastSent.playing) {
+        lastSent.playing = false; lastSent.buffering = false;
+        N.state(JSON.stringify(lastSent));
+      }
+      return;
+    }
     var v = getVideo();
     var pv = playerVideo();
     var id = (pv && pv.video_id) || urlId();
@@ -478,7 +488,7 @@
       if (pv.author) mi.a = pv.author;
     }
     var d = v.duration;
-    N.state(JSON.stringify({
+    N.state(JSON.stringify(lastSent = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
       ended: !!v.ended,

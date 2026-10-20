@@ -706,7 +706,7 @@ fun FeaturesPage() {
 
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-            Toggle("Resume where you left off", "Opens the last page when the app starts.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
+            Toggle("Resume where you left off", "Off: the app always starts on YouTube Home. On: it reopens the last page.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp, top = 4.dp)) {
                 Text("Text size", style = MaterialTheme.typography.labelLarge)
                 Text(

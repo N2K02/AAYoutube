@@ -25,7 +25,7 @@ data class FeatureFlags(
     /** Page text size in percent (bigger helps on a car screen). */
     val pageZoom: Int = 100,
     /** Open the last page you were on when the app starts. */
-    val resumeLast: Boolean = true,
+    val resumeLast: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -65,7 +65,7 @@ object Features {
             autoHideMenu = prefs.getBoolean("autoHideMenu", d.autoHideMenu),
             autoHideSecs = prefs.getInt("autoHideSecs", d.autoHideSecs).coerceIn(1, 5),
             pageZoom = prefs.getInt("pageZoom", d.pageZoom).coerceIn(50, 200),
-            resumeLast = prefs.getBoolean("resumeLast", d.resumeLast),
+            resumeLast = prefs.getBoolean("resumeLastPage", d.resumeLast),
         )
     }
 
@@ -87,7 +87,7 @@ object Features {
             .putBoolean("autoHideMenu", n.autoHideMenu)
             .putInt("autoHideSecs", n.autoHideSecs)
             .putInt("pageZoom", n.pageZoom)
-            .putBoolean("resumeLast", n.resumeLast)
+            .putBoolean("resumeLastPage", n.resumeLast)
             .apply()
     }
 }
