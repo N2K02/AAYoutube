@@ -38,7 +38,7 @@ import com.google.common.util.concurrent.ListenableFuture
  * released and this service stops.
  */
 @OptIn(UnstableApi::class)
-class PlaybackService : MediaLibraryService() {
+open class PlaybackService : MediaLibraryService() {
 
     private lateinit var bridge: BridgePlayer
     private lateinit var link: HostLink

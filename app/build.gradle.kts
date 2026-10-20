@@ -33,28 +33,6 @@ android {
         v.forEach { (name, version) -> buildConfigField("String", "LIB_" + name.uppercase(), "\"$version\"") }
     }
 
-    // Two apps from the same code:
-    // - phone: the normal app (phone screen, media session, Android Auto's audio player).
-    // - car:   "AAYoutube Car", the screen on the car display (Android 15+). Android Auto hides an
-    //          app's screen when the same app also has a media player, so the car screen must be a
-    //          separate app without one, exactly like AABrowser.
-    flavorDimensions += "screen"
-    productFlavors {
-        create("phone") {
-            dimension = "screen"
-            manifestPlaceholders["appLabel"] = "AAYoutube"
-            buildConfigField("boolean", "CAR_APP", "false")
-            buildConfigField("String", "APP_NAME", "\"AAYoutube\"")
-        }
-        create("car") {
-            dimension = "screen"
-            applicationIdSuffix = ".car"
-            manifestPlaceholders["appLabel"] = "AAYoutube Car"
-            buildConfigField("boolean", "CAR_APP", "true")
-            buildConfigField("String", "APP_NAME", "\"AAYoutube Car\"")
-        }
-    }
-
     buildTypes {
         getByName("release") {
             // R8 removes unused code (most of Compose and the icon set) and resources.

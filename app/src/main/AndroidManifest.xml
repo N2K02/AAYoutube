@@ -31,7 +31,7 @@
         android:name=".AAYoutubeApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="${appLabel}"
+        android:label="AAYoutube"
         android:theme="@style/Theme.AAYoutube"
         android:usesCleartextTraffic="false"
         android:appCategory="game">
@@ -117,9 +117,23 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- Media session, notification and the browser/search that Android Auto shows -->
+        <!-- Media session for the notification, lock screen and Bluetooth. Default ("car screen" mode):
+             no Android Auto media player, because Android Auto hides an app's screen when it has one,
+             so Android Auto shows AAYoutube's full screen (CAR_LAUNCHER, above) instead. -->
         <service
             android:name=".PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
+
+        <!-- The same service with Android Auto's media player (browse, search, queue). Switched on
+             instead of the one above from Features > Android Auto; only one is ever enabled. -->
+        <service
+            android:name=".AutoPlaybackService"
+            android:enabled="false"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>

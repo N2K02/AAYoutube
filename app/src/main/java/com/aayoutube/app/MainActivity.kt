@@ -2,7 +2,6 @@ package com.aayoutube.app
 
 import android.Manifest
 import android.app.PictureInPictureParams
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -31,7 +30,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppUpdater.init(this, "N2K02/AAYoutube", BuildConfig.APP_NAME)
+        AppUpdater.init(this, "N2K02/AAYoutube", "AAYoutube")
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.carDisplay = !onPhoneScreen()
         enableEdgeToEdge()
@@ -92,9 +91,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sayHello() {
-        // AAYoutube Car has no media service to link up with.
-        if (BuildConfig.CAR_APP || controllerFuture != null) return
-        val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+        if (controllerFuture != null) return
+        // The media service that is switched on (Features → Android Auto).
+        val token = SessionToken(this, CarMode.serviceComponent(this))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
         future.addListener({
@@ -111,13 +110,11 @@ class MainActivity : ComponentActivity() {
     fun quit() {
         AppLog.add("UI", "Quit")
         val future = controllerFuture
-        if (BuildConfig.CAR_APP) {
-            // No media service in the car app: just close.
-        } else if (future != null && future.isDone) {
+        if (future != null && future.isDone) {
             runCatching { future.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
         } else {
             // Not connected yet: connect just to send Exit.
-            val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+            val token = SessionToken(this, CarMode.serviceComponent(this))
             val f = MediaController.Builder(applicationContext, token).buildAsync()
             f.addListener({
                 runCatching { f.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
@@ -136,6 +133,14 @@ class MainActivity : ComponentActivity() {
             WebHost.release()
             android.os.Process.killProcess(android.os.Process.myPid())
         }, 500)
+    }
+
+    /** After Features → Android Auto changed the media service: link up with the new one. */
+    fun relinkMediaService() {
+        releaseController()
+        android.os.Handler(mainLooper).postDelayed({
+            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) sayHello()
+        }, 1_000)
     }
 
     private fun releaseController() {
