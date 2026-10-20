@@ -77,6 +77,8 @@ object WebHost {
     val progress = MutableStateFlow(100)
     val offline = MutableStateFlow(false)
     val canGoBack = MutableStateFlow(false)
+    /** The player page shows a video (watch or live page). */
+    val onWatchPage = MutableStateFlow(false)
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     val webVersion = MutableStateFlow(0)
@@ -690,6 +692,8 @@ object WebHost {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             canGoBack.value = view.canGoBack()
+            onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
+                .let { it.startsWith("/watch") || it.startsWith("/live/") }
             if (!url.isNullOrEmpty() && url != "about:blank") {
                 lastUrl = url
                 saveUrl(url)

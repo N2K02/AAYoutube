@@ -35,6 +35,8 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
@@ -186,6 +188,9 @@ fun AppRoot(activity: MainActivity) {
             // Browsing under the mini player (or after closing it): back moves through the browse page.
             WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
             WebHost.mode.value != WebHost.PlayerMode.FULL -> activity.moveTaskToBack(true)
+            // Car screen: back from a video always shrinks it into the mini player with YouTube
+            // Home underneath, like the YouTube app (playing or paused).
+            WebHost.carDisplay && WebHost.isOnWatchPage() -> WebHost.enterMini()
             // Watching: back shrinks the video into the mini player, like the YouTube app.
             snap.playing && WebHost.isOnWatchPage() -> WebHost.enterMini()
             WebHost.goBack() -> Unit
@@ -246,7 +251,16 @@ fun AppRoot(activity: MainActivity) {
             )
         }
         if (full == null && !inPip) {
+            // Car screen while the video fills the screen: the round button is a Back button
+            // (to the mini player with Home underneath). Everywhere else it opens the menu.
+            val onCar by WebHost.carScreen.collectAsState()
+            val playerMode by WebHost.mode.collectAsState()
+            val watching by WebHost.onWatchPage.collectAsState()
+            val backButton = onCar && tab == 0 && playerMode == WebHost.PlayerMode.FULL && watching
+            LaunchedEffect(backButton) { if (backButton) menuOpen = false }
             MenuButton(
+                backButton = backButton,
+                looseTaps = onCar,
                 selected = tab,
                 open = menuOpen,
                 faded = faded,
@@ -268,6 +282,8 @@ fun AppRoot(activity: MainActivity) {
  */
 @Composable
 private fun MenuButton(
+    backButton: Boolean,
+    looseTaps: Boolean,
     selected: Int,
     open: Boolean,
     faded: Boolean,
@@ -320,16 +336,23 @@ private fun MenuButton(
                     top = if (up) 0.dp else yDp + fab + 8.dp,
                     bottom = if (up) (hDp - yDp + 8.dp).coerceAtLeast(0.dp) else 0.dp,
                 )
-            Column(
-                place,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalAlignment = if (right) Alignment.End else Alignment.Start,
-            ) {
-                Tab.entries.forEachIndexed { i, t ->
-                    MenuItem(t.label, t.icon, right, selected == i, badge = t == Tab.Update && updateAvailable) { onSelect(i) }
+            val items: List<@Composable () -> Unit> = Tab.entries.mapIndexed { i, t ->
+                @Composable { MenuItem(t.label, t.icon, right, selected == i, badge = t == Tab.Update && updateAvailable) { onSelect(i) } }
+            } + listOf(
+                @Composable { MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() } },
+                @Composable { MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() } },
+            )
+            // One column if it fits next to the button, otherwise two (short, wide car screens).
+            val room = if (up) yDp - 8.dp else hDp - yDp - fab - 8.dp
+            val perColumn = if (room >= 56.dp * items.size) items.size else (items.size + 1) / 2
+            Row(place, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val columns = items.chunked(perColumn).let { if (right) it.reversed() else it }
+                columns.forEach { col ->
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = if (right) Alignment.End else Alignment.Start,
+                    ) { col.forEach { it() } }
                 }
-                MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() }
-                MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() }
             }
         }
 
@@ -338,27 +361,57 @@ private fun MenuButton(
                 .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
                 .size(fab)
                 .graphicsLayer { alpha = if (faded && !open) 0.35f else 1f }
-                .pointerInput(maxX, maxY) {
-                    detectDragGestures(
-                        onDragEnd = { prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply() },
-                    ) { change, drag ->
-                        change.consume()
-                        val span = (maxX - gapPx).coerceAtLeast(1f)
-                        val spanY = (maxY - gapPx).coerceAtLeast(1f)
-                        fx = (fx + drag.x / span).coerceIn(0f, 1f)
-                        fy = (fy + drag.y / spanY).coerceIn(0f, 1f)
+                .pointerInput(maxX, maxY, looseTaps, backButton, open) {
+                    // Tap: menu (or Back). Drag: move the button. A car touchscreen jitters a few
+                    // pixels during a tap, so there a tap may move further before it counts as a drag.
+                    val slop = if (looseTaps) maxOf(28.dp.toPx(), viewConfiguration.touchSlop) else viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        var dragging = false
+                        var moved = androidx.compose.ui.geometry.Offset.Zero
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed) {
+                                c.consume()
+                                if (dragging) {
+                                    prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply()
+                                } else if (backButton) {
+                                    AppLog.add("UI", "Back button")
+                                    onBack()
+                                } else {
+                                    onOpenChange(!open)
+                                }
+                                break
+                            }
+                            val d = c.position - c.previousPosition
+                            moved += d
+                            if (!dragging && moved.getDistance() > slop) dragging = true
+                            if (dragging) {
+                                val span = (maxX - gapPx).coerceAtLeast(1f)
+                                val spanY = (maxY - gapPx).coerceAtLeast(1f)
+                                fx = (fx + d.x / span).coerceIn(0f, 1f)
+                                fy = (fy + d.y / spanY).coerceIn(0f, 1f)
+                            }
+                            c.consume()
+                        }
                     }
                 },
         ) {
-            androidx.compose.material3.FloatingActionButton(
-                onClick = { onOpenChange(!open) },
+            Surface(
                 shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shadowElevation = 6.dp,
                 modifier = Modifier.fillMaxSize(),
             ) {
-                if (updateAvailable && !open) {
-                    BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
-                } else {
-                    Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
+                Box(contentAlignment = Alignment.Center) {
+                    when {
+                        backButton -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        updateAvailable && !open -> BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
+                        else -> Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
+                    }
                 }
             }
         }
