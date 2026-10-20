@@ -13,7 +13,7 @@
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
-  var A = window.__aay = { H: {}, isBg: false };
+  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
 
   function later(fn, ms) { return setTimeout(function () { try { fn(); } catch (e) {} }, ms || 0); }
@@ -327,10 +327,27 @@
     'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}' +
     'html.aay-fit:not(.aay-pip) video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
     'height:100%!important;object-fit:contain!important}';
+  // Car screen (wide and short): the player, with YouTube's own controls, fills the whole screen,
+  // like the YouTube app held sideways. The rest of the page is under it (back = mini player).
+  var CSS_CAR =
+    'html.aay-car,html.aay-car body{overflow:hidden!important;background:#000!important}' +
+    'html.aay-car #player-container-id,html.aay-car .player-container,html.aay-car #player-container{' +
+    'position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;' +
+    'width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;' +
+    'min-height:0!important;margin:0!important;padding:0!important;transform:none!important;' +
+    'background:#000!important;z-index:2147483000!important}' +
+    'html.aay-car #player,html.aay-car #movie_player,html.aay-car .html5-video-player{' +
+    'width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;' +
+    'padding:0!important;margin:0!important;top:0!important;left:0!important}' +
+    'html.aay-car .html5-video-container{width:100%!important;height:100%!important}' +
+    'html.aay-car video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
+    'height:100%!important;object-fit:contain!important}' +
+    'html.aay-car #player-control-container{position:fixed!important;top:0!important;left:0!important;' +
+    'width:100vw!important;height:100vh!important;z-index:2147483001!important}';
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP;
+    var css = CSS_PIP + CSS_CAR;
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
@@ -657,6 +674,7 @@
       dialogs();
       rydApply();
       openFirstResult();
+      carLayout();
     } catch (e) {}
   }
   function schedTick() { if (!tickTimer) tickTimer = setTimeout(tick, 300); }
@@ -743,14 +761,15 @@
     pipLast = i;
   }
 
-  var lifted = [];
-  function liftAncestors(v, on) {
-    lifted.forEach(function (el) {
+  // position:fixed only covers the window when no ancestor has a transform, contain or filter.
+  // lift() removes those from the ancestors of [v] (and puts back the ones in [store]).
+  function lift(store, v, on) {
+    store.forEach(function (el) {
       el.style.removeProperty('transform'); el.style.removeProperty('contain'); el.style.removeProperty('filter');
       el.style.removeProperty('will-change');
     });
-    lifted = [];
-    if (!on || !v) return;
+    var done = [];
+    if (!on || !v) return done;
     for (var el = v.parentElement; el && el !== document.documentElement; el = el.parentElement) {
       var cs = getComputedStyle(el);
       if (cs.transform !== 'none' || (cs.contain && cs.contain !== 'none') || cs.filter !== 'none' || cs.willChange.indexOf('transform') >= 0) {
@@ -758,10 +777,34 @@
         el.style.setProperty('contain', 'none', 'important');
         el.style.setProperty('filter', 'none', 'important');
         el.style.setProperty('will-change', 'auto', 'important');
-        lifted.push(el);
+        done.push(el);
       }
     }
+    return done;
   }
+  var lifted = [];
+  function liftAncestors(v, on) { lifted = lift(lifted, v, on); }
+
+  // Car screen: the video fills the screen on a watch page (not in the mini player).
+  var carOn = false, carBox = null, carLifted = [];
+  function playerBox() {
+    return document.getElementById('player-container-id') || document.querySelector('.player-container') ||
+      document.getElementById('player-container') || document.getElementById('movie_player');
+  }
+  function carLayout() {
+    var on = !!A.isCar && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    var box = on ? playerBox() : null;
+    if (on === carOn && box === carBox) return;
+    var changed = on !== carOn;
+    carOn = on; carBox = box;
+    carLifted = lift(carLifted, box, on);
+    if (document.documentElement) document.documentElement.classList.toggle('aay-car', on);
+    if (changed) {
+      console.log('[aay] car screen: video fills the screen=' + on);
+      fixLayout();
+    }
+  }
+  A.car = function (on) { A.isCar = !!on; carLayout(); };
 
   // After the small layout ends, YouTube keeps the small video size it measured (black border
   // around a small picture). Tell it the size changed a few times while the window grows back,
@@ -795,12 +838,14 @@
   A.mini = function (on) {
     A.isMini = !!on;
     smallLayout();
+    carLayout();
     window.dispatchEvent(new Event('resize'));
   };
 
   A.pip = function (on) {
     A.inPip = !!on;
     smallLayout();
+    carLayout();
     clearInterval(pipTimer); pipTimer = 0; pipLast = null;
     var v = getVideo();
     if (v) console.log('[aay] pip=' + !!on + ' video ' + videoInfo(v).text);

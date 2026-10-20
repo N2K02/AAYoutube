@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppUpdater.init(this, "N2K02/AAYoutube", "AAYoutube")
         // On the car display a reopened video plays by itself; on the phone it waits for you.
-        WebHost.carDisplay = !onPhoneScreen()
+        WebHost.setCarScreen(!onPhoneScreen())
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         WebHost.requestLink = { runOnUiThread { sayHello() } }
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
+        WebHost.setCarScreen(!onPhoneScreen())
         sayHello()
         WebHost.onActivityVisible(true)
         if (WebHost.mode.value != WebHost.PlayerMode.FULL) BrowseHost.resume()
@@ -171,6 +172,12 @@ class MainActivity : ComponentActivity() {
                 enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
             }
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The screen can move between the phone and the car display without being recreated.
+        WebHost.setCarScreen(!onPhoneScreen())
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {

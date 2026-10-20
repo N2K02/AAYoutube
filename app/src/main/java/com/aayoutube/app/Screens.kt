@@ -394,6 +394,43 @@ private fun MenuItem(label: String, icon: ImageVector, iconRight: Boolean, selec
 
 // ---------------------------------------------------------------------------- web
 
+/**
+ * Swipe down on the video (car screen): mini player with YouTube underneath, like on the phone.
+ * Only watches the touches (Initial pass, nothing consumed), so taps and YouTube's controls still work.
+ */
+private val carSwipeDown = Modifier.pointerInput(Unit) {
+    awaitPointerEventScope {
+        var startX = 0f
+        var startY = 0f
+        var startAt = 0L
+        var tracking = false
+        while (true) {
+            val e = awaitPointerEvent(PointerEventPass.Initial)
+            val c = e.changes.firstOrNull() ?: continue
+            when (e.type) {
+                PointerEventType.Press -> {
+                    tracking = e.changes.size == 1
+                    startX = c.position.x
+                    startY = c.position.y
+                    startAt = c.uptimeMillis
+                }
+                PointerEventType.Release -> if (tracking) {
+                    tracking = false
+                    val dx = c.position.x - startX
+                    val dy = c.position.y - startY
+                    if (dy > 72.dp.toPx() && kotlin.math.abs(dx) < dy / 2 && c.uptimeMillis - startAt < 900 &&
+                        WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()
+                    ) {
+                        AppLog.add("CAR", "Swipe down on the video: mini player")
+                        WebHost.enterMini()
+                    }
+                }
+                else -> if (e.changes.size > 1) tracking = false
+            }
+        }
+    }
+}
+
 @Composable
 fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit.Dp = 0.dp) {
     val version by WebHost.webVersion.collectAsState()
@@ -403,6 +440,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val browseOn by BrowseHost.created.collectAsState()
+    val onCar by WebHost.carScreen.collectAsState()
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
@@ -453,6 +491,9 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             val playerMod = when {
                 small -> miniMod.clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
                 hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
+                // Car screen: swipe down on the video shrinks it into the mini player, as on the phone.
+                // Detected here rather than in the page, whatever kind of touch Android Auto sends.
+                onCar -> Modifier.fillMaxSize().then(carSwipeDown)
                 else -> Modifier.fillMaxSize()
             }
             key(version) {

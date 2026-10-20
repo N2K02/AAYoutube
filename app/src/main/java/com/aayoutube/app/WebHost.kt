@@ -94,8 +94,17 @@ object WebHost {
     /** The video is being shown on the car screen (see CarVideoService). */
     @Volatile var carShown = false
 
-    /** The app screen is on the car display (Android 15+, AAYoutube Car). */
-    @Volatile var carDisplay = false
+    /** The app screen is on the car display (Android 15+): videos fill the screen there. */
+    val carScreen = MutableStateFlow(false)
+    val carDisplay: Boolean get() = carScreen.value
+
+    fun setCarScreen(on: Boolean) {
+        if (carScreen.value == on) return
+        carScreen.value = on
+        AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
+        web?.let { installScript(it) }
+        js("window.__aay&&window.__aay.car($on)")
+    }
     val shown: Boolean get() = activityVisible || carShown
 
     fun init(application: Application) {
@@ -196,7 +205,7 @@ object WebHost {
 
     internal fun script(): String {
         val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";\n" + source
+        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + carDisplay + ";\n" + source
     }
 
     private fun installScript(w: WebView) {
@@ -672,6 +681,7 @@ object WebHost {
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.car($carDisplay)", null)
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
