@@ -688,7 +688,7 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
+        case 'play': PAUSED = false; if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
         case 'pause': if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;

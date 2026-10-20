@@ -31,7 +31,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppUpdater.init(this, "N2K02/AAYoutube", "AAYoutube")
+        AppUpdater.init(this, "N2K02/AAYoutube", BuildConfig.APP_NAME)
+        // On the car display a reopened video plays by itself; on the phone it waits for you.
+        WebHost.carDisplay = !onPhoneScreen()
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -90,7 +92,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sayHello() {
-        if (controllerFuture != null) return
+        // AAYoutube Car has no media service to link up with.
+        if (BuildConfig.CAR_APP || controllerFuture != null) return
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
@@ -108,7 +111,9 @@ class MainActivity : ComponentActivity() {
     fun quit() {
         AppLog.add("UI", "Quit")
         val future = controllerFuture
-        if (future != null && future.isDone) {
+        if (BuildConfig.CAR_APP) {
+            // No media service in the car app: just close.
+        } else if (future != null && future.isDone) {
             runCatching { future.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
         } else {
             // Not connected yet: connect just to send Exit.

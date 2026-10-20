@@ -47,7 +47,11 @@ object Versions {
                     Row("Android Auto", androidAuto ?: "not installed"),
                     Row(
                         "Car screen mode",
-                        if (Build.VERSION.SDK_INT >= 35) "App screen on the car display" else "Drawing surface (Android 14 and older)",
+                        when {
+                            BuildConfig.CAR_APP -> "This app: the screen on the car display"
+                            Build.VERSION.SDK_INT >= 35 -> "AAYoutube Car app (separate install)"
+                            else -> "Drawing surface (Android 14 and older)"
+                        },
                     ),
                 ),
             ),

@@ -93,6 +93,9 @@ object WebHost {
 
     /** The video is being shown on the car screen (see CarVideoService). */
     @Volatile var carShown = false
+
+    /** The app screen is on the car display (Android 15+, AAYoutube Car). */
+    @Volatile var carDisplay = false
     val shown: Boolean get() = activityVisible || carShown
 
     fun init(application: Application) {
@@ -117,7 +120,9 @@ object WebHost {
         var url = pendingUrl ?: savedUrl() ?: home()
         // Reopening on the video we left: show it paused. Playing on its own is for Android Auto
         // and for videos you pick (those load with aay=1).
-        if (pendingUrl == null && Uri.parse(url).path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }) {
+        // Only when the phone screen opens it: Android Auto (car display, media player) plays.
+        val phoneScreen = activityVisible && !carDisplay && !carShown
+        if (pendingUrl == null && phoneScreen && Uri.parse(url).path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }) {
             url += (if (url.contains('?')) "&" else "?") + "aay=paused"
         }
         pendingUrl = null

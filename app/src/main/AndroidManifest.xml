@@ -31,7 +31,7 @@
         android:name=".AAYoutubeApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="AAYoutube"
+        android:label="${appLabel}"
         android:theme="@style/Theme.AAYoutube"
         android:usesCleartextTraffic="false"
         android:appCategory="game">

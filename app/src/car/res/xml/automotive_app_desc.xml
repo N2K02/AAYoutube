@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same as AABrowser: lets Android Auto consider the app; the screen itself is the CAR_LAUNCHER activity. -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

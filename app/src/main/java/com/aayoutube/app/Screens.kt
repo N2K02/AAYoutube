@@ -657,7 +657,7 @@ fun UpdatePage() {
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Installed version", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text(BuildConfig.APP_NAME + " v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
             }
         }
 
@@ -735,12 +735,12 @@ fun InfoPage() {
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("About", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text(BuildConfig.APP_NAME + " v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
                 Text(
                     "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
                         "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
-                        "in the background and in picture in picture. In the car it plays through the media player and, " +
-                        "on Android 15+, shows the full screen on the car display. The page runs in its own process, so a " +
+                        "in the background and in picture in picture. In the car it plays through the media player; on Android 15+ " +
+                        "the separate AAYoutube Car app shows the full screen with the video on the car display. The page runs in its own process, so a " +
                         "WebView problem can't freeze Android Auto. Updates come from GitHub releases (N2K02/AAYoutube).",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

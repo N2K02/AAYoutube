@@ -218,8 +218,11 @@ object AppUpdater {
             val name = tag.removePrefix("v")
             val code = versionCodeFromName(name) ?: return@withContext null
             val assets = o.optJSONArray("assets") ?: return@withContext null
-            val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
-                .firstOrNull { it.optString("name").endsWith(".apk", ignoreCase = true) }
+            // Each app takes its own file: AAYoutube-3.4.apk or AAYoutube-Car-3.4.apk.
+            val list = (0 until assets.length()).map { assets.getJSONObject(it) }
+            val wanted = appName.replace(' ', '-') + "-" + name + ".apk"
+            val apk = list.firstOrNull { it.optString("name").equals(wanted, ignoreCase = true) }
+                ?: list.firstOrNull { !appName.contains(' ') && it.optString("name").endsWith(".apk", ignoreCase = true) && !it.optString("name").contains("-Car-", ignoreCase = true) }
                 ?: return@withContext null
             Release(
                 tag = tag,

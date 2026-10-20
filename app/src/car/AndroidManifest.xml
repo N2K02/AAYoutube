@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AAYoutube Car: only the screen, for the car display (Android 15+), set up like AABrowser.
+    Android Auto does not list an app's screen when the same app also has a media player, so this
+    app has no media service, no notification player and no drawing-surface car service.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <service android:name="com.aayoutube.app.PlaybackService" tools:node="remove" />
+        <service android:name="com.aayoutube.app.WebHostService" tools:node="remove" />
+        <service android:name="com.aayoutube.app.CarVideoService" tools:node="remove" />
+        <receiver android:name="androidx.media3.session.MediaButtonReceiver" tools:node="remove" />
+    </application>
+</manifest>

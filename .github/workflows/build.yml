@@ -65,7 +65,8 @@ jobs:
             echo "$changes"
             echo
             echo "### Install"
-            echo "Download the APK below and install it on your phone."
+            echo "- **$APP-$ver.apk**: the app (phone, notification, Android Auto media player)."
+            echo "- **$APP-Car-$ver.apk**: the screen with the video on the car display (Android 15+, Android Auto unknown sources on). Install both."
             echo
             echo "_Built from \`${GITHUB_SHA::7}\`${prev:+ · changes since \`$prev\`}_"
           } > release-notes.md
@@ -95,17 +96,26 @@ jobs:
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in signing/keys.tar.enc -pass env:SIGNING_PASSPHRASE | tar -xf - -C "$K"
           BT=$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* | sort -V | tail -1)
           export RP=$(cat "$K/release.pass")
-          "$BT/apksigner" sign \
-            --ks "$K/release.p12" --ks-pass env:RP --ks-key-alias release --key-pass env:RP \
-            --out "$APP-$VERSION.apk" app/build/outputs/apk/release/app-release-unsigned.apk
+          sign() {
+            "$BT/apksigner" sign \
+              --ks "$K/release.p12" --ks-pass env:RP --ks-key-alias release --key-pass env:RP \
+              --out "$2" "$1"
+          }
+          # The app, and AAYoutube Car (the screen for the car display, a separate app).
+          sign app/build/outputs/apk/phone/release/app-phone-release-unsigned.apk "$APP-$VERSION.apk"
+          sign app/build/outputs/apk/car/release/app-car-release-unsigned.apk "$APP-Car-$VERSION.apk"
           rm -rf "$K"
-          "$BT/apksigner" verify --print-certs "$APP-$VERSION.apk" | grep -E "Signer.*(DN|SHA-256 digest)"
+          for f in "$APP-$VERSION.apk" "$APP-Car-$VERSION.apk"; do
+            "$BT/apksigner" verify --print-certs "$f" | grep -E "Signer.*(DN|SHA-256 digest)"
+          done
 
       - name: Upload APK (workflow artifact)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP }}-${{ env.VERSION }}
-          path: ${{ env.APP }}-${{ env.VERSION }}.apk
+          path: |
+            ${{ env.APP }}-${{ env.VERSION }}.apk
+            ${{ env.APP }}-Car-${{ env.VERSION }}.apk
 
       - name: Publish APK as a release (easy phone download)
         uses: softprops/action-gh-release@v2
@@ -114,5 +124,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: ${{ env.APP }} ${{ env.VERSION }}
           body_path: release-notes.md
+          # The phone app first: older versions of the updater take the first APK of a release.
           files: ${{ env.APP }}-${{ env.VERSION }}.apk
           make_latest: true
+
+      - name: Add AAYoutube Car to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v$VERSION" "$APP-Car-$VERSION.apk" --clobber
