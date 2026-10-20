@@ -45,6 +45,7 @@ object Versions {
                     Row("Android", "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"),
                     Row("Phone", "${Build.MANUFACTURER} ${Build.MODEL}"),
                     Row("Android Auto", androidAuto ?: "not installed"),
+                    Row("This screen", if (WebHost.carDisplay) "Car display" else "Phone"),
                     Row(
                         "Car screen mode",
                         when {

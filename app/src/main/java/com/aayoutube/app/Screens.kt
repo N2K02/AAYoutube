@@ -187,6 +187,8 @@ fun AppRoot(activity: MainActivity) {
             tab != 0 -> tab = 0
             // Browsing under the mini player (or after closing it): back moves through the browse page.
             WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
+            // Car screen: already on Home; stay on the car screen instead of disappearing from it.
+            WebHost.carDisplay && WebHost.mode.value != WebHost.PlayerMode.FULL -> AppLog.add("UI", "Back on Home (car screen): nothing to go back to")
             WebHost.mode.value != WebHost.PlayerMode.FULL -> activity.moveTaskToBack(true)
             // Car screen: back from a video always shrinks it into the mini player with YouTube
             // Home underneath, like the YouTube app (playing or paused).
@@ -194,6 +196,7 @@ fun AppRoot(activity: MainActivity) {
             // Watching: back shrinks the video into the mini player, like the YouTube app.
             snap.playing && WebHost.isOnWatchPage() -> WebHost.enterMini()
             WebHost.goBack() -> Unit
+            WebHost.carDisplay -> AppLog.add("UI", "Back on YouTube home (car screen): nothing to go back to")
             else -> {
                 AppLog.add("UI", "Back on YouTube home: app to background")
                 activity.moveTaskToBack(true)
@@ -251,13 +254,10 @@ fun AppRoot(activity: MainActivity) {
             )
         }
         if (full == null && !inPip) {
-            // Car screen while the video fills the screen: the round button is a Back button
-            // (to the mini player with Home underneath). Everywhere else it opens the menu.
+            // Car screen: the round button is a Back button (a video shrinks to the mini player with
+            // Home underneath, like the YouTube app). Hold it for the menu. On the phone it is the menu.
             val onCar by WebHost.carScreen.collectAsState()
-            val playerMode by WebHost.mode.collectAsState()
-            val watching by WebHost.onWatchPage.collectAsState()
-            val backButton = onCar && tab == 0 && playerMode == WebHost.PlayerMode.FULL && watching
-            LaunchedEffect(backButton) { if (backButton) menuOpen = false }
+            val backButton = onCar
             MenuButton(
                 backButton = backButton,
                 looseTaps = onCar,
@@ -375,13 +375,19 @@ private fun MenuButton(
                             val c = e.changes.firstOrNull { it.id == down.id } ?: break
                             if (!c.pressed) {
                                 c.consume()
-                                if (dragging) {
-                                    prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply()
-                                } else if (backButton) {
-                                    AppLog.add("UI", "Back button")
-                                    onBack()
-                                } else {
-                                    onOpenChange(!open)
+                                val held = c.uptimeMillis - down.uptimeMillis
+                                when {
+                                    dragging -> prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply()
+                                    open -> onOpenChange(false)
+                                    backButton && held >= 450 -> {
+                                        AppLog.add("UI", "Back button held: menu")
+                                        onOpenChange(true)
+                                    }
+                                    backButton -> {
+                                        AppLog.add("UI", "Back button")
+                                        onBack()
+                                    }
+                                    else -> onOpenChange(true)
                                 }
                                 break
                             }
@@ -408,7 +414,7 @@ private fun MenuButton(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     when {
-                        backButton -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        backButton && !open -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back (hold for the menu)")
                         updateAvailable && !open -> BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
                         else -> Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
                     }
