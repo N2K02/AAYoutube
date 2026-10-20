@@ -254,8 +254,8 @@ fun AppRoot(activity: MainActivity) {
             )
         }
         if (full == null && !inPip) {
-            // Car screen: the round button is a Back button (a video shrinks to the mini player with
-            // Home underneath, like the YouTube app). Hold it for the menu. On the phone it is the menu.
+            // Car screen: the round button is only a Back button (a video shrinks to the mini player
+            // with Home underneath, like the YouTube app). On the phone it is the menu.
             val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
             MenuButton(
@@ -375,14 +375,9 @@ private fun MenuButton(
                             val c = e.changes.firstOrNull { it.id == down.id } ?: break
                             if (!c.pressed) {
                                 c.consume()
-                                val held = c.uptimeMillis - down.uptimeMillis
                                 when {
                                     dragging -> prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply()
                                     open -> onOpenChange(false)
-                                    backButton && held >= 450 -> {
-                                        AppLog.add("UI", "Back button held: menu")
-                                        onOpenChange(true)
-                                    }
                                     backButton -> {
                                         AppLog.add("UI", "Back button")
                                         onBack()
@@ -414,7 +409,7 @@ private fun MenuButton(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     when {
-                        backButton && !open -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back (hold for the menu)")
+                        backButton && !open -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         updateAvailable && !open -> BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
                         else -> Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
                     }
