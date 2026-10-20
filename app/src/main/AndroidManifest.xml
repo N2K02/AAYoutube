@@ -19,6 +19,7 @@
         A WebView crash or freeze therefore can never take Android Auto down with it.
     -->
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
+    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
     <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <!-- To show the Android Auto app version on the Info page. -->
@@ -34,6 +35,13 @@
         android:theme="@style/Theme.AAYoutube"
         android:usesCleartextTraffic="false"
         android:appCategory="game">
+
+        <meta-data
+            android:name="distractionOptimized"
+            android:value="true" />
+        <meta-data
+            android:name="android.max_aspect"
+            android:value="4.0" />
 
         <!-- Tells Android Auto this is a media app -->
         <meta-data
@@ -52,13 +60,28 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <!-- Android 15+: Android Auto lists this screen in the car launcher and runs it on the car display (same approach as AABrowser). -->
+                <category android:name="android.intent.category.DEFAULT" />
+                <!-- Android 15+: Android Auto lists this screen in the car launcher and runs it on the car display.
+                     Same markers as AABrowser: the car launcher plus the navigation-app categories, which is how
+                     Android Auto picks up a sideloaded screen app ("Unknown sources" in its developer settings). -->
                 <category android:name="android.intent.category.CAR_LAUNCHER" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
             <!-- Personal use: keep the screen usable on the car display while driving (sideloaded, your responsibility). -->
             <meta-data
                 android:name="distractionOptimized"
                 android:value="true" />
+            <meta-data
+                android:name="android.max_aspect"
+                android:value="5.0" />
+            <!-- Fill the car display (it can be very wide and short). -->
+            <layout
+                android:minWidth="1dp"
+                android:minHeight="1dp"
+                android:gravity="fill"
+                android:defaultWidth="800dp"
+                android:defaultHeight="480dp" />
             <!-- Opens YouTube links in this app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
