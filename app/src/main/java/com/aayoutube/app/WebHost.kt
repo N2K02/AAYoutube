@@ -114,7 +114,12 @@ object WebHost {
         configure(w)
         web = w
         installScript(w)
-        val url = pendingUrl ?: savedUrl() ?: home()
+        var url = pendingUrl ?: savedUrl() ?: home()
+        // Reopening on the video we left: show it paused. Playing on its own is for Android Auto
+        // and for videos you pick (those load with aay=1).
+        if (pendingUrl == null && Uri.parse(url).path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }) {
+            url += (if (url.contains('?')) "&" else "?") + "aay=paused"
+        }
         pendingUrl = null
         w.loadUrl(url)
         return w

@@ -592,6 +592,15 @@
   var AUTO = /[?&]aay=1/.test(location.search);       // start playing as soon as ready
   var SEARCH_PLAY = /[?&]aay=play/.test(location.search); // open the first result of a search
 
+  // Reopened on a video: keep it paused until you touch the page (YouTube would start it itself).
+  var PAUSED = /[?&]aay=paused/.test(location.search);
+  if (PAUSED) {
+    var releasePaused = function () { PAUSED = false; };
+    document.addEventListener('touchstart', releasePaused, { capture: true, passive: true, once: true });
+    document.addEventListener('click', releasePaused, { capture: true, once: true });
+    setTimeout(releasePaused, 15000);
+  }
+
   function tryPlay(v) {
     var n = 0;
     (function step() {
@@ -617,7 +626,8 @@
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange', 'durationchange', 'emptied'].forEach(function (ev) {
       v.addEventListener(ev, function () { schedReport(ev === 'seeked' ? 250 : 120); }, true);
     });
-    v.addEventListener('loadedmetadata', function () { onLoaded(v); schedReport(120); }, true);
+    v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
+    v.addEventListener('loadedmetadata', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } onLoaded(v); schedReport(120); }, true);
     v.addEventListener('timeupdate', function () { sbTick(v); }, true);
     // Ads are detected from the player's class, not by polling.
     var p = document.querySelector('.html5-video-player');
