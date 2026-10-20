@@ -141,11 +141,19 @@ object BrowseHost {
     private fun isVideo(uri: Uri): Boolean {
         val host = uri.host.orEmpty()
         val path = uri.path.orEmpty()
+        // Exact host or a real subdomain: "evilyoutube.com" must not count as YouTube.
+        val youtube = host.equals("youtube.com", true) || host.endsWith(".youtube.com", true)
         return host.equals("youtu.be", true) ||
-            (host.endsWith("youtube.com") && (path.startsWith("/watch") || path.startsWith("/shorts/") || path.startsWith("/live/")))
+            (youtube && (path.startsWith("/watch") || path.startsWith("/shorts/") || path.startsWith("/live/")))
     }
 
     fun openInPlayer(url: String) {
+        // Also called by the page script (AAYBrowse.open): accept only YouTube video links.
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        if (uri == null || !isVideo(uri)) {
+            AppLog.add("NAV", "Ignored a request to open a non-video link: $url")
+            return
+        }
         main.post {
             AppLog.add("NAV", "Browse page opened a video: $url")
             WebHost.openUrl(url)

@@ -278,6 +278,14 @@ object WebHost {
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
 
     fun openUrl(url: String) {
+        // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
+        // shouldOverrideUrlLoading, so check them here: only YouTube/Google pages, over http(s).
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val scheme = uri?.scheme?.lowercase()
+        if (uri == null || (scheme != "https" && scheme != "http") || !allowedHost(uri.host)) {
+            AppLog.add("NAV", "Refused to open $url in the player: not a YouTube link")
+            return
+        }
         unfreeze()
         mode.value = PlayerMode.FULL
         load(normalise(url))
