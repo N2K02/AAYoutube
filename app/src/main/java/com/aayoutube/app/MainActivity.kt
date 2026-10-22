@@ -23,6 +23,13 @@ import com.google.common.util.concurrent.MoreExecutors
  */
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        // The phone and the car display can each have their own screen (singleTop, like AABrowser),
+        // sharing one page. Only the last of them to hide may pause or hide the page.
+        private val started = mutableSetOf<MainActivity>()
+        private val resumed = mutableSetOf<MainActivity>()
+    }
+
     private var controllerFuture: ListenableFuture<MediaController>? = null
 
     private val askNotifications =
@@ -61,6 +68,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        started += this
         WebHost.requestLink = { runOnUiThread { sayHello() } }
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         WebHost.setCarScreen(!onPhoneScreen())
@@ -71,11 +79,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        WebHost.setHold(true)
+        resumed -= this
+        if (resumed.isEmpty()) WebHost.setHold(true)
     }
 
     override fun onResume() {
         super.onResume()
+        resumed += this
         if (!isInPictureInPictureMode) WebHost.setHold(false)
         AppUpdater.onResume(this)
         updatePip()
@@ -83,13 +93,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) WebHost.onQuit = null
+        started -= this
+        resumed -= this
+        if (isFinishing && started.isEmpty()) WebHost.onQuit = null
     }
 
     override fun onStop() {
         super.onStop()
-        WebHost.requestLink = null
+        started -= this
         releaseController()
+        val other = started.lastOrNull()
+        if (other != null) {
+            // Another screen is still showing the page: it keeps the link, the page stays visible.
+            WebHost.requestLink = { other.runOnUiThread { other.sayHello() } }
+            return
+        }
+        WebHost.requestLink = null
         WebHost.onActivityVisible(false)
         BrowseHost.pause()
     }
