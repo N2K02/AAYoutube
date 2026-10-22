@@ -83,6 +83,8 @@ object WebHost {
     val snapshot = MutableStateFlow(Snap())
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
+    /** Phone YouTube bottom navigation opens the existing native app menu. */
+    val phoneMenuRequests = MutableStateFlow(0)
 
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
@@ -781,6 +783,13 @@ class WebBridge {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json)
+    }
+
+    @JavascriptInterface
+    fun openMenu() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            if (!WebHost.carDisplay) WebHost.phoneMenuRequests.value++
+        }
     }
 
     /** Bottom navigation PiP action; never launch PiP on the car display. */
