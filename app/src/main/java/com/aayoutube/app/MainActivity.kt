@@ -8,6 +8,12 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.activity.OnBackPressedCallback
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,6 +37,57 @@ class MainActivity : ComponentActivity() {
     }
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var carRoot: FrameLayout? = null
+    private var carPage: FrameLayout? = null
+    private var carFullscreen: FrameLayout? = null
+
+    /** Like AABrowser, the car's WebView is hosted by the activity's native view tree. */
+    private fun createNativeCarScreen() {
+        val root = FrameLayout(this)
+        val page = FrameLayout(this)
+        val fullscreen = FrameLayout(this)
+        root.addView(page, FrameLayout.LayoutParams(-1, -1))
+        root.addView(fullscreen, FrameLayout.LayoutParams(-1, -1))
+        fullscreen.visibility = View.GONE
+        carRoot = root
+        carPage = page
+        carFullscreen = fullscreen
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
+        setContentView(root)
+        page.addView(WebHost.attach(this), FrameLayout.LayoutParams(-1, -1))
+        lifecycleScope.launch {
+            WebHost.fullscreenView.collect { full ->
+                if (carRoot !== root) return@collect
+                fullscreen.removeAllViews()
+                if (full != null) {
+                    (full.parent as? ViewGroup)?.removeView(full)
+                    fullscreen.addView(full, FrameLayout.LayoutParams(-1, -1))
+                    fullscreen.visibility = View.VISIBLE
+                } else {
+                    fullscreen.visibility = View.GONE
+                }
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    WebHost.fullscreenView.value != null -> WebHost.exitFullscreen()
+                    WebHost.isOnWatchPage() -> WebHost.enterMini()
+                    !WebHost.goBack() -> WebHost.openUrl("https://m.youtube.com/")
+                }
+            }
+        })
+        AppLog.add("CAR", "Native activity WebView initialized (AABrowser-style)")
+    }
+
+    private fun releaseNativeCarScreen() {
+        val page = carPage ?: return
+        WebHost.detach(page)
+        carFullscreen?.removeAllViews()
+        carRoot = null
+        carPage = null
+        carFullscreen = null
+    }
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -53,7 +110,8 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) WebHost.goHomeIfIdle()
         handleIntent(intent)
         WebHost.onQuit = { runOnUiThread { closeEverything() } }
-        setContent { AAYoutubeTheme { AppRoot(this) } }
+        if (onPhoneScreen()) setContent { AAYoutubeTheme { AppRoot(this) } }
+        else createNativeCarScreen()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -97,6 +155,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         started -= this
         resumed -= this
+        releaseNativeCarScreen()
         if (isFinishing && started.isEmpty()) WebHost.onQuit = null
     }
 
