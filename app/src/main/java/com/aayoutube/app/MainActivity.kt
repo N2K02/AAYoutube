@@ -28,6 +28,8 @@ class MainActivity : ComponentActivity() {
         // sharing one page. Only the last of them to hide may pause or hide the page.
         private val started = mutableSetOf<MainActivity>()
         private val resumed = mutableSetOf<MainActivity>()
+        // The WebView bridge can request PiP only while a phone activity is resumed.
+        @Volatile var pipRequester: (() -> Unit)? = null
     }
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
@@ -80,12 +82,14 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         resumed -= this
+        if (resumed.isEmpty()) pipRequester = null
         if (resumed.isEmpty()) WebHost.setHold(true)
     }
 
     override fun onResume() {
         super.onResume()
         resumed += this
+        if (onPhoneScreen()) pipRequester = { runOnUiThread { enterPhonePip() } }
         if (!isInPictureInPictureMode) WebHost.setHold(false)
         AppUpdater.onResume(this)
         updatePip()
@@ -170,10 +174,17 @@ class MainActivity : ComponentActivity() {
         return id == null || id == android.view.Display.DEFAULT_DISPLAY
     }
 
+    private fun enterPhonePip() {
+        if (Build.VERSION.SDK_INT < 26 || !onPhoneScreen() || isInPictureInPictureMode || !WebHost.isOnWatchPage()) return
+        runCatching { enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()) }
+    }
+
     fun updatePip() {
         if (Build.VERSION.SDK_INT < 26) return
         val playing = WebHost.snapshot.value.playing
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
+        // Avoid carrying a stale portrait/full-activity source rectangle into PiP.
+        if (Build.VERSION.SDK_INT >= 31) builder.setSeamlessResizeEnabled(true)
         if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
         runCatching { setPictureInPictureParams(builder.build()) }
     }
