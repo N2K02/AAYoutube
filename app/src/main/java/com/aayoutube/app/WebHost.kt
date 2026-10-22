@@ -783,6 +783,12 @@ class WebBridge {
         WebHost.onJsState(json)
     }
 
+    /** Bottom navigation PiP action; never launch PiP on the car display. */
+    @JavascriptInterface
+    fun enterPip() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { MainActivity.pipRequester?.invoke() }
+    }
+
     /** Swipe down on the playing video. */
     @JavascriptInterface
     fun mini() {
