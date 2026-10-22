@@ -673,37 +673,6 @@ fun FeaturesPage() {
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use www.youtube.com instead of the mobile site.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
         }
-        Text("Android Auto", style = MaterialTheme.typography.titleMedium)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-            val context = LocalContext.current
-            var mediaPlayer by remember { mutableStateOf(CarMode.mediaPlayer(context)) }
-            ListItem(
-                headlineContent = { Text("Media player instead of the car screen") },
-                supportingContent = {
-                    Text(
-                        if (mediaPlayer) {
-                            "On: Android Auto shows AAYoutube as an audio player (queue, favourites, voice search). " +
-                                "The screen with the video is hidden in the car. Reconnect Android Auto after switching."
-                        } else {
-                            "Off: AAYoutube opens in the car as the full YouTube screen with the video (Android 15+, " +
-                                "like AABrowser). Reconnect Android Auto after switching."
-                        },
-                    )
-                },
-                trailingContent = {
-                    Switch(
-                        checked = mediaPlayer,
-                        onCheckedChange = { on ->
-                            CarMode.set(context, on)
-                            mediaPlayer = CarMode.mediaPlayer(context)
-                            context.findActivity()?.relinkMediaService()
-                        },
-                    )
-                },
-                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-            )
-        }
-
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
             Toggle("Resume where you left off", "Off: the app always starts on YouTube Home. On: it reopens the last page.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
@@ -875,7 +844,7 @@ fun InfoPage() {
                     "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
                         "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
                         "in the background and in picture in picture. In the car, on Android 15+, it shows the full screen with the video " +
-                        "on the car display (or, if you switch it in Features, Android Auto's media player). The page runs in its own process, so a " +
+                        "on the car display. The page runs in its own process, so a " +
                         "WebView problem can't freeze Android Auto. Updates come from GitHub releases (N2K02/AAYoutube).",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

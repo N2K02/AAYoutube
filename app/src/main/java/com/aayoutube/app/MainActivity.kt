@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppUpdater.init(this, "N2K02/AAYoutube", "AAYoutube")
+        CarMode.resetToCarScreen(this)
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.setCarScreen(!onPhoneScreen())
         enableEdgeToEdge()
@@ -95,7 +96,6 @@ class MainActivity : ComponentActivity() {
 
     private fun sayHello() {
         if (controllerFuture != null) return
-        // The media service that is switched on (Features → Android Auto).
         val token = SessionToken(this, CarMode.serviceComponent(this))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
@@ -136,14 +136,6 @@ class MainActivity : ComponentActivity() {
             WebHost.release()
             android.os.Process.killProcess(android.os.Process.myPid())
         }, 500)
-    }
-
-    /** After Features → Android Auto changed the media service: link up with the new one. */
-    fun relinkMediaService() {
-        releaseController()
-        android.os.Handler(mainLooper).postDelayed({
-            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) sayHello()
-        }, 1_000)
     }
 
     private fun releaseController() {

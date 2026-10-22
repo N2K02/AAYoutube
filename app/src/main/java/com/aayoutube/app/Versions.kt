@@ -49,7 +49,6 @@ object Versions {
                     Row(
                         "Car screen mode",
                         when {
-                            CarMode.mediaPlayer(context) -> "Media player (Features → Android Auto)"
                             Build.VERSION.SDK_INT >= 35 -> "App screen on the car display"
                             else -> "Drawing surface (Android 14 and older)"
                         },
