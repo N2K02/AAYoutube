@@ -675,57 +675,31 @@
   }
 
 
-  /* Phone-only entry in YouTube's mobile bottom navigation. */
-  var aayMenuOpen = false;
-  function phoneNav() {
-    if (A.isCar || BROWSE || A.inPip || A.isMini || CFG.desktopSite || window.innerWidth > 700) return null;
-    return document.querySelector('ytm-pivot-bar-renderer, ytm-mobile-topbar-renderer + ytm-pivot-bar-renderer, nav[role="navigation"]:has(a[href="/"])');
-  }
+  /* Phone-only button in YouTube's actual mobile pivot-bar row. */
   function syncPhoneMenu() {
     var old = document.getElementById('aay-phone-nav-item');
-    var nav = phoneNav();
-    if (!nav) { if (old) old.remove(); closePhoneMenu(); return; }
-    if (old && old.parentElement !== nav) old.remove();
+    if (A.isCar || BROWSE || A.inPip || CFG.desktopSite || window.innerWidth > 700) {
+      if (old) old.remove();
+      return;
+    }
+    var host = document.querySelector('ytm-pivot-bar-renderer');
+    // YouTube's pivot items live inside this row, not directly under the renderer.
+    var row = host && (host.querySelector('.pivot-bar') || host.querySelector('.pivot-bar-items') ||
+      host.querySelector('[role="tablist"]') || host);
+    if (!row) { if (old) old.remove(); return; }
+    if (old && old.parentElement !== row) old.remove();
     if (document.getElementById('aay-phone-nav-item')) return;
     var button = document.createElement('button');
     button.id = 'aay-phone-nav-item';
     button.type = 'button';
-    button.setAttribute('aria-label', 'AAYouTube options');
-    button.innerHTML = '<span style="font-size:21px;line-height:24px">⚙</span><span style="font-size:10px">AAYouTube</span>';
-    button.style.cssText = 'display:flex;flex:1;min-width:56px;align-items:center;justify-content:center;flex-direction:column;gap:2px;border:0;background:transparent;color:inherit;font:inherit;padding:5px 2px;cursor:pointer';
-    button.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); aayMenuOpen ? closePhoneMenu() : openPhoneMenu(); });
-    nav.appendChild(button);
-  }
-  function closePhoneMenu() {
-    aayMenuOpen = false;
-    var el = document.getElementById('aay-phone-options');
-    if (el) el.remove();
-  }
-  function openPhoneMenu() {
-    closePhoneMenu();
-    aayMenuOpen = true;
-    var panel = document.createElement('div');
-    panel.id = 'aay-phone-options';
-    panel.setAttribute('role', 'dialog');
-    panel.setAttribute('aria-label', 'AAYouTube options');
-    panel.style.cssText = 'position:fixed;bottom:70px;right:10px;z-index:2147483646;width:min(260px,85vw);padding:8px;background:#212121;color:white;border-radius:16px;box-shadow:0 6px 28px #0008;font:14px Roboto,Arial,sans-serif';
-    function item(label, action) {
-      var b = document.createElement('button');
-      b.type = 'button'; b.textContent = label;
-      b.style.cssText = 'display:block;width:100%;padding:14px 12px;text-align:left;background:transparent;border:0;color:inherit;font:inherit;border-radius:8px';
-      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); closePhoneMenu(); action(); });
-      panel.appendChild(b);
-    }
-    item('Picture in picture', function () { try { N && N.enterPip(); } catch (e) {} });
-    item('Fullscreen', function () {
-      var v = getVideo(), p = document.getElementById('movie_player') || v;
-      if (p && p.requestFullscreen) p.requestFullscreen().catch(function () {});
+    button.setAttribute('aria-label', 'AAYouTube menu');
+    button.innerHTML = '<span aria-hidden="true" style="font-size:23px;line-height:24px">⚙</span><span style="font-size:10px">AAYouTube</span>';
+    button.style.cssText = 'display:flex;flex:1 1 0;min-width:55px;min-height:48px;align-items:center;justify-content:center;flex-direction:column;gap:2px;border:0;background:transparent;color:inherit;font:inherit;padding:4px 2px;cursor:pointer';
+    button.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      try { N && N.openMenu(); } catch (err) {}
     });
-    item('Background playback: ' + (CFG.backgroundPlay !== false ? 'On' : 'Off'), function () {
-      A.config({ backgroundPlay: CFG.backgroundPlay === false });
-    });
-    item('Close', function () {});
-    document.body.appendChild(panel);
+    row.appendChild(button);
   }
 
   var tickTimer = 0;
