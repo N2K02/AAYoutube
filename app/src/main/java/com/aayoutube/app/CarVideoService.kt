@@ -59,6 +59,8 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private var container: FrameLayout? = null
     private var fullscreenJob: Job? = null
     private var density = 1f
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
 
     private val callback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) = start(surfaceContainer)
@@ -88,7 +90,9 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         stop()
         AppLog.add("CAR", "Surface ${c.width}x${c.height} dpi=${c.dpi}")
         val surface = c.surface ?: return
-        density = c.dpi / 160f
+        density = (c.dpi.coerceAtLeast(160)) / 160f
+        surfaceWidth = c.width
+        surfaceHeight = c.height
         val manager = carContext.getSystemService(DisplayManager::class.java)
         val vd = manager.createVirtualDisplay(
             "aay-car", c.width, c.height, c.dpi, surface,
@@ -99,6 +103,11 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         val frame = FrameLayout(p.context)
         p.setContentView(frame, ViewGroup.LayoutParams(-1, -1))
         p.show()
+        frame.post {
+            if (container === frame) {
+                AppLog.add("CAR", "Viewport surface=${surfaceWidth}x${surfaceHeight} frame=${frame.width}x${frame.height} dpi=${c.dpi} density=$density")
+            }
+        }
         presentation = p
         container = frame
         WebHost.showOnCar(true)
@@ -140,13 +149,34 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun tap(x: Float, y: Float) {
-        AppLog.add("CAR", "Tap $x,$y")
         val target = container ?: return
+        if (surfaceWidth <= 0 || surfaceHeight <= 0) return
+        // SurfaceCallback coordinates are surface pixels, not WebView CSS pixels or dp.
+        // Presentation can have a different content size; map to its actual bounds.
+        val width = target.width
+        val height = target.height
+        if (width <= 0 || height <= 0) {
+            AppLog.add("CAR", "Touch ignored: presentation not laid out")
+            return
+        }
+        val mappedX = x * width / surfaceWidth
+        val mappedY = y * height / surfaceHeight
+        if (mappedX < 0f || mappedX >= width || mappedY < 0f || mappedY >= height) {
+            AppLog.add("CAR", "Touch outside viewport: surface=($x,$y) mapped=($mappedX,$mappedY)")
+            return
+        }
+        AppLog.add("CAR", "Touch surface=($x,$y) view=($mappedX,$mappedY) frame=${width}x$height")
         val down = SystemClock.uptimeMillis()
-        target.dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
+        val downEvent = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, mappedX, mappedY, 0)
+        target.dispatchTouchEvent(downEvent)
+        downEvent.recycle()
         main.postDelayed({
+            // Do not dispatch UP to a stale Presentation after a reconnect.
+            if (container !== target) return@postDelayed
             val up = SystemClock.uptimeMillis()
-            target.dispatchTouchEvent(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x, y, 0))
+            val upEvent = MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, mappedX, mappedY, 0)
+            target.dispatchTouchEvent(upEvent)
+            upEvent.recycle()
         }, 60)
     }
 
