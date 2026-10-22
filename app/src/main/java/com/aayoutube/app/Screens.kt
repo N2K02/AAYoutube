@@ -777,6 +777,15 @@ fun UpdatePage() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Update", style = MaterialTheme.typography.headlineMedium)
+        val experimentalEnabled by AppUpdater.experimentalEnabled.collectAsState()
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Experimental updates", style = MaterialTheme.typography.titleMedium)
+                Text("Opt in to preview APKs; stable is the default.", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(checked = experimentalEnabled, onCheckedChange = AppUpdater::setExperimentalEnabled)
+        }
+
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
