@@ -151,6 +151,8 @@ fun AppRoot(activity: MainActivity) {
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val updater by AppUpdater.state.collectAsState()
+    val phoneMenuRequests by WebHost.phoneMenuRequests.collectAsState()
+    LaunchedEffect(phoneMenuRequests) { if (phoneMenuRequests > 0 && !WebHost.carDisplay) menuOpen = true }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
@@ -261,7 +263,32 @@ fun AppRoot(activity: MainActivity) {
             // with Home underneath, like the YouTube app). On the phone it is the menu.
             val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
-            MenuButton(
+            if (!onCar && menuOpen) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))
+                    .pointerInput(Unit) { detectTapGestures { menuOpen = false } })
+                Column(
+                    Modifier.align(Alignment.BottomEnd)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(end = 12.dp, bottom = 70.dp)
+                        .background(MaterialTheme.colorScheme.surface, androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Tab.entries.forEachIndexed { index, item ->
+                        MenuItem(item.label, item.icon, false, tab == index,
+                            badge = item == Tab.Update && updater is AppUpdater.State.Available) {
+                            tab = index; menuOpen = false
+                        }
+                    }
+                    MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, false, false) {
+                        menuOpen = false; goBack()
+                    }
+                    MenuItem("Quit", Icons.Rounded.PowerSettingsNew, false, false) {
+                        menuOpen = false; activity.quit()
+                    }
+                }
+            }
+            if (onCar) MenuButton(
                 backButton = backButton,
                 looseTaps = onCar,
                 selected = tab,
