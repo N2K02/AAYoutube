@@ -29,6 +29,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private var display: VirtualDisplay? = null
     private var presentation: Presentation? = null
     private var container: FrameLayout? = null
+    private var fullscreenJob: Job? = null
     private var density = 1f
 
     private val callback = object : SurfaceCallback {
@@ -102,7 +104,12 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         WebHost.showOnCar(true)
         show(p, frame)
         // YouTube's fullscreen player is a separate view: show it instead of the page while it is open.
-        scope.launch { WebHost.fullscreenView.collect { show(p, frame) } }
+        fullscreenJob?.cancel()
+        fullscreenJob = scope.launch {
+            WebHost.fullscreenView.collect {
+                if (presentation === p && container === frame) show(p, frame)
+            }
+        }
     }
 
     private fun show(p: Presentation, frame: FrameLayout) {
@@ -117,6 +124,8 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun stop() {
+        fullscreenJob?.cancel()
+        fullscreenJob = null
         AppLog.add("CAR", "Surface released")
         val frame = container
         container = null
