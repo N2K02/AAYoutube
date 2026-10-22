@@ -246,6 +246,9 @@ object WebHost {
     fun attach(context: android.content.Context): WebView {
         val w = ensureWeb()
         wrapper?.setBaseContext(context)
+        // The phone's accessibility/page zoom can make the car UI oversized.
+        // Keep the car WebView at normal text scale without changing phone preferences.
+        w.settings.textZoom = if (carShown) 100 else Features.current.pageZoom
         (w.parent as? ViewGroup)?.removeView(w)
         return w
     }
@@ -280,6 +283,7 @@ object WebHost {
 
     fun showOnCar(on: Boolean) {
         carShown = on
+        web?.settings?.textZoom = if (on) 100 else Features.current.pageZoom
         if (on) {
             main.removeCallbacks(freezeSoon)
             unfreeze()
