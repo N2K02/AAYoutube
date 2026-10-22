@@ -28,8 +28,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // One decimal place: 1.0, 1.1 … 1.9, 2.0. versionCode 1.4 -> 14 (always goes up).
-        versionName = appVersion
-        versionCode = appVersionCode
+        versionName = appVersion + ((findProperty("appVersionSuffix") as String?) ?: "")
+        versionCode = (findProperty("appVersionCode") as String?)?.toIntOrNull() ?: appVersionCode
         v.forEach { (name, version) -> buildConfigField("String", "LIB_" + name.uppercase(), "\"$version\"") }
     }
 
