@@ -52,10 +52,10 @@
             android:name=".MainActivity"
             android:process=":web"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
             android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|layoutDirection"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|uiMode|density|layoutDirection|locale"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
