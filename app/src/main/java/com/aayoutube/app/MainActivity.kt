@@ -41,7 +41,9 @@ class MainActivity : ComponentActivity() {
         CarMode.resetToCarScreen(this)
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.setCarScreen(!onPhoneScreen())
-        enableEdgeToEdge()
+        // Android Auto owns the car's usable viewport. Phone keeps edge-to-edge styling;
+        // on a car display let WindowManager reserve the system/decor insets normally.
+        if (onPhoneScreen()) enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -190,7 +192,9 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // The screen can move between the phone and the car display without being recreated.
-        WebHost.setCarScreen(!onPhoneScreen())
+        val car = !onPhoneScreen()
+        WebHost.setCarScreen(car)
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, car)
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
