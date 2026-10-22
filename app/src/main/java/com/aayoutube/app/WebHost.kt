@@ -103,6 +103,7 @@ object WebHost {
     fun setCarScreen(on: Boolean) {
         if (carScreen.value == on) return
         carScreen.value = on
+        web?.settings?.textZoom = if (on) 100 else Features.current.pageZoom
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
         js("window.__aay&&window.__aay.car($on)")
@@ -246,6 +247,8 @@ object WebHost {
     fun attach(context: android.content.Context): WebView {
         val w = ensureWeb()
         wrapper?.setBaseContext(context)
+        // Direct car Activity: prevent phone text-zoom preferences from scaling the car viewport.
+        w.settings.textZoom = if (carDisplay) 100 else Features.current.pageZoom
         (w.parent as? ViewGroup)?.removeView(w)
         return w
     }
