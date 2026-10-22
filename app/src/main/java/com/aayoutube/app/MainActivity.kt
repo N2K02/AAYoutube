@@ -9,11 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import android.view.View
-import android.view.Gravity
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.widget.TextView
-import android.graphics.Color
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.OnBackPressedCallback
@@ -45,48 +40,20 @@ class MainActivity : ComponentActivity() {
     private var carRoot: FrameLayout? = null
     private var carPage: FrameLayout? = null
     private var carFullscreen: FrameLayout? = null
-    private var carBrowse: FrameLayout? = null
-    private var carMiniControls: FrameLayout? = null
-
-    /** AABrowser-style native hierarchy; mini-player stays in the same window as browsing. */
+    /** Single native WebView host on the car display; no car-specific mini-player. */
     private fun createNativeCarScreen() {
         val root = FrameLayout(this)
-        val browse = FrameLayout(this)
         val page = FrameLayout(this)
         val fullscreen = FrameLayout(this)
-        val controls = FrameLayout(this)
-        root.addView(browse, FrameLayout.LayoutParams(-1, -1))
         root.addView(page, FrameLayout.LayoutParams(-1, -1))
-        root.addView(controls, FrameLayout.LayoutParams(-1, -1))
         root.addView(fullscreen, FrameLayout.LayoutParams(-1, -1))
         fullscreen.visibility = View.GONE
         carRoot = root
         carPage = page
-        carBrowse = browse
         carFullscreen = fullscreen
-        carMiniControls = controls
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
         setContentView(root)
-        val web = WebHost.attach(this)
-        page.addView(web, FrameLayout.LayoutParams(-1, -1))
-        val gesture = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = false
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-                if (e1 != null && WebHost.mode.value == WebHost.PlayerMode.FULL &&
-                    WebHost.isOnWatchPage() && e2.y - e1.y > 110f * resources.displayMetrics.density &&
-                    velocityY > 350f && kotlin.math.abs(e2.x - e1.x) < kotlin.math.abs(e2.y - e1.y)) {
-                    WebHost.enterMini()
-                }
-                return false // Always let WebView process the touch too.
-            }
-        })
-        web.setOnTouchListener { _, event -> gesture.onTouchEvent(event); false }
-        lifecycleScope.launch {
-            WebHost.mode.collect { mode ->
-                if (carRoot !== root) return@collect
-                updateNativeCarPlayer(mode)
-            }
-        }
+        page.addView(WebHost.attach(this), FrameLayout.LayoutParams(-1, -1))
         lifecycleScope.launch {
             WebHost.fullscreenView.collect { full ->
                 if (carRoot !== root) return@collect
@@ -95,82 +62,28 @@ class MainActivity : ComponentActivity() {
                     (full.parent as? ViewGroup)?.removeView(full)
                     fullscreen.addView(full, FrameLayout.LayoutParams(-1, -1))
                     fullscreen.visibility = View.VISIBLE
-                } else fullscreen.visibility = View.GONE
+                } else {
+                    fullscreen.visibility = View.GONE
+                }
             }
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
                     WebHost.fullscreenView.value != null -> WebHost.exitFullscreen()
-                    WebHost.mode.value == WebHost.PlayerMode.MINI -> WebHost.expandPlayer()
-                    WebHost.isOnWatchPage() -> WebHost.enterMini()
                     !WebHost.goBack() -> WebHost.openUrl("https://m.youtube.com/")
                 }
             }
         })
-        AppLog.add("CAR", "Native activity WebView with mini-player initialized")
-    }
-
-    private fun updateNativeCarPlayer(mode: WebHost.PlayerMode) {
-        val page = carPage ?: return
-        val browse = carBrowse ?: return
-        val controls = carMiniControls ?: return
-        val density = resources.displayMetrics.density
-        controls.removeAllViews()
-        when (mode) {
-            WebHost.PlayerMode.FULL -> {
-                page.layoutParams = FrameLayout.LayoutParams(-1, -1)
-                page.visibility = View.VISIBLE
-                browse.visibility = View.GONE
-            }
-            WebHost.PlayerMode.HIDDEN -> {
-                page.visibility = View.INVISIBLE
-                browse.visibility = View.VISIBLE
-            }
-            WebHost.PlayerMode.MINI -> {
-                if (browse.childCount == 0) {
-                    browse.addView(BrowseHost.attach(this), FrameLayout.LayoutParams(-1, -1))
-                }
-                browse.visibility = View.VISIBLE
-                page.visibility = View.VISIBLE
-                // Size relative to the actual car viewport, rather than fixed phone dp.
-                val width = (resources.displayMetrics.widthPixels * 0.42f).toInt().coerceAtLeast((160 * density).toInt())
-                val height = (width * 9 / 16).coerceAtLeast((90 * density).toInt())
-                page.layoutParams = FrameLayout.LayoutParams(width, height, Gravity.BOTTOM or Gravity.END).apply {
-                    rightMargin = (12 * density).toInt()
-                    bottomMargin = (64 * density).toInt()
-                }
-                fun control(label: String, right: Int, action: () -> Unit) {
-                    val button = TextView(this).apply {
-                        text = label
-                        textSize = 19f
-                        setTextColor(Color.WHITE)
-                        setBackgroundColor(0xBB202020.toInt())
-                        gravity = Gravity.CENTER
-                        setOnClickListener { action() }
-                    }
-                    controls.addView(button, FrameLayout.LayoutParams((46 * density).toInt(), (42 * density).toInt(), Gravity.BOTTOM or Gravity.END).apply {
-                        rightMargin = right
-                        bottomMargin = (64 * density).toInt() + height
-                    })
-                }
-                control("×", (12 * density).toInt(), { WebHost.closePlayer() })
-                control("↗", (62 * density).toInt(), { WebHost.expandPlayer() })
-                page.setOnClickListener { WebHost.expandPlayer() }
-            }
-        }
-        if (mode != WebHost.PlayerMode.MINI) page.setOnClickListener(null)
+        AppLog.add("CAR", "Native activity single WebView initialized")
     }
 
     private fun releaseNativeCarScreen() {
         carPage?.let { WebHost.detach(it) }
-        carBrowse?.let { BrowseHost.detach(it) }
         carFullscreen?.removeAllViews()
         carRoot = null
         carPage = null
-        carBrowse = null
         carFullscreen = null
-        carMiniControls = null
     }
 
     private val askNotifications =
