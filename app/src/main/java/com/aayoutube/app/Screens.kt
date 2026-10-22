@@ -207,10 +207,13 @@ fun AppRoot(activity: MainActivity) {
         if (menuOpen) menuOpen = false else goBack()
     }
 
+    // AABrowser-style direct activity WebView on the car display: no Scaffold insets or
+    // gesture detector in front of the page. Phone UI keeps its existing layout.
+    val directCarWebView by WebHost.carScreen.collectAsState()
     // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
     // moved between parents, because detaching a WebView from its window pauses the video.
     Box(
-        Modifier.fillMaxSize().pointerInput(Unit) {
+        (if (directCarWebView) Modifier.fillMaxSize() else Modifier.fillMaxSize().pointerInput(Unit) {
             awaitPointerEventScope {
                 while (true) {
                     // Initial pass: seen before the page or any button handles the touch.
@@ -218,9 +221,13 @@ fun AppRoot(activity: MainActivity) {
                     if (e.type == PointerEventType.Press) touches++
                 }
             }
-        },
+        }),
     ) {
-        Scaffold { padding ->
+        if (directCarWebView) {
+            // No Material Scaffold padding on the car: let the WebView own the activity's
+            // full content area so its CSS viewport and Android touch coordinates agree.
+            WebPane(Modifier.fillMaxSize())
+        } else Scaffold { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
                 WebPane(Modifier.fillMaxSize())
@@ -547,7 +554,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
                 // Car screen: swipe down on the video shrinks it into the mini player, as on the phone.
                 // Detected here rather than in the page, whatever kind of touch Android Auto sends.
-                onCar -> Modifier.fillMaxSize().then(carSwipeDown)
+                onCar -> Modifier.fillMaxSize()
                 else -> Modifier.fillMaxSize()
             }
             key(version) {
