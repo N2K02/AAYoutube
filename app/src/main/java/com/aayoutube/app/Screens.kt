@@ -43,6 +43,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.boundsInRoot
 import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -276,6 +279,11 @@ fun AppRoot(activity: MainActivity) {
 
 // ---------------------------------------------------------------------------- menu button
 
+/** Where the mini player is on screen (root coordinates), so the round button can keep clear of it. */
+private object MiniPlace {
+    val rect = kotlinx.coroutines.flow.MutableStateFlow<androidx.compose.ui.geometry.Rect?>(null)
+}
+
 /**
  * The round menu button: floats over everything, can be dragged anywhere (its place is
  * remembered), and opens the menu (pages, Back, Quit) next to itself.
@@ -295,7 +303,11 @@ private fun MenuButton(
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
-    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+    var originRoot by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+            .onGloballyPositioned { originRoot = it.positionInRoot() },
+    ) {
         val density = LocalDensity.current
         val fab = 56.dp
         val gap = 12.dp
@@ -306,8 +318,33 @@ private fun MenuButton(
         // Saved as fractions, so the place survives rotation and different screens (phone / car).
         var fx by remember { mutableStateOf(prefs.getFloat("fabX", 1f)) }
         var fy by remember { mutableStateOf(prefs.getFloat("fabY", 0.72f)) }
-        val x = gapPx + (maxX - gapPx) * fx.coerceIn(0f, 1f)
-        val y = gapPx + (maxY - gapPx) * fy.coerceIn(0f, 1f)
+        val homeX = gapPx + (maxX - gapPx) * fx.coerceIn(0f, 1f)
+        val homeY = gapPx + (maxY - gapPx) * fy.coerceIn(0f, 1f)
+
+        // Keep clear of the mini player: if they would overlap, step to the nearest free spot
+        // (above, below, left or right of it). The saved place is unchanged; the button returns
+        // there when the mini player closes.
+        val mini by MiniPlace.rect.collectAsState()
+        val origin = originRoot
+        val clear = run {
+            val r = mini ?: return@run homeX to homeY
+            val left = r.left - origin.x - gapPx
+            val top = r.top - origin.y - gapPx
+            val right = r.right - origin.x + gapPx
+            val bottom = r.bottom - origin.y + gapPx
+            val overlaps = homeX < right && homeX + fabPx > left && homeY < bottom && homeY + fabPx > top
+            if (!overlaps) return@run homeX to homeY
+            listOf(
+                homeX to (top - fabPx),
+                homeX to bottom,
+                (left - fabPx) to homeY,
+                right to homeY,
+            ).filter { (cx, cy) -> cx in gapPx..maxX && cy in gapPx..maxY }
+                .minByOrNull { (cx, cy) -> kotlin.math.abs(cx - homeX) + kotlin.math.abs(cy - homeY) }
+                ?: (homeX to homeY)
+        }
+        val x by androidx.compose.animation.core.animateFloatAsState(clear.first, label = "menuX")
+        val y by androidx.compose.animation.core.animateFloatAsState(clear.second, label = "menuY")
 
         if (open) {
             Box(
@@ -578,8 +615,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 val pos = if (snap.playing) snap.posMs + ((now - seenAt) * snap.rate).toLong() else snap.posMs
                 val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
 
+                DisposableEffect(Unit) { onDispose { MiniPlace.rect.value = null } }
                 Box(
                     miniMod
+                        .onGloballyPositioned { MiniPlace.rect.value = it.boundsInRoot() }
                         .pointerInput(maxX, maxY) {
                             detectDragGestures(
                                 onDragEnd = { prefs.edit().putFloat("miniX", mx).putFloat("miniY", my).apply() },
