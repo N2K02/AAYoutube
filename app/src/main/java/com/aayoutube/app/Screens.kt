@@ -876,7 +876,7 @@ fun UpdatePage() {
         )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
-                Text("Experimental updates", style = MaterialTheme.typography.titleMedium)
+                Text("Experimental updates", style = MaterialTheme.typography.titleSmall)
                 Text("Offer signed APKs from successful pull request builds. Test builds may have bugs.",
                     style = MaterialTheme.typography.bodySmall)
             }
