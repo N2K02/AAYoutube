@@ -272,7 +272,7 @@ fun AppRoot(activity: MainActivity) {
                     selected = tab,
                     open = menuOpen,
                     faded = faded,
-                    updateAvailable = updater is AppUpdater.State.Available,
+                    updateAvailable = LiveUpdater.controller.status.collectAsState().value is dev.n2k02.updater.UpdateStatus.Available,
                     onOpenChange = { menuOpen = it },
                     onSelect = { tab = it; menuOpen = false },
                     onBack = { menuOpen = false; goBack() },
@@ -290,7 +290,7 @@ fun AppRoot(activity: MainActivity) {
                         onClick = { menuOpen = true },
                         modifier = Modifier.size(48.dp),
                     ) {
-                        if (updater is AppUpdater.State.Available) {
+                        if (LiveUpdater.controller.status.collectAsState().value is dev.n2k02.updater.UpdateStatus.Available) {
                             BadgedBox(badge = { Badge() }) {
                                 Icon(Icons.Filled.Menu, contentDescription = "AAYoutube menu")
                             }
@@ -325,7 +325,7 @@ fun AppRoot(activity: MainActivity) {
                                 ) {
                                     Icon(item.icon, contentDescription = null)
                                     Text(item.label, style = MaterialTheme.typography.bodyLarge)
-                                    if (item == Tab.Update && updater is AppUpdater.State.Available) {
+                                    if (item == Tab.Update && LiveUpdater.controller.status.collectAsState().value is dev.n2k02.updater.UpdateStatus.Available) {
                                         Badge()
                                     }
                                 }
