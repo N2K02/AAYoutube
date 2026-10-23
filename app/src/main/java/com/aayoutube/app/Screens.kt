@@ -154,7 +154,6 @@ fun AppRoot(activity: MainActivity) {
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
-    val updater by AppUpdater.state.collectAsState()
     val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
@@ -167,7 +166,6 @@ fun AppRoot(activity: MainActivity) {
     }
     // Picture in picture always shows the video: go back to the YouTube tab.
     LaunchedEffect(inPip) { if (inPip) { tab = 0; menuOpen = false } }
-    LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
     // Fullscreen video: landscape, no system bars.
@@ -865,6 +863,7 @@ fun FeaturesPage() {
 @Composable
 fun UpdatePage() {
     val experimentalEnabled by LiveUpdater.experimentalEnabled.collectAsState()
+    val context = LocalContext.current
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -872,7 +871,7 @@ fun UpdatePage() {
         Text("About & updates", style = MaterialTheme.typography.headlineMedium)
         ListItem(
             headlineContent = { Text("AAYoutube") },
-            supportingContent = { Text("Version " + AppUpdater.installedVersionName) },
+            supportingContent = { Text("Version " + context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()) },
             leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
         )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -907,7 +906,7 @@ fun InfoPage() {
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("About", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text("AAYoutube v" + context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(), style = MaterialTheme.typography.titleLarge)
                 Text(
                     "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
                         "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
@@ -948,15 +947,6 @@ fun InfoPage() {
             }
         }
 
-    }
-}
-
-@Composable
-private fun Notes(release: AppUpdater.Release) {
-    if (release.notes.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("What's new", style = MaterialTheme.typography.labelLarge)
-        release.notes.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
