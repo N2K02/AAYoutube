@@ -861,89 +861,31 @@ fun FeaturesPage() {
 
 @Composable
 fun UpdatePage() {
-    val context = LocalContext.current
-    val state by AppUpdater.state.collectAsState()
-    val activity = context.findActivity()
-
+    val experimentalEnabled by LiveUpdater.experimentalEnabled.collectAsState()
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Update", style = MaterialTheme.typography.headlineMedium)
-        val experimentalEnabled by AppUpdater.experimentalEnabled.collectAsState()
+        Text("About & updates", style = MaterialTheme.typography.headlineMedium)
+        ListItem(
+            headlineContent = { Text("AAYoutube") },
+            supportingContent = { Text("Version " + AppUpdater.installedVersionName) },
+            leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
+        )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
                 Text("Experimental updates", style = MaterialTheme.typography.titleMedium)
-                Text("Opt in to preview APKs; stable is the default.", style = MaterialTheme.typography.bodySmall)
+                Text("Offer signed APKs from successful pull request builds. Test builds may have bugs.",
+                    style = MaterialTheme.typography.bodySmall)
             }
-            Switch(checked = experimentalEnabled, onCheckedChange = AppUpdater::setExperimentalEnabled)
+            Switch(checked = experimentalEnabled, onCheckedChange = LiveUpdater::setExperimentalEnabled)
         }
-
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Installed version", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
-            }
-        }
-
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                when (val s = state) {
-                    is AppUpdater.State.Idle -> {
-                        Text("Check GitHub for a new version.")
-                        AppButton("Check for updates", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                    }
-                    is AppUpdater.State.Checking -> {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            LoadingIndicator(Modifier.size(48.dp))
-                            Text("Checking…")
-                        }
-                    }
-                    is AppUpdater.State.UpToDate -> {
-                        Text("You're on the latest version.", style = MaterialTheme.typography.titleMedium)
-                        AppButton("Check again", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                    }
-                    is AppUpdater.State.Available -> {
-                        Text("v${s.release.versionName} is available", style = MaterialTheme.typography.titleMedium)
-                        Notes(s.release)
-                        AppButton("Download & install", Icons.Filled.Download, Modifier.fillMaxWidth()) { AppUpdater.update(s.release) }
-                        AppButton("Skip this version", Icons.Filled.SkipNext, Modifier.fillMaxWidth()) { AppUpdater.skip(s.release) }
-                    }
-                    is AppUpdater.State.Downloading -> {
-                        Text("Downloading v${s.release.versionName}", style = MaterialTheme.typography.titleMedium)
-                        val p = s.progress
-                        if (p == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        else LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
-                    }
-                    is AppUpdater.State.NeedsPermission -> {
-                        Text("Allow installs from AAYoutube", style = MaterialTheme.typography.titleMedium)
-                        Text("Android needs “install unknown apps” turned on for this app. The install continues when you come back.")
-                        AppButton("Open settings", Icons.Filled.Settings, Modifier.fillMaxWidth()) { activity?.let { AppUpdater.openInstallPermission(it) } }
-                    }
-                    is AppUpdater.State.Ready -> {
-                        Text("v${s.release.versionName} is ready", style = MaterialTheme.typography.titleMedium)
-                        AppButton("Install", Icons.Filled.InstallMobile, Modifier.fillMaxWidth()) { AppUpdater.install(s.release) }
-                    }
-                    is AppUpdater.State.Failed -> {
-                        Text(s.message, style = MaterialTheme.typography.titleMedium)
-                        if (s.diagnostics.isNotBlank()) {
-                            Text(s.diagnostics, style = MaterialTheme.typography.bodySmall)
-                        }
-                        AppButton("Try again", Icons.Filled.Refresh, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                        if (activity != null) {
-                            AppButton("Release page", Icons.AutoMirrored.Filled.OpenInNew, Modifier.fillMaxWidth()) { AppUpdater.openReleasePage(activity, s.release) }
-                        }
-                        AppButton("Dismiss", Icons.Filled.Close, Modifier.fillMaxWidth()) { AppUpdater.dismiss() }
-                    }
-                }
-            }
-        }
+        androidx.compose.material3.HorizontalDivider()
+        Text("App updates", style = MaterialTheme.typography.titleLarge)
+        dev.n2k02.updater.N2K02UpdateScreen(
+            controller = LiveUpdater.controller,
+            installGuard = LiveUpdater.installGuard,
+        )
     }
 }
 
