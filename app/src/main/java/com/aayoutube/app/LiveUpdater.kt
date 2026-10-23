@@ -8,11 +8,14 @@ import dev.n2k02.updater.UpdateInstallGuard
 import dev.n2k02.updater.UpdateStatus
 import dev.n2k02.updater.UpdaterController
 import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 
 /** Experimental shared updater integration. */
 internal object LiveUpdater {
     private lateinit var app: Context
-    private var instance: UpdaterController? = null
+    private var instance: UpdaterController? by mutableStateOf(null)
     val experimentalEnabled = MutableStateFlow(false)
     val installGuard = UpdateInstallGuard { true }
 
