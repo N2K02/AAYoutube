@@ -77,6 +77,9 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -261,18 +264,100 @@ fun AppRoot(activity: MainActivity) {
             // with Home underneath, like the YouTube app). On the phone it is the menu.
             val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
-            MenuButton(
-                backButton = backButton,
-                looseTaps = onCar,
-                selected = tab,
-                open = menuOpen,
-                faded = faded,
-                updateAvailable = updater is AppUpdater.State.Available,
-                onOpenChange = { menuOpen = it },
-                onSelect = { tab = it; menuOpen = false },
-                onBack = { menuOpen = false; goBack() },
-                onQuit = { menuOpen = false; activity.quit() },
-            )
+            if (onCar) {
+                MenuButton(
+                    backButton = true,
+                    looseTaps = true,
+                    selected = tab,
+                    open = menuOpen,
+                    faded = faded,
+                    updateAvailable = updater is AppUpdater.State.Available,
+                    onOpenChange = { menuOpen = it },
+                    onSelect = { tab = it; menuOpen = false },
+                    onBack = { menuOpen = false; goBack() },
+                    onQuit = { menuOpen = false; activity.quit() },
+                )
+            } else {
+                // The website owns Home and You. Overlay its unused middle slot instead of
+                // inserting a second navigation bar or detaching the playback WebView.
+                Box(
+                    Modifier.align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(bottom = 9.dp),
+                ) {
+                    FilledTonalIconButton(
+                        onClick = { menuOpen = true },
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        if (updater is AppUpdater.State.Available) {
+                            BadgedBox(badge = { Badge() }) {
+                                Icon(Icons.Filled.Menu, contentDescription = "AAYoutube menu")
+                            }
+                        } else {
+                            Icon(Icons.Filled.Menu, contentDescription = "AAYoutube menu")
+                        }
+                    }
+                }
+                if (menuOpen) {
+                    ModalBottomSheet(
+                        onDismissRequest = { menuOpen = false },
+                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                    ) {
+                        Text(
+                            "AAYoutube",
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                        )
+                        Tab.entries.forEachIndexed { index, item ->
+                            Surface(
+                                onClick = { tab = index; menuOpen = false },
+                                shape = RoundedCornerShape(22.dp),
+                                color = if (tab == index) MaterialTheme.colorScheme.secondaryContainer
+                                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 3.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                ) {
+                                    Icon(item.icon, contentDescription = null)
+                                    Text(item.label, style = MaterialTheme.typography.bodyLarge)
+                                    if (item == Tab.Update && updater is AppUpdater.State.Available) {
+                                        Badge()
+                                    }
+                                }
+                            }
+                        }
+                        Surface(
+                            onClick = { menuOpen = false; goBack() },
+                            shape = RoundedCornerShape(22.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                                Text("Back")
+                            }
+                        }
+                        Surface(
+                            onClick = { menuOpen = false; activity.quit() },
+                            shape = RoundedCornerShape(22.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null)
+                                Text("Quit")
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
+                    }
+                }
+            }
         }
     }
 }
