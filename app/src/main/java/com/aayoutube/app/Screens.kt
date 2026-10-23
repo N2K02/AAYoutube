@@ -281,9 +281,9 @@ fun AppRoot(activity: MainActivity) {
                 // The website owns Home and You. Overlay its unused middle slot instead of
                 // inserting a second navigation bar or detaching the playback WebView.
                 Box(
-                    Modifier.align(Alignment.BottomCenter)
+                    Modifier.align(Alignment.BottomEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(bottom = 9.dp),
+                        .padding(end = 12.dp, bottom = 9.dp),
                 ) {
                     FilledTonalIconButton(
                         onClick = { menuOpen = true },
