@@ -143,6 +143,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val features by Features.state.collectAsState()
