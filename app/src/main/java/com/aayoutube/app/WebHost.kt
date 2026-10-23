@@ -83,6 +83,8 @@ object WebHost {
     val snapshot = MutableStateFlow(Snap())
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
+    /** YouTube HTML bottom-nav menu tap, delivered from the page bridge. */
+    val htmlMenuTap = MutableStateFlow(0L)
 
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
@@ -778,6 +780,13 @@ object WebHost {
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
 class WebBridge {
+    @JavascriptInterface
+    fun openMenu() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            WebHost.htmlMenuTap.value = WebHost.htmlMenuTap.value + 1L
+        }
+    }
+
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json)

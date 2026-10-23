@@ -39,6 +39,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.graphics.Color
@@ -77,6 +78,9 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -140,6 +144,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val features by Features.state.collectAsState()
@@ -150,7 +155,9 @@ fun AppRoot(activity: MainActivity) {
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
-    val updater by AppUpdater.state.collectAsState()
+    val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
+    val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
+    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L) menuOpen = true }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
@@ -162,7 +169,6 @@ fun AppRoot(activity: MainActivity) {
     }
     // Picture in picture always shows the video: go back to the YouTube tab.
     LaunchedEffect(inPip) { if (inPip) { tab = 0; menuOpen = false } }
-    LaunchedEffect(updater) { AppLog.add("UPDATE", updater::class.simpleName.orEmpty()) }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
     // Fullscreen video: landscape, no system bars.
@@ -261,18 +267,84 @@ fun AppRoot(activity: MainActivity) {
             // with Home underneath, like the YouTube app). On the phone it is the menu.
             val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
-            MenuButton(
-                backButton = backButton,
-                looseTaps = onCar,
-                selected = tab,
-                open = menuOpen,
-                faded = faded,
-                updateAvailable = updater is AppUpdater.State.Available,
-                onOpenChange = { menuOpen = it },
-                onSelect = { tab = it; menuOpen = false },
-                onBack = { menuOpen = false; goBack() },
-                onQuit = { menuOpen = false; activity.quit() },
-            )
+            if (onCar) {
+                MenuButton(
+                    backButton = true,
+                    looseTaps = true,
+                    selected = tab,
+                    open = menuOpen,
+                    faded = faded,
+                    updateAvailable = sharedUpdateStatus is dev.n2k02.updater.UpdateStatus.Available,
+                    onOpenChange = { menuOpen = it },
+                    onSelect = { tab = it; menuOpen = false },
+                    onBack = { menuOpen = false; goBack() },
+                    onQuit = { menuOpen = false; activity.quit() },
+                )
+            } else {
+                if (menuOpen) {
+                    ModalBottomSheet(
+                        onDismissRequest = { menuOpen = false },
+                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                    ) {
+                        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
+                        Text(
+                            "AAYoutube",
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                        )
+                        Tab.entries.forEachIndexed { index, item ->
+                            Surface(
+                                onClick = { tab = index; menuOpen = false },
+                                shape = RoundedCornerShape(22.dp),
+                                color = if (tab == index) MaterialTheme.colorScheme.secondaryContainer
+                                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                                modifier = Modifier.fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 3.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                ) {
+                                    Icon(item.icon, contentDescription = null)
+                                    Text(item.label, style = MaterialTheme.typography.bodyLarge)
+                                    if (item == Tab.Update && sharedUpdateStatus is dev.n2k02.updater.UpdateStatus.Available) {
+                                        Badge()
+                                    }
+                                }
+                            }
+                        }
+                        Surface(
+                            onClick = { menuOpen = false; goBack() },
+                            shape = RoundedCornerShape(22.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                                Text("Back")
+                            }
+                        }
+                        Surface(
+                            onClick = { menuOpen = false; activity.quit() },
+                            shape = RoundedCornerShape(22.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                        ) {
+                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null)
+                                Text("Quit")
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
+                        }
+
+                    }
+                }
+            }
         }
     }
 }
@@ -697,7 +769,7 @@ fun FeaturesPage() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Features", style = MaterialTheme.typography.headlineMedium)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Card() {
             Toggle("Block ads", "Strips ads from video data and skips what remains.", f.blockAds) { s, v -> s.copy(blockAds = v) }
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
@@ -706,14 +778,14 @@ fun FeaturesPage() {
             Toggle("Picture in picture", "Shrink to a floating player when you leave the app.", f.autoPip) { s, v -> s.copy(autoPip = v) }
             Toggle("Keep watching", "Confirms “Are you still watching?” for you.", f.autoContinue) { s, v -> s.copy(autoContinue = v) }
         }
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Card() {
             Toggle("SponsorBlock", "Skips sponsor segments.", f.sponsorBlock) { s, v -> s.copy(sponsorBlock = v) }
             Toggle("Also skip intros and outros", "Self-promo, intro, outro and reminders.", f.sponsorExtra) { s, v -> s.copy(sponsorExtra = v) }
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use www.youtube.com instead of the mobile site.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
         }
         Text("Display", style = MaterialTheme.typography.titleMedium)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Card() {
             Toggle("Resume where you left off", "Off: the app always starts on YouTube Home. On: it reopens the last page.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp, top = 4.dp)) {
                 Text("Text size", style = MaterialTheme.typography.labelLarge)
@@ -736,7 +808,7 @@ fun FeaturesPage() {
             }
         }
         Text("Menu button", style = MaterialTheme.typography.titleMedium)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+        Card() {
             Toggle(
                 "Fade the menu button",
                 "The round menu button turns see-through when you don't touch the screen. Touch anywhere to bring it back. Drag it to move it.",
@@ -776,89 +848,31 @@ fun FeaturesPage() {
 
 @Composable
 fun UpdatePage() {
+    val experimentalEnabled by LiveUpdater.experimentalEnabled.collectAsState()
     val context = LocalContext.current
-    val state by AppUpdater.state.collectAsState()
-    val activity = context.findActivity()
-
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Update", style = MaterialTheme.typography.headlineMedium)
-        val experimentalEnabled by AppUpdater.experimentalEnabled.collectAsState()
+        Text("About & updates", style = MaterialTheme.typography.headlineMedium)
+        ListItem(
+            headlineContent = { Text("AAYoutube") },
+            supportingContent = { Text("Version " + context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()) },
+            leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
+        )
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
-                Text("Experimental updates", style = MaterialTheme.typography.titleMedium)
-                Text("Opt in to preview APKs; stable is the default.", style = MaterialTheme.typography.bodySmall)
+                Text("Experimental updates", style = MaterialTheme.typography.titleSmall)
+                Text("Offer signed APKs from successful pull request builds. Test builds may have bugs.",
+                    style = MaterialTheme.typography.bodySmall)
             }
-            Switch(checked = experimentalEnabled, onCheckedChange = AppUpdater::setExperimentalEnabled)
+            Switch(checked = experimentalEnabled, onCheckedChange = LiveUpdater::setExperimentalEnabled)
         }
-
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Installed version", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
-            }
-        }
-
-        Card(
-            Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                when (val s = state) {
-                    is AppUpdater.State.Idle -> {
-                        Text("Check GitHub for a new version.")
-                        AppButton("Check for updates", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                    }
-                    is AppUpdater.State.Checking -> {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            LoadingIndicator(Modifier.size(48.dp))
-                            Text("Checking…")
-                        }
-                    }
-                    is AppUpdater.State.UpToDate -> {
-                        Text("You're on the latest version.", style = MaterialTheme.typography.titleMedium)
-                        AppButton("Check again", Icons.Filled.SystemUpdate, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                    }
-                    is AppUpdater.State.Available -> {
-                        Text("v${s.release.versionName} is available", style = MaterialTheme.typography.titleMedium)
-                        Notes(s.release)
-                        AppButton("Download & install", Icons.Filled.Download, Modifier.fillMaxWidth()) { AppUpdater.update(s.release) }
-                        AppButton("Skip this version", Icons.Filled.SkipNext, Modifier.fillMaxWidth()) { AppUpdater.skip(s.release) }
-                    }
-                    is AppUpdater.State.Downloading -> {
-                        Text("Downloading v${s.release.versionName}", style = MaterialTheme.typography.titleMedium)
-                        val p = s.progress
-                        if (p == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        else LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
-                    }
-                    is AppUpdater.State.NeedsPermission -> {
-                        Text("Allow installs from AAYoutube", style = MaterialTheme.typography.titleMedium)
-                        Text("Android needs “install unknown apps” turned on for this app. The install continues when you come back.")
-                        AppButton("Open settings", Icons.Filled.Settings, Modifier.fillMaxWidth()) { activity?.let { AppUpdater.openInstallPermission(it) } }
-                    }
-                    is AppUpdater.State.Ready -> {
-                        Text("v${s.release.versionName} is ready", style = MaterialTheme.typography.titleMedium)
-                        AppButton("Install", Icons.Filled.InstallMobile, Modifier.fillMaxWidth()) { AppUpdater.install(s.release) }
-                    }
-                    is AppUpdater.State.Failed -> {
-                        Text(s.message, style = MaterialTheme.typography.titleMedium)
-                        if (s.diagnostics.isNotBlank()) {
-                            Text(s.diagnostics, style = MaterialTheme.typography.bodySmall)
-                        }
-                        AppButton("Try again", Icons.Filled.Refresh, Modifier.fillMaxWidth()) { AppUpdater.check(manual = true) }
-                        if (activity != null) {
-                            AppButton("Release page", Icons.AutoMirrored.Filled.OpenInNew, Modifier.fillMaxWidth()) { AppUpdater.openReleasePage(activity, s.release) }
-                        }
-                        AppButton("Dismiss", Icons.Filled.Close, Modifier.fillMaxWidth()) { AppUpdater.dismiss() }
-                    }
-                }
-            }
-        }
+        androidx.compose.material3.HorizontalDivider()
+        dev.n2k02.updater.N2K02UpdateScreen(
+            controller = LiveUpdater.controller,
+            installGuard = LiveUpdater.installGuard,
+        )
     }
 }
 
@@ -878,7 +892,7 @@ fun InfoPage() {
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("About", style = MaterialTheme.typography.labelLarge)
-                Text("AAYoutube v" + AppUpdater.installedVersionName, style = MaterialTheme.typography.titleLarge)
+                Text("AAYoutube v" + context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty(), style = MaterialTheme.typography.titleLarge)
                 Text(
                     "A personal YouTube player for the phone and Android Auto, built on the YouTube website in a WebView. " +
                         "It blocks ads, skips sponsors (SponsorBlock), brings back dislikes, hides Shorts and keeps playing " +
@@ -919,15 +933,6 @@ fun InfoPage() {
             }
         }
 
-    }
-}
-
-@Composable
-private fun Notes(release: AppUpdater.Release) {
-    if (release.notes.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("What's new", style = MaterialTheme.typography.labelLarge)
-        release.notes.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
     }
 }
 

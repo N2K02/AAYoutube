@@ -885,4 +885,51 @@
       }
     } catch (e) {}
   };
+
+  // AAYoutube entry lives in YouTube's actual HTML bottom navigation, not over it.
+  // Reattach after SPA transitions and YouTube's own DOM replacements.
+  (function installHtmlMenu() {
+    var id = 'aay-html-menu';
+    function mount() {
+      var old = document.getElementById(id);
+      if (window.__AAY_CAR || location.hostname.indexOf('m.youtube.com') < 0) {
+        if (old) old.remove();
+        return;
+      }
+      var nav = document.querySelector('ytm-pivot-bar-renderer') ||
+                document.querySelector('ytm-mobile-topbar-renderer ~ ytm-pivot-bar-renderer') ||
+                document.querySelector('[role="tablist"]');
+      if (!nav) { if (old) old.remove(); return; }
+      if (old && old.parentElement === nav) return;
+      if (old) old.remove();
+      var button = document.createElement('button');
+      button.id = id;
+      button.type = 'button';
+      button.setAttribute('aria-label', 'AAYoutube menu');
+      button.style.cssText = 'display:flex;flex:1;min-width:0;align-items:center;justify-content:center;flex-direction:column;gap:3px;background:transparent;border:0;color:inherit;font:inherit;padding:5px 2px;cursor:pointer;';
+      var symbol = document.createElement('span');
+      symbol.textContent = '☰';
+      symbol.style.cssText = 'font-size:25px;line-height:27px;';
+      var label = document.createElement('span');
+      label.textContent = 'Menu';
+      label.style.cssText = 'font-size:11px;line-height:14px;';
+      button.appendChild(symbol); button.appendChild(label);
+      button.addEventListener('click', function (event) {
+        event.preventDefault(); event.stopPropagation();
+        try { window.AAYNative.openMenu(); } catch (e) {}
+      });
+      nav.appendChild(button);
+    }
+    var pending = false;
+    function schedule() {
+      if (pending) return;
+      pending = true;
+      setTimeout(function () { pending = false; mount(); }, 120);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
+    else mount();
+    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener('yt-navigate-finish', schedule);
+    window.addEventListener('popstate', schedule);
+  })();
 })();
