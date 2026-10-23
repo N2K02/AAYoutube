@@ -280,12 +280,13 @@ fun AppRoot(activity: MainActivity) {
                     onQuit = { menuOpen = false; activity.quit() },
                 )
             } else {
-                // The website owns Home and You. Overlay its unused middle slot instead of
-                // inserting a second navigation bar or detaching the playback WebView.
+                // Anchor the menu control in the rightmost slot of the YouTube bottom navigation.
+                // Keep it native (not injected into third-party HTML) so SPA navigation and
+                // YouTube DOM changes cannot break the menu or its update indicator.
                 Box(
                     Modifier.align(Alignment.BottomEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(end = 12.dp, bottom = 9.dp),
+                        .padding(end = 8.dp, bottom = 8.dp),
                 ) {
                     FilledTonalIconButton(
                         onClick = { menuOpen = true },
