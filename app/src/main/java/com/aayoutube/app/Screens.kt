@@ -155,6 +155,8 @@ fun AppRoot(activity: MainActivity) {
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
+    val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
+    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L) menuOpen = true }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
@@ -278,27 +280,6 @@ fun AppRoot(activity: MainActivity) {
                     onQuit = { menuOpen = false; activity.quit() },
                 )
             } else {
-                // Anchor the menu control in the rightmost slot of the YouTube bottom navigation.
-                // Keep it native (not injected into third-party HTML) so SPA navigation and
-                // YouTube DOM changes cannot break the menu or its update indicator.
-                Box(
-                    Modifier.align(Alignment.BottomEnd)
-                        .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(end = 8.dp, bottom = 8.dp),
-                ) {
-                    FilledTonalIconButton(
-                        onClick = { menuOpen = true },
-                        modifier = Modifier.size(48.dp),
-                    ) {
-                        if (sharedUpdateStatus is dev.n2k02.updater.UpdateStatus.Available) {
-                            BadgedBox(badge = { Badge() }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "AAYoutube menu")
-                            }
-                        } else {
-                            Icon(Icons.Filled.Menu, contentDescription = "AAYoutube menu")
-                        }
-                    }
-                }
                 if (menuOpen) {
                     ModalBottomSheet(
                         onDismissRequest = { menuOpen = false },
