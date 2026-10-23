@@ -284,7 +284,9 @@ fun AppRoot(activity: MainActivity) {
                     ModalBottomSheet(
                         onDismissRequest = { menuOpen = false },
                         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
                     ) {
+                        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
                         Text(
                             "AAYoutube",
                             style = MaterialTheme.typography.titleLarge,
@@ -337,6 +339,8 @@ fun AppRoot(activity: MainActivity) {
                             }
                         }
                         Spacer(Modifier.height(24.dp))
+                        }
+
                     }
                 }
             }
