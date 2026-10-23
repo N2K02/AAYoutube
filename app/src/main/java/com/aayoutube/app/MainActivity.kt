@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        AppUpdater.init(this, "N2K02/AAYoutube", "AAYoutube")
+        LiveUpdater.init(this)
         CarMode.resetToCarScreen(this)
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.setCarScreen(!onPhoneScreen())
@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         resumed += this
         if (!isInPictureInPictureMode) WebHost.setHold(false)
-        AppUpdater.onResume(this)
+        LiveUpdater.onResume(this)
         updatePip()
     }
 
