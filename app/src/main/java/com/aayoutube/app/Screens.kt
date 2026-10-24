@@ -64,7 +64,7 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.Badge
+import dev.n2k02.updater.hasPendingUpdate
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -274,7 +274,7 @@ fun AppRoot(activity: MainActivity) {
                     selected = tab,
                     open = menuOpen,
                     faded = faded,
-                    updateAvailable = sharedUpdateStatus is dev.n2k02.updater.UpdateStatus.Available,
+                    updateAvailable = sharedUpdateStatus.hasPendingUpdate(),
                     onOpenChange = { menuOpen = it },
                     onSelect = { tab = it; menuOpen = false },
                     onBack = { menuOpen = false; goBack() },
@@ -309,8 +309,8 @@ fun AppRoot(activity: MainActivity) {
                                 ) {
                                     Icon(item.icon, contentDescription = null)
                                     Text(item.label, style = MaterialTheme.typography.bodyLarge)
-                                    if (item == Tab.Update && sharedUpdateStatus is dev.n2k02.updater.UpdateStatus.Available) {
-                                        Badge()
+                                    if (item == Tab.Update) {
+                                        dev.n2k02.updater.N2K02UpdateBadge(sharedUpdateStatus)
                                     }
                                 }
                             }
@@ -519,7 +519,7 @@ private fun MenuButton(
                 Box(contentAlignment = Alignment.Center) {
                     when {
                         backButton && !open -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        updateAvailable && !open -> BadgedBox(badge = { Badge() }) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
+                        updateAvailable && !open -> dev.n2k02.updater.N2K02UpdateBadgedIcon(LiveUpdater.controller.status.collectAsState().value) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
                         else -> Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
                     }
                 }
@@ -530,6 +530,7 @@ private fun MenuButton(
 
 @Composable
 private fun MenuItem(label: String, icon: ImageVector, iconRight: Boolean, selected: Boolean, badge: Boolean = false, onClick: () -> Unit) {
+    val updateStatus by LiveUpdater.controller.status.collectAsState()
     val container = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
     val content = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
     Surface(
@@ -545,7 +546,7 @@ private fun MenuItem(label: String, icon: ImageVector, iconRight: Boolean, selec
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val ic: @Composable () -> Unit = {
-                if (badge) BadgedBox(badge = { Badge() }) { Icon(icon, null, Modifier.size(22.dp)) }
+                if (badge) dev.n2k02.updater.N2K02UpdateBadgedIcon(updateStatus) { Icon(icon, "Update", Modifier.size(22.dp)) }
                 else Icon(icon, null, Modifier.size(22.dp))
             }
             if (!iconRight) ic()
