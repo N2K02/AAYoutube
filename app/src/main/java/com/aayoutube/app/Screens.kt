@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -117,6 +120,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -136,11 +140,56 @@ fun Context.findActivity(): MainActivity? {
 }
 
 private enum class Tab(val label: String, val icon: ImageVector) {
-    Watch("YouTube", Icons.Filled.PlayCircle),
+    Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Logs("Logs", Icons.Filled.BugReport),
     Update("Update", Icons.Filled.SystemUpdate),
-    Info("Info", Icons.Filled.Info),
+    Info("About", Icons.Filled.Info),
+    Settings("Settings", Icons.Filled.Settings),
+}
+
+/** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
+@Composable
+private fun AAYoutubePageHeader(tab: Tab) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    tab.icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    if (tab == Tab.Update) "About & updates" else tab.label,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
+                Text(
+                    "AAYoutube",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -154,6 +203,7 @@ fun AppRoot(activity: MainActivity) {
     var menuOpen by remember { mutableStateOf(false) }
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
+    val onCar by WebHost.carScreen.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
     val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
@@ -193,7 +243,8 @@ fun AppRoot(activity: MainActivity) {
     val goBack: () -> Unit = {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
-            tab != 0 -> tab = 0
+            tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
+            tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
             // Browsing under the mini player (or after closing it): back moves through the browse page.
             WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
             // Car screen: already on Home; stay on the car screen instead of disappearing from it.
@@ -229,7 +280,13 @@ fun AppRoot(activity: MainActivity) {
             }
         },
     ) {
-        Scaffold { padding ->
+        Scaffold(
+            topBar = {
+                if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
+                    AAYoutubePageHeader(Tab.entries[tab])
+                }
+            },
+        ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
                 WebPane(Modifier.fillMaxSize())
@@ -244,6 +301,7 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
                             Tab.Info -> InfoPage()
+                            Tab.Settings -> AAYoutubeSettingsMenu(onSelect = { tab = it.ordinal })
                         }
                     }
                 }
@@ -265,7 +323,6 @@ fun AppRoot(activity: MainActivity) {
         if (full == null && !inPip) {
             // Car screen: the round button is only a Back button (a video shrinks to the mini player
             // with Home underneath, like the YouTube app). On the phone it is the menu.
-            val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
             if (onCar) {
                 MenuButton(
@@ -293,7 +350,8 @@ fun AppRoot(activity: MainActivity) {
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                         )
-                        Tab.entries.forEachIndexed { index, item ->
+                        listOf(Tab.Watch, Tab.Settings).forEach { item ->
+                            val index = item.ordinal
                             Surface(
                                 onClick = { tab = index; menuOpen = false },
                                 shape = RoundedCornerShape(22.dp),
@@ -309,7 +367,8 @@ fun AppRoot(activity: MainActivity) {
                                 ) {
                                     Icon(item.icon, contentDescription = null)
                                     Text(item.label, style = MaterialTheme.typography.bodyLarge)
-                                    if (item == Tab.Update) {
+                                    if (item == Tab.Settings) {
+                                        // Settings links to About & updates on the phone.
                                         dev.n2k02.updater.N2K02UpdateBadge(sharedUpdateStatus)
                                     }
                                 }
@@ -445,8 +504,8 @@ private fun MenuButton(
                     top = if (up) 0.dp else yDp + fab + 8.dp,
                     bottom = if (up) (hDp - yDp + 8.dp).coerceAtLeast(0.dp) else 0.dp,
                 )
-            val items: List<@Composable () -> Unit> = Tab.entries.mapIndexed { i, t ->
-                @Composable { MenuItem(t.label, t.icon, right, selected == i, badge = t == Tab.Update && updateAvailable) { onSelect(i) } }
+            val items: List<@Composable () -> Unit> = listOf(Tab.Watch, Tab.Settings).map { t ->
+                @Composable { MenuItem(t.label, t.icon, right, selected == t.ordinal, badge = t == Tab.Settings && updateAvailable) { onSelect(t.ordinal) } }
             } + listOf(
                 @Composable { MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() } },
                 @Composable { MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() } },
@@ -747,6 +806,49 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     }
 }
 
+// ---------------------------------------------------------------------------- settings navigation
+
+/** Secondary pages live under Settings, like mRadio; the WebView keeps running underneath. */
+@Composable
+private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
+    val updateStatus by LiveUpdater.controller.status.collectAsState()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "Make watching your own",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
+        )
+        listOf(Tab.Features, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
+            if (destination == Tab.Logs) HorizontalDivider()
+            ListItem(
+                headlineContent = {
+                    Text(if (destination == Tab.Update) "About & updates" else destination.label)
+                },
+                supportingContent = {
+                    Text(when (destination) {
+                        Tab.Features -> "Playback, video and display preferences"
+                        Tab.Logs -> "Diagnostics and session events"
+                        Tab.Info -> "App information"
+                        Tab.Update -> "Version, experimental releases and update checks"
+                        else -> ""
+                    })
+                },
+                leadingContent = { Icon(destination.icon, contentDescription = null) },
+                trailingContent = {
+                    if (destination == Tab.Update)
+                        dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                },
+                modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
+            )
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------- features
 
 @Composable
@@ -769,7 +871,6 @@ fun FeaturesPage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Features", style = MaterialTheme.typography.headlineMedium)
         Card() {
             Toggle("Block ads", "Strips ads from video data and skips what remains.", f.blockAds) { s, v -> s.copy(blockAds = v) }
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
@@ -850,13 +951,13 @@ fun FeaturesPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
+    // The single shared app header is owned by AppRoot; the library renders only page content.
     dev.n2k02.updater.N2K02UpdatePage(
         controller = LiveUpdater.controller,
         installGuard = LiveUpdater.installGuard,
         modifier = Modifier.fillMaxSize(),
         experimentalEnabled = experimental,
         onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
-        showHeader = true,
     )
 }
 
@@ -869,7 +970,6 @@ fun InfoPage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Info", style = MaterialTheme.typography.headlineMedium)
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -955,7 +1055,7 @@ fun LogsPage() {
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Logs", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            Text("Enable logging", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Switch(checked = enabled, onCheckedChange = { AppLog.setEnabled(it) })
         }
         if (!enabled) return@Column
