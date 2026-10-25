@@ -811,10 +811,18 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        listOf(Tab.Features, Tab.Logs, Tab.Info, Tab.Update).forEach { destination ->
+        Text(
+            "Make watching your own",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
+        )
+        listOf(Tab.Features, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
+            if (destination == Tab.Logs) HorizontalDivider()
             ListItem(
                 headlineContent = {
                     Text(if (destination == Tab.Update) "About & updates" else destination.label)
