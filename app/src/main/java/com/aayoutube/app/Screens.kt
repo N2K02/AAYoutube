@@ -850,14 +850,19 @@ fun FeaturesPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
-    dev.n2k02.updater.N2K02UpdatePage(
-        controller = LiveUpdater.controller,
-        installGuard = LiveUpdater.installGuard,
-        modifier = Modifier.fillMaxSize(),
-        experimentalEnabled = experimental,
-        onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
-        showHeader = true,
-    )
+    Column(Modifier.fillMaxSize()) {
+        // The host owns the single title; updater content has no extra app bar.
+        androidx.compose.material3.TopAppBar(
+            title = { dev.n2k02.updater.N2K02UpdateTitle() },
+        )
+        dev.n2k02.updater.N2K02UpdatePage(
+            controller = LiveUpdater.controller,
+            installGuard = LiveUpdater.installGuard,
+            modifier = Modifier.weight(1f),
+            experimentalEnabled = experimental,
+            onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------- info
