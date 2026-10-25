@@ -69,6 +69,7 @@ dependencies {
     implementation("androidx.car.app:app:${v["carApp"]}")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${v["coroutines"]}")
+    testImplementation("junit:junit:4.13.2")
 }
 
  // Opt-in compile-only shared library evaluation; no production runtime cutover.
