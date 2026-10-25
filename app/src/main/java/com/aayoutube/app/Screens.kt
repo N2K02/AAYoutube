@@ -849,32 +849,15 @@ fun FeaturesPage() {
 
 @Composable
 fun UpdatePage() {
-    val experimentalEnabled by LiveUpdater.experimentalEnabled.collectAsState()
-    val context = LocalContext.current
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("About & updates", style = MaterialTheme.typography.headlineMedium)
-        ListItem(
-            headlineContent = { Text("AAYoutube") },
-            supportingContent = { Text("Version " + context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()) },
-            leadingContent = { Icon(Icons.Filled.Info, contentDescription = null) },
-        )
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text("Experimental updates", style = MaterialTheme.typography.titleSmall)
-                Text("Offer signed APKs from successful pull request builds. Test builds may have bugs.",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            Switch(checked = experimentalEnabled, onCheckedChange = LiveUpdater::setExperimentalEnabled)
-        }
-        androidx.compose.material3.HorizontalDivider()
-        dev.n2k02.updater.N2K02UpdateScreen(
-            controller = LiveUpdater.controller,
-            installGuard = LiveUpdater.installGuard,
-        )
-    }
+    val experimental by LiveUpdater.experimentalEnabled.collectAsState()
+    dev.n2k02.updater.N2K02UpdatePage(
+        controller = LiveUpdater.controller,
+        installGuard = LiveUpdater.installGuard,
+        modifier = Modifier.fillMaxSize(),
+        experimentalEnabled = experimental,
+        onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
+        showHeader = true,
+    )
 }
 
 // ---------------------------------------------------------------------------- info
