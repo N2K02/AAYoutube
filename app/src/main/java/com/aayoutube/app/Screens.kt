@@ -278,7 +278,7 @@ fun AppRoot(activity: MainActivity) {
     ) {
         Scaffold(
             topBar = {
-                if (showAAYoutubeHeader(tab == Tab.Watch, onCar, inPip, fullscreen != null)) {
+                if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
                     AAYoutubePageHeader(Tab.entries[tab])
                 }
             },
