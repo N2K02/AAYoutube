@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -117,6 +118,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -143,6 +145,50 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Info("Info", Icons.Filled.Info),
 }
 
+/** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
+@Composable
+private fun AAYoutubePageHeader(tab: Tab) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.fillMaxWidth().statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(
+                    tab.icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Text(
+                    if (tab == Tab.Update) "About & updates" else tab.label,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
+                Text(
+                    "AAYoutube",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
@@ -154,6 +200,7 @@ fun AppRoot(activity: MainActivity) {
     var menuOpen by remember { mutableStateOf(false) }
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
+    val onCar by WebHost.carScreen.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
     val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
@@ -229,7 +276,13 @@ fun AppRoot(activity: MainActivity) {
             }
         },
     ) {
-        Scaffold { padding ->
+        Scaffold(
+            topBar = {
+                if (showAAYoutubeHeader(tab == Tab.Watch, onCar, inPip, fullscreen != null)) {
+                    AAYoutubePageHeader(Tab.entries[tab])
+                }
+            },
+        ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 // The page stays in place under the other tabs, so playback carries on while you look at them.
                 WebPane(Modifier.fillMaxSize())
@@ -265,7 +318,6 @@ fun AppRoot(activity: MainActivity) {
         if (full == null && !inPip) {
             // Car screen: the round button is only a Back button (a video shrinks to the mini player
             // with Home underneath, like the YouTube app). On the phone it is the menu.
-            val onCar by WebHost.carScreen.collectAsState()
             val backButton = onCar
             if (onCar) {
                 MenuButton(
@@ -769,7 +821,6 @@ fun FeaturesPage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Features", style = MaterialTheme.typography.headlineMedium)
         Card() {
             Toggle("Block ads", "Strips ads from video data and skips what remains.", f.blockAds) { s, v -> s.copy(blockAds = v) }
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
@@ -850,19 +901,14 @@ fun FeaturesPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
-    Column(Modifier.fillMaxSize()) {
-        // The host owns the single title; updater content has no extra app bar.
-        androidx.compose.material3.TopAppBar(
-            title = { dev.n2k02.updater.N2K02UpdateTitle() },
-        )
-        dev.n2k02.updater.N2K02UpdatePage(
-            controller = LiveUpdater.controller,
-            installGuard = LiveUpdater.installGuard,
-            modifier = Modifier.weight(1f),
-            experimentalEnabled = experimental,
-            onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
-        )
-    }
+    // The single shared app header is owned by AppRoot; the library renders only page content.
+    dev.n2k02.updater.N2K02UpdatePage(
+        controller = LiveUpdater.controller,
+        installGuard = LiveUpdater.installGuard,
+        modifier = Modifier.fillMaxSize(),
+        experimentalEnabled = experimental,
+        onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
+    )
 }
 
 // ---------------------------------------------------------------------------- info
@@ -874,7 +920,6 @@ fun InfoPage() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Info", style = MaterialTheme.typography.headlineMedium)
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -960,7 +1005,7 @@ fun LogsPage() {
 
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Logs", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            Text("Enable logging", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Switch(checked = enabled, onCheckedChange = { AppLog.setEnabled(it) })
         }
         if (!enabled) return@Column
