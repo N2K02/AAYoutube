@@ -367,7 +367,8 @@ fun AppRoot(activity: MainActivity) {
                                 ) {
                                     Icon(item.icon, contentDescription = null)
                                     Text(item.label, style = MaterialTheme.typography.bodyLarge)
-                                    if (item == Tab.Update) {
+                                    if (item == Tab.Settings) {
+                                        // Settings links to About & updates on the phone.
                                         dev.n2k02.updater.N2K02UpdateBadge(sharedUpdateStatus)
                                     }
                                 }
