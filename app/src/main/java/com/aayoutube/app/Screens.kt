@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -138,11 +139,12 @@ fun Context.findActivity(): MainActivity? {
 }
 
 private enum class Tab(val label: String, val icon: ImageVector) {
-    Watch("YouTube", Icons.Filled.PlayCircle),
+    Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Logs("Logs", Icons.Filled.BugReport),
     Update("Update", Icons.Filled.SystemUpdate),
-    Info("Info", Icons.Filled.Info),
+    Info("About", Icons.Filled.Info),
+    Settings("Settings", Icons.Filled.Settings),
 }
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
@@ -240,7 +242,8 @@ fun AppRoot(activity: MainActivity) {
     val goBack: () -> Unit = {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
-            tab != 0 -> tab = 0
+            tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
+            tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
             // Browsing under the mini player (or after closing it): back moves through the browse page.
             WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
             // Car screen: already on Home; stay on the car screen instead of disappearing from it.
@@ -297,6 +300,7 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
                             Tab.Info -> InfoPage()
+                            Tab.Settings -> AAYoutubeSettingsMenu(onSelect = { tab = it.ordinal })
                         }
                     }
                 }
@@ -345,7 +349,8 @@ fun AppRoot(activity: MainActivity) {
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                         )
-                        Tab.entries.forEachIndexed { index, item ->
+                        listOf(Tab.Watch, Tab.Settings).forEach { item ->
+                            val index = item.ordinal
                             Surface(
                                 onClick = { tab = index; menuOpen = false },
                                 shape = RoundedCornerShape(22.dp),
@@ -497,8 +502,8 @@ private fun MenuButton(
                     top = if (up) 0.dp else yDp + fab + 8.dp,
                     bottom = if (up) (hDp - yDp + 8.dp).coerceAtLeast(0.dp) else 0.dp,
                 )
-            val items: List<@Composable () -> Unit> = Tab.entries.mapIndexed { i, t ->
-                @Composable { MenuItem(t.label, t.icon, right, selected == i, badge = t == Tab.Update && updateAvailable) { onSelect(i) } }
+            val items: List<@Composable () -> Unit> = listOf(Tab.Watch, Tab.Settings).map { t ->
+                @Composable { MenuItem(t.label, t.icon, right, selected == t.ordinal, badge = t == Tab.Settings && updateAvailable) { onSelect(t.ordinal) } }
             } + listOf(
                 @Composable { MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() } },
                 @Composable { MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() } },
@@ -795,6 +800,41 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     }
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- settings navigation
+
+/** Secondary pages live under Settings, like mRadio; the WebView keeps running underneath. */
+@Composable
+private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
+    val updateStatus by LiveUpdater.controller.status.collectAsState()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        listOf(Tab.Features, Tab.Logs, Tab.Info, Tab.Update).forEach { destination ->
+            ListItem(
+                headlineContent = {
+                    Text(if (destination == Tab.Update) "About & updates" else destination.label)
+                },
+                supportingContent = {
+                    Text(when (destination) {
+                        Tab.Features -> "Playback, video and display preferences"
+                        Tab.Logs -> "Diagnostics and session events"
+                        Tab.Info -> "App information"
+                        Tab.Update -> "Version, experimental releases and update checks"
+                        else -> ""
+                    })
+                },
+                leadingContent = { Icon(destination.icon, contentDescription = null) },
+                trailingContent = {
+                    if (destination == Tab.Update)
+                        dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                },
+                modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
+            )
         }
     }
 }
