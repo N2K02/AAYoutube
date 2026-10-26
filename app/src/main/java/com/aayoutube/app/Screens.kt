@@ -142,6 +142,7 @@ fun Context.findActivity(): MainActivity? {
 private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
+    Lyrics("Lyrics", Icons.Filled.Info),
     Logs("Logs", Icons.Filled.BugReport),
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
@@ -298,12 +299,30 @@ fun AppRoot(activity: MainActivity) {
                         when (Tab.entries[tab]) {
                             Tab.Watch -> Unit
                             Tab.Features -> FeaturesPage()
+                            Tab.Lyrics -> LyricsSettingsPage()
                             Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
                             Tab.Info -> InfoPage()
                             Tab.Settings -> AAYoutubeSettingsMenu(onSelect = { tab = it.ordinal })
                         }
                     }
+                }
+            }
+        }
+        if (tab == Tab.Watch.ordinal && !inPip && snap.id.isNotBlank()) {
+            val ctx = LocalContext.current
+            var lyricsShown by remember { mutableStateOf(LyricsPrefs.show(ctx)) }
+            androidx.compose.material3.FilledTonalIconButton(
+                onClick = {
+                    lyricsShown = !lyricsShown
+                    LyricsPrefs.set(ctx, "show", lyricsShown)
+                },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 90.dp),
+            ) { Text(if (lyricsShown) "L×" else "L♪") }
+            Box(Modifier.align(Alignment.TopCenter)) {
+                LyricsOverlay(snap, lyricsShown) {
+                    lyricsShown = false
+                    LyricsPrefs.set(ctx, "show", false)
                 }
             }
         }
@@ -823,7 +842,7 @@ private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
         )
-        listOf(Tab.Features, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
+        listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
             if (destination == Tab.Logs) HorizontalDivider()
             ListItem(
                 headlineContent = {
@@ -832,6 +851,7 @@ private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
                 supportingContent = {
                     Text(when (destination) {
                         Tab.Features -> "Playback, video and display preferences"
+                        Tab.Lyrics -> "Lyrics provider and overlay preferences"
                         Tab.Logs -> "Diagnostics and session events"
                         Tab.Info -> "App information"
                         Tab.Update -> "Version, experimental releases and update checks"
