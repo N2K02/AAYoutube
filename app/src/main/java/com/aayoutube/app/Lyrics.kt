@@ -41,7 +41,7 @@ internal object LyricsParser {
 internal object LyricsPrefs {
     private const val FILE = "lyrics"
     fun enabled(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("enabled", true)
-    fun show(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("show", false)
+    fun show(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("show", true)
     fun set(context: Context, key: String, value: Boolean) =
         context.getSharedPreferences(FILE, 0).edit().putBoolean(key, value).apply()
 }
