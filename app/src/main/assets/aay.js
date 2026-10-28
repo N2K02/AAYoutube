@@ -312,15 +312,17 @@
     'ytm-mealbar-promo-renderer,ytm-upsell-dialog-renderer,ytm-app-promo-renderer,ytd-mealbar-promo-renderer,' +
     'ytd-popup-container ytd-mealbar-promo-renderer{display:none!important}';
   var CSS_PIP =
-    'html.aay-pip,html.aay-pip body{background:#000!important;overflow:hidden!important}' +
+    'html.aay-pip,html.aay-pip body{background:#000!important;overflow:hidden!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important}' +
     'html.aay-pip body *{visibility:hidden!important}' +
     'html.aay-pip .html5-video-player,html.aay-pip .html5-video-player *{visibility:visible!important}' +
     'html.aay-pip .html5-video-player{position:fixed!important;top:0!important;left:0!important;' +
     'width:100vw!important;height:100vh!important;z-index:2147483647!important;margin:0!important}' +
-    'html.aay-pip .html5-video-container{position:fixed!important;top:0!important;left:0!important;' +
+    'html.aay-pip .html5-video-container,html.aay-pip .html5-video-player .html5-video-container{' +
+    'position:fixed!important;top:0!important;left:0!important;' +
     'width:100vw!important;height:100vh!important;z-index:2147483646!important}' +
     'html.aay-pip video{position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
-    'height:100vh!important;max-width:none!important;max-height:none!important;object-fit:contain!important;' +
+    'height:100vh!important;min-width:100vw!important;min-height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;object-fit:contain!important;' +
     'transform:none!important;z-index:2147483647!important}' +
     'html.aay-pip .ytp-chrome-top,html.aay-pip .ytp-chrome-bottom,html.aay-pip .ytp-gradient-top,' +
     'html.aay-pip .ytp-gradient-bottom,html.aay-pip .ytp-pause-overlay,html.aay-pip .ytp-ce-element,' +
@@ -842,6 +844,8 @@
     var on = !!(A.inPip || A.isMini);
     liftAncestors(getVideo(), on);
     document.documentElement.classList.toggle('aay-pip', on);
+    // Clear YouTube's cached video dimensions when Android resizes into PiP.
+    if (on) document.documentElement.classList.remove('aay-fit');
     if (!on) fixLayout();
   }
 
