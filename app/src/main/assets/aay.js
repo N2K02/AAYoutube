@@ -311,6 +311,13 @@
   var CSS_PROMO =
     'ytm-mealbar-promo-renderer,ytm-upsell-dialog-renderer,ytm-app-promo-renderer,ytd-mealbar-promo-renderer,' +
     'ytd-popup-container ytd-mealbar-promo-renderer{display:none!important}';
+  // Hide YouTube's mobile Open App promotion without hiding the search or account controls.
+  var CSS_OPEN_APP =
+    'ytm-open-app-button,ytm-open-app-button-renderer,ytm-app-button-renderer,' +
+    'ytm-mobile-topbar-renderer a[href*="intent://"],' +
+    'ytm-mobile-topbar-renderer a[href*="market://"],' +
+    'ytm-mobile-topbar-renderer a[aria-label="Open App"],' +
+    'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}';
   var CSS_PIP =
     'html.aay-pip,html.aay-pip body{background:#000!important;overflow:hidden!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important}' +
     'html.aay-pip body *{visibility:hidden!important}' +
@@ -349,7 +356,7 @@
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR;
+    var css = CSS_PIP + CSS_CAR + CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
