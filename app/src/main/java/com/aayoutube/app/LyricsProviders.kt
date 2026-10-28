@@ -5,7 +5,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
-import org.json.JSONTokener
 import org.xmlpull.v1.XmlPullParser
 import android.util.Xml
 import java.net.HttpURLConnection
@@ -18,12 +17,14 @@ internal enum class LyricsProvider(val title: String) {
 }
 
 internal object LyricsProviders {
-    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,RMM,BLYRICS,BINIMUM,LYRICS_OVH"
+    // All integrated sources are accessible without an API key or paid subscription.
+    // NetEase uses an unofficial endpoint and is opt-in by default.
+    internal const val ORDER = "LRCLIB,SIMPMUSIC,BLYRICS,BINIMUM,RMM,LYRICS_OVH,NETEASE"
     fun ordered(context: Context): List<LyricsProvider> {
         val prefs = context.getSharedPreferences("lyrics", 0)
         return prefs.getString("providers", ORDER).orEmpty().split(",")
             .mapNotNull { id -> LyricsProvider.entries.firstOrNull { it.name == id } }
-            .distinct().filter { prefs.getBoolean("provider_" + it.name, true) }
+            .distinct().filter { prefs.getBoolean("provider_" + it.name, it != LyricsProvider.NETEASE) }
     }
     fun reorder(context: Context, source: LyricsProvider, direction: Int) {
         val prefs = context.getSharedPreferences("lyrics", 0)
