@@ -906,6 +906,8 @@
   // App-owned navigation is independent of YouTube's pivot bar and SPA layout.
   // Keep a single bar across Home and watch pages, never in PiP/fullscreen/car.
   (function persistentNavigation() {
+    // Android Compose owns the bottom navigation now; never inject a second HTML bar.
+    return;
     var id = 'aay-persistent-nav';
     var style = document.createElement('style');
     style.id = 'aay-persistent-nav-style';
