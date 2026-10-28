@@ -98,7 +98,35 @@ internal fun LyricsSettingsPage() {
         ListItem(headlineContent = { Text("Show lyrics overlay") },
             supportingContent = { Text("Show lyrics over the video. You can also toggle them from the player.") },
             trailingContent = { Switch(shown, onCheckedChange = { shown = it; LyricsPrefs.set(context, "show", it) }) })
-        Text("Provider: LRCLIB. Timestamped lyrics are synchronized to playback; plain lyrics are shown without highlighting. Other providers require separate compatible integrations.", style = MaterialTheme.typography.bodyMedium)
+        Text("Lyrics providers (priority order)", style = MaterialTheme.typography.titleMedium)
+        var revision by remember { mutableIntStateOf(0) }
+        val prefs = context.getSharedPreferences("lyrics", 0)
+        val providers = remember(revision) {
+            prefs.getString("providers", "LRCLIB,NETEASE,LYRICS_OVH").orEmpty().split(",")
+                .mapNotNull { id -> LyricsProvider.entries.firstOrNull { it.name == id } }
+        }
+        providers.forEach { provider ->
+            var checked by remember(provider, revision) {
+                mutableStateOf(prefs.getBoolean("provider_" + provider.name, true))
+            }
+            ListItem(
+                headlineContent = { Text(provider.title) },
+                leadingContent = {
+                    Row {
+                        Text("↑", Modifier.clickable { LyricsProviders.reorder(context, provider, -1); revision++ }.padding(8.dp))
+                        Text("↓", Modifier.clickable { LyricsProviders.reorder(context, provider, 1); revision++ }.padding(8.dp))
+                    }
+                },
+                trailingContent = {
+                    Switch(checked, onCheckedChange = {
+                        checked = it
+                        prefs.edit().putBoolean("provider_" + provider.name, it).apply()
+                        revision++
+                    })
+                },
+            )
+        }
+        Text("Providers are tried in order. LRCLIB and NetEase offer timed lyrics; Lyrics.ovh offers plain text.", style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -113,7 +141,7 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     LaunchedEffect(snap.id, snap.title, snap.artist, enabled, visible) {
         lines = emptyList(); plain = null; loaded = false
         if (enabled && visible && snap.id.isNotBlank()) {
-            val result = LyricsLookup.fetch(snap)
+            val result = LyricsProviders.fetch(context, snap)
             lines = result.first; plain = result.second; loaded = true
         }
     }
