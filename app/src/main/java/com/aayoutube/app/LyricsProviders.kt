@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
+import org.json.JSONTokener
 import org.xmlpull.v1.XmlPullParser
 import android.util.Xml
 import java.net.HttpURLConnection
@@ -13,11 +14,11 @@ import java.net.URLEncoder
 
 /** Independent public lyric endpoints. A failure never prevents the next provider being tried. */
 internal enum class LyricsProvider(val title: String) {
-    LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), BLYRICS("bLyrics"), BINIMUM("BiniLyrics"), LYRICS_OVH("Lyrics.ovh")
+    RMM("RMM Revival"), LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), BLYRICS("bLyrics"), BINIMUM("BiniLyrics"), LYRICS_OVH("Lyrics.ovh")
 }
 
 internal object LyricsProviders {
-    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,BLYRICS,BINIMUM,LYRICS_OVH"
+    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,RMM,BLYRICS,BINIMUM,LYRICS_OVH"
     fun ordered(context: Context): List<LyricsProvider> {
         val prefs = context.getSharedPreferences("lyrics", 0)
         return prefs.getString("providers", ORDER).orEmpty().split(",")
@@ -39,6 +40,7 @@ internal object LyricsProviders {
                 val result = try {
                     when (source) {
                         LyricsProvider.LRCLIB -> LyricsLookup.fetch(snap)
+                        LyricsProvider.RMM -> rmm(snap)
                         LyricsProvider.NETEASE -> netease(snap)
                         LyricsProvider.SIMPMUSIC -> simpMusic(snap)
                         LyricsProvider.BLYRICS -> blyrics(snap)
@@ -114,6 +116,24 @@ internal object LyricsProviders {
         val lyricsUrl = results.optJSONObject(0)?.optString("lyricsUrl").orEmpty()
         if (!lyricsUrl.startsWith("https://")) return null
         return ttml(request(lyricsUrl) ?: return null)
+    }
+    private fun rmm(snap: Snap): Pair<List<LyricLine>, String?>? {
+        if (snap.title.isBlank()) return null
+        val query = URLEncoder.encode((snap.title + " " + snap.artist).trim(), "UTF-8")
+        val results = JSONObject(request("https://itunes.apple.com/search?term=$query&entity=song&limit=5") ?: return null)
+            .optJSONArray("results") ?: return null
+        for (i in 0 until results.length()) {
+            val track = results.optJSONObject(i) ?: continue
+            val title = track.optString("trackName")
+            if (!title.equals(snap.title, true)) continue
+            val id = track.optLong("trackId")
+            if (id <= 0) continue
+            val root = JSONObject(request("https://lyrics.rmmreviv.al/lyrics?id=$id") ?: continue)
+            val lrc = root.optString("lrc").ifBlank { root.optString("syncedLyrics") }
+            val lines = LyricsParser.parse(lrc)
+            if (lines.isNotEmpty()) return lines to null
+        }
+        return null
     }
     private fun simpMusic(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (!snap.id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
