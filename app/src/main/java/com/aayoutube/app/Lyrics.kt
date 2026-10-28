@@ -98,16 +98,16 @@ internal fun LyricsSettingsPage() {
         ListItem(headlineContent = { Text("Show lyrics overlay") },
             supportingContent = { Text("Show lyrics over the video. You can also toggle them from the player.") },
             trailingContent = { Switch(shown, onCheckedChange = { shown = it; LyricsPrefs.set(context, "show", it) }) })
-        Text("Lyrics providers (priority order)", style = MaterialTheme.typography.titleMedium)
+        Text("Free lyrics providers (priority order)", style = MaterialTheme.typography.titleMedium)
         var revision by remember { mutableIntStateOf(0) }
         val prefs = context.getSharedPreferences("lyrics", 0)
         val providers = remember(revision) {
-            prefs.getString("providers", "LRCLIB,SIMPMUSIC,NETEASE,RMM,BLYRICS,BINIMUM,LYRICS_OVH").orEmpty().split(",")
+            prefs.getString("providers", LyricsProviders.ORDER).orEmpty().split(",")
                 .mapNotNull { id -> LyricsProvider.entries.firstOrNull { it.name == id } }
         }
         providers.forEach { provider ->
             var checked by remember(provider, revision) {
-                mutableStateOf(prefs.getBoolean("provider_" + provider.name, true))
+                mutableStateOf(prefs.getBoolean("provider_" + provider.name, provider != LyricsProvider.NETEASE))
             }
             ListItem(
                 headlineContent = { Text(provider.title) },
