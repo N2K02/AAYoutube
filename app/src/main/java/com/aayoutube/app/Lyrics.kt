@@ -56,6 +56,13 @@ internal object LyricsCache {
     }
 }
 
+internal object LyricsSync {
+    fun position(baseMs: Long, playing: Boolean, buffering: Boolean, rate: Float, elapsedMs: Long, offsetMs: Long): Long {
+        val advanced = if (playing && !buffering) (elapsedMs.coerceAtLeast(0L) * rate.coerceAtLeast(0f)).toLong() else 0L
+        return (baseMs + advanced + offsetMs).coerceAtLeast(0L)
+    }
+}
+
 internal object LyricsPrefs {
     private const val FILE = "lyrics"
     fun enabled(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("enabled", true)
@@ -151,6 +158,7 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     var plain by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(0L) }
+    var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
     LaunchedEffect(snap.id, snap.title, snap.artist, enabled, visible) {
         val key = LyricsCache.key(snap)
         val cached = LyricsCache.get(key)
@@ -161,10 +169,11 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             lines = result.first; plain = result.second; loaded = true
         }
     }
-    LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.rate) {
+    LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.buffering, snap.rate, offsetMs) {
         val start = SystemClock.elapsedRealtime()
         while (true) {
-            now = snap.posMs + if (snap.playing) ((SystemClock.elapsedRealtime() - start) * snap.rate).toLong() else 0L
+            now = LyricsSync.position(snap.posMs, snap.playing, snap.buffering, snap.rate,
+                SystemClock.elapsedRealtime() - start, offsetMs)
             delay(200)
         }
     }
@@ -189,6 +198,20 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             Spacer(Modifier.weight(1f))
             Text("×", color = Color.White, style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.clickable { onToggle() }.padding(horizontal = 8.dp))
+        }
+        if (lines.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = {
+                    offsetMs = (offsetMs - 250L).coerceAtLeast(-5000L)
+                    LyricsPrefs.setPosition(context, "sync_offset_ms", offsetMs.toFloat())
+                }) { Text("−0.25s") }
+                Text("Sync " + (if (offsetMs >= 0) "+" else "") + (offsetMs / 1000.0) + "s",
+                    color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                TextButton(onClick = {
+                    offsetMs = (offsetMs + 250L).coerceAtMost(5000L)
+                    LyricsPrefs.setPosition(context, "sync_offset_ms", offsetMs.toFloat())
+                }) { Text("+0.25s") }
+            }
         }
         Spacer(Modifier.height(12.dp))
         val index = LyricsParser.current(lines, now)
