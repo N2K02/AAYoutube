@@ -897,97 +897,66 @@
     } catch (e) {}
   };
 
-  // YouTube hides its pivot bar on /watch. Keep navigation accessible on the video page.
-  // Restrict the override to phone watch pages; fullscreen/PiP/car retain their own layout.
-  (function keepWatchNavigation() {
+  // App-owned navigation is independent of YouTube's pivot bar and SPA layout.
+  // Keep a single bar across Home and watch pages, never in PiP/fullscreen/car.
+  (function persistentNavigation() {
+    var id = 'aay-persistent-nav';
     var style = document.createElement('style');
-    style.id = 'aay-watch-navigation';
+    style.id = 'aay-persistent-nav-style';
     style.textContent =
-      'html.aay-watch-nav ytm-pivot-bar-renderer{' +
-      'display:flex!important;visibility:visible!important;opacity:1!important;' +
-      'position:fixed!important;bottom:0!important;left:0!important;right:0!important;' +
-      'z-index:2147483000!important;background:var(--yt-spec-base-background,#111)!important}' +
-      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden]{display:flex!important}' +
-      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden] *{visibility:visible!important}' +
-      'html.aay-watch-nav ytm-app{padding-bottom:56px!important}';
-    function update() {
-      var watch = location.hostname === 'm.youtube.com' &&
-        location.pathname === '/watch' && !window.__AAY_CAR &&
+      'html.aay-native-nav ytm-pivot-bar-renderer{display:none!important}' +
+      'html.aay-native-nav body{padding-bottom:60px!important}';
+    function render() {
+      if (!document.body || !document.documentElement) return;
+      if (!style.isConnected && document.head) document.head.appendChild(style);
+      var allowed = !A.inPip && !A.isMini && !A.isCar &&
+        !document.fullscreenElement && !document.webkitFullscreenElement &&
         !document.documentElement.classList.contains('aay-pip') &&
         !document.documentElement.classList.contains('aay-car');
-      var nav = document.querySelector('ytm-pivot-bar-renderer');
-      if (watch && nav) {
-        // YouTube can hide the bar using inline styles and ancestor containers.
-        nav.hidden = false;
-        nav.style.setProperty('display', 'flex', 'important');
-        nav.style.setProperty('visibility', 'visible', 'important');
-        nav.style.setProperty('bottom', '0', 'important');
-        nav.style.setProperty('position', 'fixed', 'important');
-      }
-      document.documentElement.classList.toggle('aay-watch-nav', watch);
-      if (!style.isConnected && document.head) document.head.appendChild(style);
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', update);
-    else update();
-    window.addEventListener('yt-navigate-finish', update);
-    window.addEventListener('popstate', update);
-    setInterval(update, 1500);
-  })();
-
-  // Independent watch-page navigation: YouTube may remove its pivot bar entirely.
-  // This fallback is deliberately separate from YouTube's DOM so its removal cannot hide our controls.
-  (function persistentWatchBar() {
-    var id = 'aay-watch-fallback-nav';
-    function render() {
-      var root = document.documentElement;
-      if (!root || !document.body) return;
-      var onWatch = /^\\/(watch|live\\/)/.test(location.pathname);
-      var allowed = !BROWSE && !A.inPip && !A.isMini && !A.isCar &&
-        !document.fullscreenElement && !document.webkitFullscreenElement &&
-        !root.classList.contains('aay-car');
-      var original = document.querySelector('ytm-pivot-bar-renderer');
-      var visible = false;
-      if (original) {
-        var rect = original.getBoundingClientRect();
-        var cs = getComputedStyle(original);
-        visible = rect.width > 0 && rect.height > 24 && rect.bottom > 0 &&
-          rect.top < innerHeight && cs.display !== 'none' && cs.visibility !== 'hidden';
-      }
-      var show = onWatch && allowed && !visible;
       var bar = document.getElementById(id);
-      if (!show) { if (bar) bar.remove(); root.classList.remove('aay-fallback-nav'); return; }
-      if (!bar) {
-        bar = document.createElement('nav');
-        bar.id = id;
-        bar.setAttribute('aria-label', 'AAYoutube navigation');
-        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483001;' +
-          'height:56px;background:#171717;color:white;display:flex;align-items:center;' +
-          'justify-content:space-around;font:14px sans-serif';
-        function button(label, icon, callback) {
-          var b = document.createElement('button');
-          b.type = 'button';
-          b.textContent = icon + '  ' + label;
-          b.style.cssText = 'background:transparent;color:inherit;border:0;font:inherit;' +
-            'min-height:48px;min-width:80px;cursor:pointer';
-          b.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); callback(); });
-          bar.appendChild(b);
-        }
-        button('Home', '⌂', function() { location.assign('https://m.youtube.com/'); });
-        button('You', '◉', function() { location.assign('https://m.youtube.com/feed/you'); });
-        button('Menu', '☰', function() {
-          try { if (BROWSE) window.AAYBrowse.openMenu(); else window.AAYNative.openMenu(); }
-          catch (e) { console.warn('[aay] menu unavailable', e); }
+      document.documentElement.classList.toggle('aay-native-nav', allowed);
+      if (!allowed) { if (bar) bar.remove(); return; }
+      if (bar) return;
+      bar = document.createElement('nav');
+      bar.id = id;
+      bar.setAttribute('aria-label', 'AAyoutube bottom navigation');
+      bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483001;' +
+        'height:56px;background:#211d20;color:white;display:flex;align-items:center;' +
+        'justify-content:space-around;font:14px sans-serif';
+      function add(label, symbol, action) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('aria-label', label);
+        button.style.cssText = 'flex:1;min-width:0;height:56px;background:transparent;' +
+          'color:inherit;border:0;display:flex;flex-direction:column;align-items:center;' +
+          'justify-content:center;font:12px sans-serif;gap:2px';
+        var icon = document.createElement('span');
+        icon.textContent = symbol;
+        icon.style.fontSize = '24px';
+        var text = document.createElement('span');
+        text.textContent = label;
+        button.appendChild(icon); button.appendChild(text);
+        button.addEventListener('click', function(e) {
+          e.preventDefault(); e.stopPropagation(); action();
         });
-        document.body.appendChild(bar);
+        bar.appendChild(button);
       }
-      root.classList.add('aay-fallback-nav');
+      add('Home', '⌂', function() { location.assign('https://m.youtube.com/'); });
+      add('You', '◉', function() { location.assign('https://m.youtube.com/feed/you'); });
+      add('Settings', '⚙', function() {
+        try {
+          if (BROWSE) window.AAYBrowse.openMenu();
+          else window.AAYNative.openMenu();
+        } catch (e) { console.warn('[aay] settings bridge unavailable', e); }
+      });
+      document.body.appendChild(bar);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render);
     else render();
     window.addEventListener('yt-navigate-finish', render);
     window.addEventListener('popstate', render);
     document.addEventListener('fullscreenchange', render);
-    setInterval(render, 800);
+    setInterval(render, 1000);
   })();
 
   // AAYoutube entry lives in YouTube's actual HTML bottom navigation, not over it.
