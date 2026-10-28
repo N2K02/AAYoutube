@@ -134,6 +134,7 @@ internal fun LyricsSettingsPage() {
 internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val enabled = LyricsPrefs.enabled(context)
+    var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
     var lines by remember { mutableStateOf(emptyList<LyricLine>()) }
     var plain by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -154,12 +155,21 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     }
     if (!visible || !enabled || snap.id.isBlank()) return
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)
+        Modifier.fillMaxWidth().offset { IntOffset(0, verticalOffset.roundToInt()) }
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .pointerInput(Unit) {
+                detectDragGestures(onDragEnd = {
+                    LyricsPrefs.setPosition(context, "panel_y", verticalOffset)
+                }) { change, drag ->
+                    change.consume()
+                    verticalOffset = (verticalOffset + drag.y).coerceIn(0f, size.height * 9f)
+                }
+            }
             .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
             .clickable { onToggle() }.padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Lyrics  ×", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Text("Lyrics  ↕  ×", color = Color.White, style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(12.dp))
         val index = LyricsParser.current(lines, now)
         when {
