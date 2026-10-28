@@ -66,6 +66,15 @@ object BrowseHost {
     fun resume() { web?.onResume() }
 
     /** Called when the mini player opens: start where the user came from. */
+    fun navigate(url: String) {
+        if (web == null) {
+            pendingUrl = url
+            created.value = true
+        } else {
+            web?.loadUrl(url)
+        }
+    }
+
     fun showFrom(url: String) {
         val w = web
         if (w == null) {
