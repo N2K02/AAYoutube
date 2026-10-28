@@ -4,17 +4,20 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
+import org.xmlpull.v1.XmlPullParser
+import android.util.Xml
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
 /** Independent public lyric endpoints. A failure never prevents the next provider being tried. */
 internal enum class LyricsProvider(val title: String) {
-    LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), LYRICS_OVH("Lyrics.ovh")
+    LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), BLYRICS("bLyrics"), BINIMUM("BiniLyrics"), LYRICS_OVH("Lyrics.ovh")
 }
 
 internal object LyricsProviders {
-    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,LYRICS_OVH"
+    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,BLYRICS,BINIMUM,LYRICS_OVH"
     fun ordered(context: Context): List<LyricsProvider> {
         val prefs = context.getSharedPreferences("lyrics", 0)
         return prefs.getString("providers", ORDER).orEmpty().split(",")
@@ -38,6 +41,8 @@ internal object LyricsProviders {
                         LyricsProvider.LRCLIB -> LyricsLookup.fetch(snap)
                         LyricsProvider.NETEASE -> netease(snap)
                         LyricsProvider.SIMPMUSIC -> simpMusic(snap)
+                        LyricsProvider.BLYRICS -> blyrics(snap)
+                        LyricsProvider.BINIMUM -> binimum(snap)
                         LyricsProvider.LYRICS_OVH -> lyricsOvh(snap)
                     }
                 } catch (_: Exception) { null }
@@ -55,6 +60,60 @@ internal object LyricsProviders {
         return try {
             if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().use { it.readText() } else null
         } finally { conn.disconnect() }
+    }
+    private fun ttml(xml: String): Pair<List<LyricLine>, String?>? {
+        val parser = Xml.newPullParser()
+        parser.setInput(xml.reader())
+        val lines = mutableListOf<LyricLine>()
+        var time: Long? = null
+        var content = StringBuilder()
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> if (parser.name == "p") {
+                    val begin = (0 until parser.attributeCount).firstOrNull { parser.getAttributeName(it) == "begin" }
+                    time = begin?.let { parseTime(parser.getAttributeValue(it)) }
+                    content = StringBuilder()
+                }
+                XmlPullParser.TEXT -> if (time != null) content.append(parser.text)
+                XmlPullParser.END_TAG -> if (parser.name == "p") {
+                    if (time != null && content.isNotBlank()) lines.add(LyricLine(time!!, content.toString().trim()))
+                    time = null
+                }
+            }
+            event = parser.next()
+        }
+        return if (lines.isEmpty()) null else lines.sortedBy { it.atMs } to null
+    }
+    private fun parseTime(value: String): Long? {
+        if (value.endsWith("ms")) return value.dropLast(2).toDoubleOrNull()?.toLong()
+        if (value.endsWith("s")) return value.dropLast(1).toDoubleOrNull()?.times(1000)?.toLong()
+        val parts = value.split(":")
+        if (parts.size !in 2..3) return null
+        val seconds = parts.last().toDoubleOrNull() ?: return null
+        val minutes = parts[parts.size - 2].toLongOrNull() ?: return null
+        val hours = if (parts.size == 3) parts[0].toLongOrNull() ?: return null else 0L
+        return ((hours * 3600 + minutes * 60 + seconds) * 1000).toLong()
+    }
+    private fun blyrics(snap: Snap): Pair<List<LyricLine>, String?>? {
+        if (snap.artist.isBlank()) return null
+        val title = URLEncoder.encode(snap.title, "UTF-8")
+        val artist = URLEncoder.encode(snap.artist, "UTF-8")
+        val url = "https://lyrics-api.boidu.dev/getLyrics?s=$title&a=$artist" +
+            if (snap.durMs > 0) "&d=" + snap.durMs / 1000 else ""
+        val xml = JSONObject(request(url) ?: return null).optString("ttml")
+        return if (xml.isBlank()) null else ttml(xml)
+    }
+    private fun binimum(snap: Snap): Pair<List<LyricLine>, String?>? {
+        if (snap.artist.isBlank()) return null
+        val title = URLEncoder.encode(snap.title, "UTF-8")
+        val artist = URLEncoder.encode(snap.artist, "UTF-8")
+        val url = "https://lyrics-api.binimum.org/?track=$title&artist=$artist" +
+            if (snap.durMs > 0) "&duration=" + snap.durMs / 1000 else ""
+        val results = JSONObject(request(url) ?: return null).optJSONArray("results") ?: return null
+        val lyricsUrl = results.optJSONObject(0)?.optString("lyricsUrl").orEmpty()
+        if (!lyricsUrl.startsWith("https://")) return null
+        return ttml(request(lyricsUrl) ?: return null)
     }
     private fun simpMusic(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (!snap.id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
