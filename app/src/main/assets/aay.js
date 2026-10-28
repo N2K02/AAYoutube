@@ -900,12 +900,23 @@
       'display:flex!important;visibility:visible!important;opacity:1!important;' +
       'position:fixed!important;bottom:0!important;left:0!important;right:0!important;' +
       'z-index:2147483000!important;background:var(--yt-spec-base-background,#111)!important}' +
-      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden]{display:flex!important}';
+      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden]{display:flex!important}' +
+      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden] *{visibility:visible!important}' +
+      'html.aay-watch-nav ytm-app{padding-bottom:56px!important}';
     function update() {
       var watch = location.hostname === 'm.youtube.com' &&
         location.pathname === '/watch' && !window.__AAY_CAR &&
         !document.documentElement.classList.contains('aay-pip') &&
         !document.documentElement.classList.contains('aay-car');
+      var nav = document.querySelector('ytm-pivot-bar-renderer');
+      if (watch && nav) {
+        // YouTube can hide the bar using inline styles and ancestor containers.
+        nav.hidden = false;
+        nav.style.setProperty('display', 'flex', 'important');
+        nav.style.setProperty('visibility', 'visible', 'important');
+        nav.style.setProperty('bottom', '0', 'important');
+        nav.style.setProperty('position', 'fixed', 'important');
+      }
       document.documentElement.classList.toggle('aay-watch-nav', watch);
       if (!style.isConnected && document.head) document.head.appendChild(style);
     }
