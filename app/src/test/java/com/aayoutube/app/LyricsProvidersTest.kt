@@ -5,8 +5,15 @@ import org.junit.Test
 
 class LyricsProvidersTest {
     @Test fun allIntegratedProvidersArePresent() {
-        val expected = setOf("LRCLIB", "SIMPMUSIC", "NETEASE", "BLYRICS", "BINIMUM", "LYRICS_OVH")
+        val expected = setOf("LRCLIB", "SIMPMUSIC", "NETEASE", "BLYRICS", "BINIMUM", "LYRICS_OVH", "RMM")
         assertEquals(expected, LyricsProvider.entries.map { it.name }.toSet())
+    }
+
+    @Test fun freeProviderDefaultsContainAllIntegratedSources() {
+        val ordered = LyricsProviders.ORDER.split(",")
+        assertEquals(LyricsProvider.entries.size, ordered.size)
+        assertEquals(LyricsProvider.entries.map { it.name }.toSet(), ordered.toSet())
+        assertEquals("LRCLIB", ordered.first())
     }
 
     @Test fun providerIdentifiersAreStableAndUnique() {
