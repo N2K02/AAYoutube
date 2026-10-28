@@ -309,6 +309,25 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
+        // Native Settings shortcut: remains reachable even if YouTube replaces its bottom DOM.
+        if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && !onCar) {
+            Surface(
+                onClick = { menuOpen = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 8.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 4.dp,
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(Icons.Filled.Settings, contentDescription = "AAyoutube Settings",
+                        modifier = Modifier.size(24.dp))
+                    Text("Settings", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
         if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && snap.id.isNotBlank() && WebHost.mode.value == WebHost.PlayerMode.FULL) {
             val ctx = LocalContext.current
             var lyricsShown by remember { mutableStateOf(LyricsPrefs.show(ctx)) }
