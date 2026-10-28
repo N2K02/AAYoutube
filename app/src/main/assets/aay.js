@@ -886,6 +886,32 @@
     } catch (e) {}
   };
 
+  // YouTube hides its pivot bar on /watch. Keep navigation accessible on the video page.
+  // Restrict the override to phone watch pages; fullscreen/PiP/car retain their own layout.
+  (function keepWatchNavigation() {
+    var style = document.createElement('style');
+    style.id = 'aay-watch-navigation';
+    style.textContent =
+      'html.aay-watch-nav ytm-pivot-bar-renderer{' +
+      'display:flex!important;visibility:visible!important;opacity:1!important;' +
+      'position:fixed!important;bottom:0!important;left:0!important;right:0!important;' +
+      'z-index:2147483000!important;background:var(--yt-spec-base-background,#111)!important}' +
+      'html.aay-watch-nav ytm-pivot-bar-renderer[hidden]{display:flex!important}';
+    function update() {
+      var watch = location.hostname === 'm.youtube.com' &&
+        location.pathname === '/watch' && !window.__AAY_CAR &&
+        !document.documentElement.classList.contains('aay-pip') &&
+        !document.documentElement.classList.contains('aay-car');
+      document.documentElement.classList.toggle('aay-watch-nav', watch);
+      if (!style.isConnected && document.head) document.head.appendChild(style);
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', update);
+    else update();
+    window.addEventListener('yt-navigate-finish', update);
+    window.addEventListener('popstate', update);
+    setInterval(update, 1500);
+  })();
+
   // AAYoutube entry lives in YouTube's actual HTML bottom navigation, not over it.
   // Reattach after SPA transitions and YouTube's own DOM replacements.
   (function installHtmlMenu() {
