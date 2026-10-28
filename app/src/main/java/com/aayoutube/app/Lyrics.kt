@@ -4,6 +4,12 @@ import android.content.Context
 import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.layout.offset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -42,6 +48,8 @@ internal object LyricsPrefs {
     private const val FILE = "lyrics"
     fun enabled(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("enabled", true)
     fun show(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("show", true)
+    fun position(context: Context, key: String, fallback: Float) = context.getSharedPreferences(FILE, 0).getFloat(key, fallback)
+    fun setPosition(context: Context, key: String, value: Float) = context.getSharedPreferences(FILE, 0).edit().putFloat(key, value).apply()
     fun set(context: Context, key: String, value: Boolean) =
         context.getSharedPreferences(FILE, 0).edit().putBoolean(key, value).apply()
 }
@@ -97,7 +105,7 @@ internal fun LyricsSettingsPage() {
 @Composable
 internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var enabled by remember { mutableStateOf(LyricsPrefs.enabled(context)) }
+    val enabled = LyricsPrefs.enabled(context)
     var lines by remember { mutableStateOf(emptyList<LyricLine>()) }
     var plain by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -116,9 +124,10 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             delay(200)
         }
     }
-    if (!visible || !enabled || snap.id.isBlank()) return
+    if (!visible || !enabled || snap.id.isBlank() || (!loaded && lines.isEmpty() && plain == null)) return
+    if (loaded && lines.isEmpty() && plain == null) return
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 72.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)
             .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
             .clickable { onToggle() }.padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -137,6 +146,32 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             plain != null -> Text(plain!!.take(1500), color = Color.White, textAlign = TextAlign.Center)
             !loaded -> Text("Finding lyrics…", color = Color.White)
             else -> Text("Lyrics not found", color = Color.White)
+        }
+    }
+}
+
+/** Draggable control; only a real tap toggles the overlay. */
+@Composable
+internal fun LyricsFloatingButton(shown: Boolean, onToggle: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val density = LocalDensity.current
+    var dx by remember { mutableFloatStateOf(LyricsPrefs.position(ctx, "button_x", 0f)) }
+    var dy by remember { mutableFloatStateOf(LyricsPrefs.position(ctx, "button_y", 0f)) }
+    Box(
+        Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) }
+            .pointerInput(Unit) {
+                detectDragGestures(onDragEnd = {
+                    LyricsPrefs.setPosition(ctx, "button_x", dx)
+                    LyricsPrefs.setPosition(ctx, "button_y", dy)
+                }) { change, drag ->
+                    change.consume()
+                    dx = (dx + drag.x).coerceIn(-size.width * 5f, 0f)
+                    dy = (dy + drag.y).coerceIn(-size.height * 10f, size.height * 2f)
+                }
+            },
+    ) {
+        FilledTonalIconButton(onClick = onToggle) {
+            Text(if (shown) "♪" else "L", style = MaterialTheme.typography.titleMedium)
         }
     }
 }
