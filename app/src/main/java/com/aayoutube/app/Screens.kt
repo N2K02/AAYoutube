@@ -309,16 +309,15 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
-        if (tab == Tab.Watch.ordinal && !inPip && snap.id.isNotBlank()) {
+        if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && snap.id.isNotBlank() && WebHost.mode.value == WebHost.PlayerMode.FULL) {
             val ctx = LocalContext.current
             var lyricsShown by remember { mutableStateOf(LyricsPrefs.show(ctx)) }
-            androidx.compose.material3.FilledTonalIconButton(
-                onClick = {
+            Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 90.dp)) {
+                LyricsFloatingButton(lyricsShown) {
                     lyricsShown = !lyricsShown
                     LyricsPrefs.set(ctx, "show", lyricsShown)
-                },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 90.dp),
-            ) { Text(if (lyricsShown) "L×" else "L♪") }
+                }
+            }
             Box(Modifier.align(Alignment.TopCenter)) {
                 LyricsOverlay(snap, lyricsShown) {
                     lyricsShown = false
