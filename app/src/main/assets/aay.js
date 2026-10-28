@@ -164,29 +164,35 @@
     } catch (e) {}
   }
 
-  /* ---------- 1e. Swipe down on the playing video: mini player, keep browsing ---------- */
-  try {
-    if (!BROWSE) {
-      var sw = null;
-      document.addEventListener('touchstart', function (e) {
-        sw = null;
-        if (e.touches.length !== 1 || A.inPip || A.isMini || document.fullscreenElement) return;
-        if (!/^\/(watch|live\/)/.test(location.pathname)) return;
-        var t = e.target;
-        if (!t || !t.closest || !t.closest('.html5-video-player,#player-container-id,#player')) return;
-        sw = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
-      }, { capture: true, passive: true });
-      document.addEventListener('touchend', function (e) {
-        if (!sw) return;
-        var c = e.changedTouches[0], dx = c.clientX - sw.x, dy = c.clientY - sw.y, dt = Date.now() - sw.t;
-        sw = null;
-        if (dy > 90 && Math.abs(dx) < dy / 2 && dt < 900) {
-          console.log('[aay] swipe down on the video: mini player');
-          try { N && N.mini(); } catch (x) {}
-        }
-      }, { capture: true, passive: true });
-    }
-  } catch (e) {}
+  /* ---------- 1e. Swipe down on the video to enter the in-app mini player ---------- */
+  // Listen at capture phase: YouTube can stop propagation and replace its player DOM.
+  if (!BROWSE) {
+    var swipeStart = null;
+    document.addEventListener('touchstart', function(e) {
+      swipeStart = null;
+      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar ||
+          document.fullscreenElement || document.webkitFullscreenElement) return;
+      if (!/^\\/(watch|live\\/)/.test(location.pathname)) return;
+      var target = e.target;
+      if (!target || !target.closest) return;
+      var player = target.closest('.html5-video-player,#player-container-id,#player,' +
+        'ytm-player,ytm-watch-player,ytm-player-component,video');
+      if (!player) return;
+      swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
+    }, { capture: true, passive: true });
+    document.addEventListener('touchend', function(e) {
+      var start = swipeStart;
+      swipeStart = null;
+      if (!start || !e.changedTouches.length) return;
+      var dx = e.changedTouches[0].clientX - start.x;
+      var dy = e.changedTouches[0].clientY - start.y;
+      if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+      console.log('[aay] player swipe down -> mini');
+      try { if (window.AAYNative) window.AAYNative.mini(); }
+      catch (err) { console.warn('[aay] mini bridge failed', err); }
+    }, { capture: true, passive: true });
+    document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
+  }
 
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
