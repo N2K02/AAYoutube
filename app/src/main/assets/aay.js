@@ -957,7 +957,7 @@
       button.appendChild(symbol); button.appendChild(label);
       button.addEventListener('click', function (event) {
         event.preventDefault(); event.stopPropagation();
-        try { window.AAYNative.openMenu(); } catch (e) {}
+        try { if (window.__AAY_BROWSE) window.AAYBrowse.openMenu(); else window.AAYNative.openMenu(); } catch (e) { console.warn("[aay] menu bridge unavailable", e); }
       });
       nav.appendChild(button);
     }
