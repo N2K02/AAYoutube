@@ -152,8 +152,7 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             delay(200)
         }
     }
-    if (!visible || !enabled || snap.id.isBlank() || (!loaded && lines.isEmpty() && plain == null)) return
-    if (loaded && lines.isEmpty() && plain == null) return
+    if (!visible || !enabled || snap.id.isBlank()) return
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)
             .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
