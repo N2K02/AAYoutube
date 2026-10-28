@@ -309,8 +309,8 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
-        // Native navigation is not affected by YouTube SPA DOM replacement.
-        if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && !onCar) {
+        // mRadio navigation: Home and Settings only; all other pages live under Settings.
+        if (!inPip && fullscreen == null && !onCar) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -322,9 +322,12 @@ fun AppRoot(activity: MainActivity) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Surface(onClick = {
+                        tab = Tab.Watch.ordinal
+                        menuOpen = false
                         if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
                             WebHost.enterMini()
-                        else if (WebHost.mode.value == WebHost.PlayerMode.MINI) BrowseHost.navigate(WebHost.home())
+                        else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
+                            BrowseHost.navigate(WebHost.home())
                         else WebHost.load(WebHost.home())
                     }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -333,21 +336,18 @@ fun AppRoot(activity: MainActivity) {
                         }
                     }
                     Surface(onClick = {
-                        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
-                            WebHost.enterMini()
-                        if (WebHost.mode.value == WebHost.PlayerMode.MINI)
-                            BrowseHost.navigate("https://m.youtube.com/feed/you")
-                        else WebHost.load("https://m.youtube.com/feed/you")
+                        tab = Tab.Settings.ordinal
+                        menuOpen = false
                     }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.Info, contentDescription = "You")
-                            Text("You", style = MaterialTheme.typography.labelSmall)
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                            Text("Settings", style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    Surface(onClick = { menuOpen = true }, modifier = Modifier.weight(1f)) {
+                    Surface(onClick = { activity.quit() }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.Settings, contentDescription = "AAyoutube Settings")
-                            Text("Settings", style = MaterialTheme.typography.labelSmall)
+                            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Quit")
+                            Text("Quit", style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
