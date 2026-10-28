@@ -44,6 +44,18 @@ internal object LyricsParser {
         lines.indexOfLast { it.atMs <= position }
 }
 
+internal object LyricsCache {
+    private val values = mutableMapOf<String, Pair<List<LyricLine>, String?>>()
+    fun key(snap: Snap) = listOf(snap.id, snap.title.trim().lowercase(), snap.artist.trim().lowercase()).joinToString("|")
+    @Synchronized fun get(key: String) = values[key]
+    @Synchronized fun put(key: String, value: Pair<List<LyricLine>, String?>) {
+        if (value.first.isNotEmpty() || !value.second.isNullOrBlank()) {
+            if (values.size >= 40) values.remove(values.keys.first())
+            values[key] = value
+        }
+    }
+}
+
 internal object LyricsPrefs {
     private const val FILE = "lyrics"
     fun enabled(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("enabled", true)
@@ -140,9 +152,12 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(0L) }
     LaunchedEffect(snap.id, snap.title, snap.artist, enabled, visible) {
-        lines = emptyList(); plain = null; loaded = false
-        if (enabled && visible && snap.id.isNotBlank()) {
+        val key = LyricsCache.key(snap)
+        val cached = LyricsCache.get(key)
+        lines = cached?.first ?: emptyList(); plain = cached?.second; loaded = cached != null
+        if (enabled && visible && snap.id.isNotBlank() && cached == null) {
             val result = LyricsProviders.fetch(context, snap)
+            LyricsCache.put(key, result)
             lines = result.first; plain = result.second; loaded = true
         }
     }
@@ -166,10 +181,15 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
                 }
             }
             .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(18.dp))
-            .clickable { onToggle() }.padding(16.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Lyrics  ↕  ×", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Lyrics  ↕", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.weight(1f))
+            Text("×", color = Color.White, style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.clickable { onToggle() }.padding(horizontal = 8.dp))
+        }
         Spacer(Modifier.height(12.dp))
         val index = LyricsParser.current(lines, now)
         when {
