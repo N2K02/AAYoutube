@@ -324,6 +324,7 @@ fun AppRoot(activity: MainActivity) {
                     Surface(onClick = {
                         if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
                             WebHost.enterMini()
+                        else if (WebHost.mode.value == WebHost.PlayerMode.MINI) BrowseHost.navigate(WebHost.home())
                         else WebHost.load(WebHost.home())
                     }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -334,7 +335,9 @@ fun AppRoot(activity: MainActivity) {
                     Surface(onClick = {
                         if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
                             WebHost.enterMini()
-                        WebHost.load("https://m.youtube.com/feed/you")
+                        if (WebHost.mode.value == WebHost.PlayerMode.MINI)
+                            BrowseHost.navigate("https://m.youtube.com/feed/you")
+                        else WebHost.load("https://m.youtube.com/feed/you")
                     }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Filled.Info, contentDescription = "You")
