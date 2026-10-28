@@ -164,5 +164,11 @@ object BrowseHost {
 /** What the browse page script can call. */
 class BrowseBridge {
     @JavascriptInterface
+    fun openMenu() {
+        Handler(Looper.getMainLooper()).post {
+            WebHost.htmlMenuTap.value = WebHost.htmlMenuTap.value + 1L
+        }
+    }
+    @JavascriptInterface
     fun open(url: String) = BrowseHost.openInPlayer(url)
 }
