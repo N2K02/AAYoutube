@@ -681,7 +681,7 @@ private val carSwipeDown = Modifier.pointerInput(Unit) {
                     if (dy > 72.dp.toPx() && kotlin.math.abs(dx) < dy / 2 && c.uptimeMillis - startAt < 900 &&
                         WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()
                     ) {
-                        AppLog.add("CAR", "Swipe down on the video: mini player")
+                        AppLog.add("VIEW", "Native swipe down on video: mini player")
                         WebHost.enterMini()
                     }
                 }
@@ -753,8 +753,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
                 // Car screen: swipe down on the video shrinks it into the mini player, as on the phone.
                 // Detected here rather than in the page, whatever kind of touch Android Auto sends.
-                onCar -> Modifier.fillMaxSize().then(carSwipeDown)
-                else -> Modifier.fillMaxSize()
+                else -> Modifier.fillMaxSize().then(carSwipeDown)
             }
             key(version) {
                 AndroidView(
