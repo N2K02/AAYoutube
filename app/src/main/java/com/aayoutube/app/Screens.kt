@@ -309,22 +309,44 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
-        // Native Settings shortcut: remains reachable even if YouTube replaces its bottom DOM.
+        // Native navigation is not affected by YouTube SPA DOM replacement.
         if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && !onCar) {
             Surface(
-                onClick = { menuOpen = true },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 8.dp, bottom = 8.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 tonalElevation = 4.dp,
             ) {
-                Column(
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                Row(
+                    Modifier.fillMaxWidth().height(56.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Filled.Settings, contentDescription = "AAyoutube Settings",
-                        modifier = Modifier.size(24.dp))
-                    Text("Settings", style = MaterialTheme.typography.labelSmall)
+                    Surface(onClick = {
+                        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
+                            WebHost.enterMini()
+                        else WebHost.load(WebHost.home())
+                    }, modifier = Modifier.weight(1f)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Filled.PlayArrow, contentDescription = "Home")
+                            Text("Home", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Surface(onClick = {
+                        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
+                            WebHost.enterMini()
+                        WebHost.load("https://m.youtube.com/feed/you")
+                    }, modifier = Modifier.weight(1f)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Filled.Info, contentDescription = "You")
+                            Text("You", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Surface(onClick = { menuOpen = true }, modifier = Modifier.weight(1f)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Filled.Settings, contentDescription = "AAyoutube Settings")
+                            Text("Settings", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
         }
