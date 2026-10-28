@@ -927,6 +927,62 @@
     setInterval(update, 1500);
   })();
 
+  // Independent watch-page navigation: YouTube may remove its pivot bar entirely.
+  // This fallback is deliberately separate from YouTube's DOM so its removal cannot hide our controls.
+  (function persistentWatchBar() {
+    var id = 'aay-watch-fallback-nav';
+    function render() {
+      var root = document.documentElement;
+      if (!root || !document.body) return;
+      var onWatch = /^\\/(watch|live\\/)/.test(location.pathname);
+      var allowed = !BROWSE && !A.inPip && !A.isMini && !A.isCar &&
+        !document.fullscreenElement && !document.webkitFullscreenElement &&
+        !root.classList.contains('aay-car');
+      var original = document.querySelector('ytm-pivot-bar-renderer');
+      var visible = false;
+      if (original) {
+        var rect = original.getBoundingClientRect();
+        var cs = getComputedStyle(original);
+        visible = rect.width > 0 && rect.height > 24 && rect.bottom > 0 &&
+          rect.top < innerHeight && cs.display !== 'none' && cs.visibility !== 'hidden';
+      }
+      var show = onWatch && allowed && !visible;
+      var bar = document.getElementById(id);
+      if (!show) { if (bar) bar.remove(); root.classList.remove('aay-fallback-nav'); return; }
+      if (!bar) {
+        bar = document.createElement('nav');
+        bar.id = id;
+        bar.setAttribute('aria-label', 'AAYoutube navigation');
+        bar.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483001;' +
+          'height:56px;background:#171717;color:white;display:flex;align-items:center;' +
+          'justify-content:space-around;font:14px sans-serif';
+        function button(label, icon, callback) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = icon + '  ' + label;
+          b.style.cssText = 'background:transparent;color:inherit;border:0;font:inherit;' +
+            'min-height:48px;min-width:80px;cursor:pointer';
+          b.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); callback(); });
+          bar.appendChild(b);
+        }
+        button('Home', '⌂', function() { location.assign('https://m.youtube.com/'); });
+        button('You', '◉', function() { location.assign('https://m.youtube.com/feed/you'); });
+        button('Menu', '☰', function() {
+          try { if (BROWSE) window.AAYBrowse.openMenu(); else window.AAYNative.openMenu(); }
+          catch (e) { console.warn('[aay] menu unavailable', e); }
+        });
+        document.body.appendChild(bar);
+      }
+      root.classList.add('aay-fallback-nav');
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', render);
+    else render();
+    window.addEventListener('yt-navigate-finish', render);
+    window.addEventListener('popstate', render);
+    document.addEventListener('fullscreenchange', render);
+    setInterval(render, 800);
+  })();
+
   // AAYoutube entry lives in YouTube's actual HTML bottom navigation, not over it.
   // Reattach after SPA transitions and YouTube's own DOM replacements.
   (function installHtmlMenu() {
