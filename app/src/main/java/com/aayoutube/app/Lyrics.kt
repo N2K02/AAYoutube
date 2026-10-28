@@ -102,7 +102,7 @@ internal fun LyricsSettingsPage() {
         var revision by remember { mutableIntStateOf(0) }
         val prefs = context.getSharedPreferences("lyrics", 0)
         val providers = remember(revision) {
-            prefs.getString("providers", "LRCLIB,SIMPMUSIC,NETEASE,LYRICS_OVH").orEmpty().split(",")
+            prefs.getString("providers", "LRCLIB,SIMPMUSIC,NETEASE,BLYRICS,BINIMUM,LYRICS_OVH").orEmpty().split(",")
                 .mapNotNull { id -> LyricsProvider.entries.firstOrNull { it.name == id } }
         }
         providers.forEach { provider ->
@@ -126,7 +126,7 @@ internal fun LyricsSettingsPage() {
                 },
             )
         }
-        Text("Providers are tried in order. LRCLIB, SimpMusic and NetEase can return timed lyrics; Lyrics.ovh offers plain text.", style = MaterialTheme.typography.bodyMedium)
+        Text("Providers are tried in order. LRCLIB, SimpMusic, NetEase, bLyrics and BiniLyrics can return timed lyrics; Lyrics.ovh offers plain text.", style = MaterialTheme.typography.bodyMedium)
     }
 }
 
