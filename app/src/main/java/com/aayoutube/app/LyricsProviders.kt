@@ -10,11 +10,11 @@ import java.net.URLEncoder
 
 /** Independent public lyric endpoints. A failure never prevents the next provider being tried. */
 internal enum class LyricsProvider(val title: String) {
-    LRCLIB("LRCLIB"), NETEASE("NetEase"), LYRICS_OVH("Lyrics.ovh")
+    LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), LYRICS_OVH("Lyrics.ovh")
 }
 
 internal object LyricsProviders {
-    private const val ORDER = "LRCLIB,NETEASE,LYRICS_OVH"
+    private const val ORDER = "LRCLIB,SIMPMUSIC,NETEASE,LYRICS_OVH"
     fun ordered(context: Context): List<LyricsProvider> {
         val prefs = context.getSharedPreferences("lyrics", 0)
         return prefs.getString("providers", ORDER).orEmpty().split(",")
@@ -37,6 +37,7 @@ internal object LyricsProviders {
                     when (source) {
                         LyricsProvider.LRCLIB -> LyricsLookup.fetch(snap)
                         LyricsProvider.NETEASE -> netease(snap)
+                        LyricsProvider.SIMPMUSIC -> simpMusic(snap)
                         LyricsProvider.LYRICS_OVH -> lyricsOvh(snap)
                     }
                 } catch (_: Exception) { null }
@@ -54,6 +55,22 @@ internal object LyricsProviders {
         return try {
             if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().use { it.readText() } else null
         } finally { conn.disconnect() }
+    }
+    private fun simpMusic(snap: Snap): Pair<List<LyricLine>, String?>? {
+        if (!snap.id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
+        val root = JSONObject(request("https://api-lyrics.simpmusic.org/v1/" + snap.id) ?: return null)
+        if (!root.optBoolean("success")) return null
+        val entries = root.optJSONArray("data") ?: return null
+        val sorted = (0 until entries.length()).mapNotNull { entries.optJSONObject(it) }
+            .sortedByDescending { it.optInt("vote", 0) }
+        for (entry in sorted) {
+            val synced = entry.optString("syncedLyrics").ifBlank { entry.optString("richSyncLyrics") }
+            val lines = LyricsParser.parse(synced)
+            if (lines.isNotEmpty()) return lines to null
+            val plain = entry.optString("plainLyric")
+            if (plain.isNotBlank()) return emptyList<LyricLine>() to plain
+        }
+        return null
     }
     private fun netease(snap: Snap): Pair<List<LyricLine>, String?>? {
         val q = URLEncoder.encode((snap.title + " " + snap.artist).trim(), "UTF-8")
