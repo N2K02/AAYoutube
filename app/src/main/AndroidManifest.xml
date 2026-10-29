@@ -85,6 +85,12 @@
                 android:gravity="fill"
                 android:defaultWidth="800dp"
                 android:defaultHeight="480dp" />
+            <!-- Legacy Assistant / Android Auto voice request. Media3 also handles modern
+                 onSearch / onAddMediaItems calls in PlaybackService. -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- Opens YouTube links in this app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
