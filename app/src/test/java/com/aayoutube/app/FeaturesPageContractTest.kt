@@ -22,5 +22,10 @@ class FeaturesPageContractTest {
         val script = source("app/src/main/assets/aay.js")
         assertTrue(script.contains("cfg.get('LOGGED_IN')"))
         assertTrue(script.contains("if (typeof signedIn !== 'boolean') return"))
+        assertTrue(script.contains("if (CFG.hidePromos) css += CSS_OPEN_APP"))
+        assertTrue(script.contains("oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra"))
+        assertTrue(script.contains("request !== sb.request"))
+        assertTrue(script.contains("document.querySelectorAll('.aay-ryd')"))
+        assertTrue(script.contains("CFG.backgroundPlay !== false && !lowered"))
     }
 }

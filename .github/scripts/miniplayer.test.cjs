@@ -15,6 +15,7 @@ function playerPage(options = {}) {
   const stateReports = [];
   const accountReports = [];
   const intervals = [];
+  const requests = [];
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -111,7 +112,12 @@ function playerPage(options = {}) {
     history: { pushState() {}, replaceState() {} },
     Document: Doc, HTMLMediaElement: Media, MediaSession: class {},
     MutationObserver: class { observe() {} disconnect() {} },
-    URL, console, Promise, Error, DOMException,
+    URL, console, Promise, Error, DOMException, TextEncoder,
+    crypto: { subtle: { digest() { return Promise.resolve(new Uint8Array(32).buffer); } } },
+    fetch(url) {
+      requests.push(url);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    },
     getComputedStyle() { return { visibility: 'visible', direction: 'ltr' }; },
     Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { timers.push(fn); return timers.length; },
@@ -121,7 +127,7 @@ function playerPage(options = {}) {
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
-    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports,
+    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, requests,
     runIntervals() { for (const fn of intervals) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
@@ -276,4 +282,29 @@ test('browse WebView does not report login over main player auth state', () => {
   p.flush();
   p.runIntervals();
   assert.deepEqual(p.accountReports, []);
+});
+
+test('hide promos switch also controls YouTube open-app banners', () => {
+  const p = playerPage();
+  p.window.__aay.config({ hidePromos: true });
+  assert.ok(p.styleElements.some(e => e.textContent && e.textContent.includes('ytm-open-app-button')));
+  p.window.__aay.config({ hidePromos: false });
+  assert.ok(p.styleElements.every(e => !e.textContent || !e.textContent.includes('ytm-open-app-button')));
+});
+
+test('SponsorBlock re-queries when extra categories change on the same video', async () => {
+  const p = playerPage();
+  const step = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+  p.window.__aay.config({ sponsorBlock: true });
+  await step();
+  assert.equal(p.requests.length, 1);
+  assert.ok(p.requests[0].includes('sponsor'));
+  p.window.__aay.config({ sbExtra: true });
+  await step();
+  assert.equal(p.requests.length, 2);
+  assert.ok(p.requests[1].includes('intro'));
+  p.window.__aay.config({ sponsorBlock: false });
+  p.window.__aay.config({ sponsorBlock: true });
+  await step();
+  assert.equal(p.requests.length, 3);
 });

@@ -420,7 +420,9 @@
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_OPEN_APP;
+    var css = CSS_PIP + CSS_CAR;
+    // Hide promos must control the app-install banners as well as upsell dialogs.
+    if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
@@ -599,7 +601,7 @@
   }
 
   /* ---------- 6. SponsorBlock ---------- */
-  var sb = { id: '', segs: [] };
+  var sb = { id: '', segs: [], request: 0 };
   function sha256hex(s) {
     return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(function (buf) {
       return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
@@ -608,12 +610,15 @@
   function sbLoad(id) {
     if (!CFG.sponsorBlock || !id || sb.id === id) return;
     sb.id = id; sb.segs = [];
+    var request = ++sb.request;
     var cats = CFG.sbExtra ? ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro'] : ['sponsor', 'selfpromo', 'interaction'];
     sha256hex(id).then(function (h) {
       return fetch('https://sponsor.ajay.app/api/skipSegments/' + h.slice(0, 4) +
         '?categories=' + encodeURIComponent(JSON.stringify(cats)) +
         '&actionTypes=' + encodeURIComponent('["skip"]'));
     }).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+      // Ignore results for an earlier video or a previous category selection.
+      if (request !== sb.request || sb.id !== id || !CFG.sponsorBlock) return;
       for (var i = 0; i < list.length; i++) {
         if (list[i].videoID === id) {
           sb.segs = list[i].segments.map(function (s) { return { a: s.segment[0], b: s.segment[1] }; });
@@ -631,7 +636,7 @@
   }
 
   /* ---------- 7. Return YouTube Dislike (best effort: depends on the page layout) ---------- */
-  var ryd = { id: '', txt: '' };
+  var ryd = { id: '', txt: '', request: 0 };
   function fmt(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
     if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
@@ -641,9 +646,13 @@
   function rydLoad(id) {
     if (!CFG.returnDislike || !id || ryd.id === id) return;
     ryd.id = id; ryd.txt = '';
+    var request = ++ryd.request;
     fetch('https://returnyoutubedislikeapi.com/votes?videoId=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j && typeof j.dislikes === 'number') { ryd.txt = fmt(j.dislikes); rydApply(); } })
+      .then(function (j) {
+        if (request !== ryd.request || ryd.id !== id || !CFG.returnDislike) return;
+        if (j && typeof j.dislikes === 'number') { ryd.txt = fmt(j.dislikes); rydApply(); }
+      })
       .catch(function () {});
   }
   function rydApply() {
@@ -663,7 +672,15 @@
   /* ---------- 8. Ads that still get through: skip them, then restore the video ---------- */
   var adSped = false, saved = { rate: 1, muted: false };
   function skipAd() {
-    if (!CFG.blockAds) return;
+    if (!CFG.blockAds) {
+      // If the user switches blocking off mid-ad, restore playback speed and mute.
+      if (adSped) {
+        adSped = false;
+        var current = getVideo();
+        if (current) { current.playbackRate = saved.rate; current.muted = saved.muted; }
+      }
+      return;
+    }
     var p = document.querySelector('.html5-video-player');
     var v = getVideo();
     if (!p || !v) return;
@@ -827,8 +844,25 @@
   };
 
   A.config = function (c) {
+    var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
+    if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
+      sb.request++;
+      sb.id = ''; sb.segs = [];
+      if (CFG.sponsorBlock) sbLoad(urlId());
+    }
+    if (oldDislike !== CFG.returnDislike) {
+      ryd.request++;
+      ryd.id = ''; ryd.txt = '';
+      if (!CFG.returnDislike) {
+        document.querySelectorAll('.aay-ryd').forEach(function (tag) { tag.remove(); });
+      } else {
+        rydLoad(urlId());
+      }
+    }
+    if (A.isBg) A.setBg(true);
+    skipAd();
     schedTick();
   };
 
@@ -974,11 +1008,11 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p || !p.setPlaybackQualityRange) return;
     try {
-      if (on && CFG.lowQuality && !lowered) {
+      if (on && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
         lowered = true;
         console.log('[aay] background: lowest video quality');
         p.setPlaybackQualityRange('tiny', 'tiny');
-      } else if (!on && lowered) {
+      } else if ((!on || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
         // Only undo our own change; a quality the user picked in the player is left alone.
         lowered = false;
         console.log('[aay] foreground: video quality back to automatic');
