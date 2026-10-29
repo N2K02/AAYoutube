@@ -35,11 +35,15 @@ class HostLink(private val context: Context, private val player: BridgePlayer) :
     private var bound = false
     private var seenState = false
     private val queue = ArrayList<Pair<Int, Bundle>>()
+    private val main = Handler(Looper.getMainLooper())
+    private var reconnectAttempts = 0
+    private val reconnect = Runnable { ensureBound() }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             out = Messenger(service)
             seenState = false
+            main.removeCallbacks(reconnect)
             raw(Msg.REGISTER, null, inbox)
             val pending = ArrayList(queue)
             queue.clear()
@@ -68,21 +72,39 @@ class HostLink(private val context: Context, private val player: BridgePlayer) :
         out = null
         seenState = false
         queue.clear()
+        reconnectAttempts = 0
+        main.removeCallbacks(reconnect)
     }
 
     private fun isAlive() = out != null && seenState
 
     private fun onState(s: Snap) {
         seenState = true
+        reconnectAttempts = 0
         onSnapshot?.invoke(s)
     }
 
     private fun lost() {
+        val active = player.playingNow()
+        val before = player.snap
         if (bound) runCatching { context.unbindService(connection) }
         bound = false
         out = null
         seenState = false
         player.hostLost()
+        // AABrowser-style recovery: preserve the last video/position rather than silently
+        // abandoning playback when Android Auto replaces a display or kills the web process.
+        // Never restart something the user intentionally paused.
+        if (active && before.id.isNotBlank() && reconnectAttempts < 4) {
+            queue.clear()
+            queue.add(Msg.OPEN to Bundle().apply {
+                putString("id", before.id)
+                putLong("sec", before.posMs.coerceAtLeast(0L) / 1000L)
+            })
+            val backoff = 1_000L shl reconnectAttempts++
+            main.removeCallbacks(reconnect)
+            main.postDelayed(reconnect, backoff)
+        }
     }
 
     private fun raw(what: Int, data: Bundle?, replyTo: Messenger? = null): Boolean {
