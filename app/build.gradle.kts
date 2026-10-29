@@ -55,7 +55,47 @@ android {
     }
 }
 
+// Use the exact archived projection AAR consumed by AABrowser (v4/aauto.aar).
+// Pinned to upstream commit + Git blob SHA; never silently take a newer proprietary binary.
+// The SDK is downloaded into build/ (not committed to our repository), and its provenance
+// must be reviewed before distributing a release APK outside personal testing.
+val legacySdkFile = layout.buildDirectory.file("aabrowser-projection/aauto.aar")
+val fetchLegacySdk = tasks.register("fetchAABrowserProjectionSdk") {
+    group = "build setup"
+    description = "Fetch the exact upstream AABrowser legacy projection SDK artifact"
+    outputs.file(legacySdkFile)
+    doLast {
+        val target = legacySdkFile.get().asFile
+        val expectedGitBlob = "678f4afb0434ceb97b23c2237ce4489bc52b4394"
+        val digest = java.security.MessageDigest.getInstance("SHA-1")
+        fun shaGitBlob(bytes: ByteArray): String {
+            digest.reset()
+            digest.update("blob ${bytes.size}\\u0000".toByteArray(Charsets.UTF_8))
+            digest.update(bytes)
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        if (target.isFile && shaGitBlob(target.readBytes()) == expectedGitBlob) return@doLast
+        val source = java.net.URL(
+            "https://raw.githubusercontent.com/fcaronte/AABrowser/" +
+                "dca3f543c83445ee4b38761eed824eb92208109f/browser/libs/v4/aauto.aar"
+        )
+        val conn = source.openConnection().apply {
+            connectTimeout = 20_000
+            readTimeout = 30_000
+        }
+        val bytes = conn.getInputStream().use { it.readBytes() }
+        check(bytes.size == 313859 && shaGitBlob(bytes) == expectedGitBlob) {
+            "Upstream AABrowser legacy SDK does not match the pinned artifact"
+        }
+        target.parentFile.mkdirs()
+        target.writeBytes(bytes)
+    }
+}
+val aabrowserProjectionSdk = files(legacySdkFile).builtBy(fetchLegacySdk)
+
 dependencies {
+    // AABrowser's exact legacy Android Auto projection integration (CarActivityService).
+    implementation(aabrowserProjectionSdk)
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
     implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
