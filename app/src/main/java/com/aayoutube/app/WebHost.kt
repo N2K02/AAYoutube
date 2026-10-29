@@ -519,6 +519,14 @@ object WebHost {
         load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
     }
 
+    /** Legacy Assistant / car voice search, routed to the same playback search as Media3. */
+    fun voiceSearch(query: String) {
+        if (query.isBlank()) return
+        unfreeze()
+        mode.value = PlayerMode.FULL
+        search(query)
+    }
+
     private fun search(query: String) {
         if (query.isBlank()) return
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
