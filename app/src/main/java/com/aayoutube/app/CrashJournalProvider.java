@@ -20,7 +20,9 @@ public final class CrashJournalProvider extends ContentProvider {
 
     @Override public boolean onCreate() {
         if (getContext() == null) return false;
-        String proc = android.app.Application.getProcessName();
+        String proc = android.os.Build.VERSION.SDK_INT >= 28
+            ? android.app.Application.getProcessName()
+            : getContext().getApplicationInfo().processName;
         boolean web = proc != null && proc.endsWith(":web");
         journal = new File(getContext().getFilesDir(), web ? "crash-journal-web.log" : "crash-journal.log");
         final Thread.UncaughtExceptionHandler prior = Thread.getDefaultUncaughtExceptionHandler();
