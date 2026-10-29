@@ -20,7 +20,9 @@ public final class CrashJournalProvider extends ContentProvider {
 
     @Override public boolean onCreate() {
         if (getContext() == null) return false;
-        journal = new File(getContext().getFilesDir(), "crash-journal.log");
+        String proc = android.app.Application.getProcessName();
+        boolean web = proc != null && proc.endsWith(":web");
+        journal = new File(getContext().getFilesDir(), web ? "crash-journal-web.log" : "crash-journal.log");
         final Thread.UncaughtExceptionHandler prior = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
             record("CRASH", error);
@@ -37,7 +39,12 @@ public final class CrashJournalProvider extends ContentProvider {
         StackTraceElement[] stack = error.getStackTrace();
         String location = stack.length == 0 ? "unknown" :
                 stack[0].getClassName() + "." + stack[0].getMethodName();
-        append(level + " " + kind + " at " + location);
+        StringBuilder safeStack = new StringBuilder(level + " " + kind + " at " + location);
+        for (int i = 0; i < Math.min(stack.length, 24); i++) {
+            safeStack.append(" | ").append(stack[i].getClassName()).append(".")
+                .append(stack[i].getMethodName()).append(":").append(stack[i].getLineNumber());
+        }
+        append(safeStack.toString());
     }
 
     /** Record a pre-approved event identifier, not raw user data or exception messages. */
