@@ -10,6 +10,7 @@ class AAYoutubeApp : Application() {
         // The same Application class starts in both processes; each one sets up only what it uses.
         // Only the ":web" process may ever create a WebView.
         if (isWebProcess()) {
+            AppLog.init(this)
             Features.init(this)
             WebHost.init(this)
             BrowseHost.init(this)
