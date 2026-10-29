@@ -1,3 +1,6 @@
+import java.net.URL
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -67,7 +70,7 @@ val fetchLegacySdk = tasks.register("fetchAABrowserProjectionSdk") {
     doLast {
         val target = legacySdkFile.get().asFile
         val expectedGitBlob = "678f4afb0434ceb97b23c2237ce4489bc52b4394"
-        val digest = java.security.MessageDigest.getInstance("SHA-1")
+        val digest = MessageDigest.getInstance("SHA-1")
         fun shaGitBlob(bytes: ByteArray): String {
             digest.reset()
             digest.update("blob ${bytes.size}".toByteArray(Charsets.UTF_8))
@@ -76,7 +79,7 @@ val fetchLegacySdk = tasks.register("fetchAABrowserProjectionSdk") {
             return digest.digest().joinToString("") { "%02x".format(it) }
         }
         if (target.isFile && shaGitBlob(target.readBytes()) == expectedGitBlob) return@doLast
-        val source = java.net.URL(
+        val source = URL(
             "https://raw.githubusercontent.com/fcaronte/AABrowser/" +
                 "dca3f543c83445ee4b38761eed824eb92208109f/browser/libs/v4/aauto.aar"
         )
