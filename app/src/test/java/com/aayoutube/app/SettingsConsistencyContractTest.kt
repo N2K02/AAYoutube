@@ -17,5 +17,6 @@ class SettingsConsistencyContractTest {
         assertTrue("Updates or diagnostic footer missing", menu.contains("if (destination == Tab.Logs) HorizontalDivider()"))
         assertTrue("Diagnostics must be after ordinary Settings links", menu.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update)"))
         assertTrue("Divider must appear immediately before the diagnostics and update group", menu.contains("if (destination == Tab.Logs) HorizontalDivider()"))
+        assertTrue(source.contains("Logs(\"Logs\", Icons.Rounded.Article)"))
     }
 }
