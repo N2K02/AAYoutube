@@ -107,7 +107,7 @@ object WebHost {
         carScreen.value = on
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
-        js("window.__aay&&window.__aay.car($on)")
+        js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
 
@@ -209,7 +209,7 @@ object WebHost {
 
     internal fun script(): String {
         val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + carDisplay + ";\n" + source
+        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
     }
 
     private fun installScript(w: WebView) {
@@ -282,6 +282,9 @@ object WebHost {
 
     fun showOnCar(on: Boolean) {
         carShown = on
+        // The legacy surface service is not a car-display Activity; keep the page's
+        // car-mode layout and touch-to-seek enabled there as well.
+        js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (on) {
             main.removeCallbacks(freezeSoon)
             unfreeze()
