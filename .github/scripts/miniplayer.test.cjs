@@ -9,11 +9,17 @@ const source = fs.readFileSync('app/src/main/assets/aay.js', 'utf8');
 
 function playerPage(options = {}) {
   const callbacks = new Map();
+  const windowCallbacks = new Map();
   const timers = [];
   const classNames = new Set();
   const stateReports = [];
   let miniRequests = 0;
   const styleElements = [];
+  const seekBar = {
+    contains(target) { return target === this; },
+    getBoundingClientRect() { return { left: 10, top: 30, right: 210, bottom: 48, width: 200 }; },
+  };
+  const navigator = { mediaSession: null };
 
   class Media {
     constructor() {
@@ -44,6 +50,7 @@ function playerPage(options = {}) {
       callbacks.get(type).push(fn);
     }
     querySelector(selector) {
+      if (selector.includes('ProgressBarDragContainer')) return seekBar;
       return selector === 'video.html5-main-video' || selector === 'video' ? video : null;
     }
     querySelectorAll() { return []; }
@@ -75,12 +82,15 @@ function playerPage(options = {}) {
   const window = {
     __AAY_CFG: { backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false },
     __AAY_BROWSE: !!options.browse,
-    __AAY_CAR: false,
+    __AAY_CAR: !!options.car,
     AAYNative: {
       mini() { miniRequests++; },
       state(json) { stateReports.push(JSON.parse(json)); },
     },
-    addEventListener() {},
+    addEventListener(type, fn) {
+      if (!windowCallbacks.has(type)) windowCallbacks.set(type, []);
+      windowCallbacks.get(type).push(fn);
+    },
     dispatchEvent() {},
   };
   window.top = window;
@@ -91,11 +101,12 @@ function playerPage(options = {}) {
   };
   const context = {
     window, document, location,
-    navigator: { mediaSession: null },
+    navigator,
     history: { pushState() {}, replaceState() {} },
     Document: Doc, HTMLMediaElement: Media, MediaSession: class {},
     MutationObserver: class { observe() {} disconnect() {} },
     URL, console, Promise, Error, DOMException,
+    getComputedStyle() { return { visibility: 'visible', direction: 'ltr' }; },
     Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { timers.push(fn); return timers.length; },
     setInterval() { return 1; },
@@ -104,7 +115,10 @@ function playerPage(options = {}) {
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
-    window, video, document, classNames, styleElements, stateReports,
+    window, navigator, video, seekBar, document, classNames, styleElements, stateReports,
+    emitWindow(type, event) {
+      for (const fn of windowCallbacks.get(type) || []) fn(event);
+    },
     get miniRequests() { return miniRequests; },
     emit(type, event) {
       for (const fn of callbacks.get(type) || []) fn(event);
@@ -179,4 +193,51 @@ test('browse page cannot trigger the native mini-player gesture', () => {
   });
   p.emit('touchend', { changedTouches: [{ clientX: 100, clientY: 240 }] });
   assert.equal(p.miniRequests, 0);
+});
+
+test('WebView mediaSession shim reports metadata and playlist transport actions', () => {
+  const p = playerPage();
+  assert.equal(typeof p.navigator.mediaSession.setActionHandler, 'function');
+  assert.equal(typeof p.window.MediaMetadata, 'function');
+  p.navigator.mediaSession.metadata = new p.window.MediaMetadata({
+    title: 'Track', artist: 'Artist',
+    artwork: [{ src: 'https://i.ytimg.com/vi/86p7SP34qSc/hqdefault.jpg' }],
+  });
+  let nextCalls = 0;
+  p.navigator.mediaSession.setActionHandler('nexttrack', () => { nextCalls++; });
+  p.flush();
+  assert.equal(p.stateReports.at(-1).title, 'Track');
+  assert.equal(p.stateReports.at(-1).artist, 'Artist');
+  assert.equal(p.stateReports.at(-1).next, true);
+  p.window.__aay.cmd('next');
+  assert.equal(nextCalls, 1);
+});
+
+test('car surface tap seeks within visible progress bar but ignores ordinary taps', () => {
+  const p = playerPage({ car: true });
+  const start = (x, y, target = p.seekBar) =>
+    p.emitWindow('pointerdown', {
+      isPrimary: true, pointerId: 1, clientX: x, clientY: y, target,
+    });
+  const end = (x, y) =>
+    p.emitWindow('pointerup', { pointerId: 1, clientX: x, clientY: y });
+  start(110, 40);
+  end(110, 40);
+  assert.equal(p.video.currentTime, 150);
+  start(120, 100);
+  end(120, 100);
+  assert.equal(p.video.currentTime, 150);
+  start(110, 40);
+  p.emitWindow('pointermove', { pointerId: 1, clientX: 150, clientY: 40 });
+  end(150, 40);
+  assert.equal(p.video.currentTime, 150);
+});
+
+test('phone taps never use the car-only seek override', () => {
+  const p = playerPage();
+  p.emitWindow('pointerdown', {
+    isPrimary: true, pointerId: 1, clientX: 110, clientY: 40, target: p.seekBar,
+  });
+  p.emitWindow('pointerup', { pointerId: 1, clientX: 110, clientY: 40 });
+  assert.equal(p.video.currentTime, 20);
 });
