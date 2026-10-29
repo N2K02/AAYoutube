@@ -35,10 +35,11 @@ internal object LyricsProviders {
         java.util.Collections.swap(order, from, from + direction)
         prefs.edit().putString("providers", order.joinToString(",") { it.name }).apply()
     }
+    /** Prefer a timed match from any enabled source; plain text is the fallback only. */
     suspend fun fetch(context: Context, snap: Snap): Pair<List<LyricLine>, String?> =
         withContext(Dispatchers.IO) {
-            for (source in ordered(context)) {
-                val result = try {
+            preferTimed(ordered(context)) { source ->
+                try {
                     when (source) {
                         LyricsProvider.LRCLIB -> LyricsLookup.fetch(snap)
                         LyricsProvider.RMM -> rmm(snap)
@@ -48,12 +49,26 @@ internal object LyricsProviders {
                         LyricsProvider.BINIMUM -> binimum(snap)
                         LyricsProvider.LYRICS_OVH -> lyricsOvh(snap)
                     }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (_: Exception) { null }
-                if (result != null && (result.first.isNotEmpty() || !result.second.isNullOrBlank()))
-                    return@withContext result
             }
-            emptyList<LyricLine>() to null
         }
+
+    /** Pure/testable decision order; a plain result never masks later synced lyrics. */
+    internal suspend fun preferTimed(
+        sources: List<LyricsProvider>,
+        lookup: suspend (LyricsProvider) -> Pair<List<LyricLine>, String?>?,
+    ): Pair<List<LyricLine>, String?> {
+        var plainFallback: String? = null
+        for (source in sources) {
+            val result = lookup(source) ?: continue
+            if (result.first.isNotEmpty()) return result.first to null
+            if (plainFallback.isNullOrBlank() && !result.second.isNullOrBlank())
+                plainFallback = result.second
+        }
+        return emptyList<LyricLine>() to plainFallback
+    }
 
     private fun request(url: String): String? {
         val conn = URL(url).openConnection() as HttpURLConnection
