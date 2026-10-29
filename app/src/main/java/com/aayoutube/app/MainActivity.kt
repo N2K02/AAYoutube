@@ -61,8 +61,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            intent.dataString?.let { WebHost.openUrl(it) }
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.dataString?.let { WebHost.openUrl(it) }
+            "android.media.action.MEDIA_PLAY_FROM_SEARCH" -> {
+                val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty()
+                AppLog.add("CAR", "Assistant media search received")
+                if (query.isNotBlank()) WebHost.voiceSearch(query)
+                else WebHost.cmd("play")
+            }
         }
     }
 
