@@ -118,8 +118,12 @@ object AppLog {
     fun clear() {
         synchronized(lock) { lines.clear(); _version.value++ }
         val app = context ?: return
-        io.execute { File(app.filesDir, "diagnostics").listFiles()?.filter {
-            it.name.startsWith("log-")
-        }?.forEach { it.delete() } }
+        io.execute {
+            File(app.filesDir, "diagnostics").listFiles()?.filter {
+                it.name.startsWith("log-")
+            }?.forEach { it.delete() }
+            File(app.filesDir, "crash-journal.log").delete()
+            File(app.filesDir, "crash-journal-web.log").delete()
+        }
     }
 }
