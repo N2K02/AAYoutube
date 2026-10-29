@@ -91,6 +91,7 @@ object AppLog {
         .replace(Regex("(?i)(token|key|password|secret|authorization)(\\s*[:=]\\s*)[^\\s&,;]+"), "$1$2[REDACTED]")
         .replace(Regex("(?i)https?://\\S+"), "[URL]")
         .replace(Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"), "[EMAIL]")
+        .replace(Regex("(?<![A-Za-z0-9])\\+?[0-9][0-9() -]{7,}[0-9](?![A-Za-z0-9])"), "[NUMBER]")
 
     private fun appendMemory(row: String) {
         if (lines.size >= MAX) lines.removeFirst()
