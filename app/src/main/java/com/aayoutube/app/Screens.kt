@@ -1120,7 +1120,11 @@ fun LogsPage() {
             Text("Enable logging", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Switch(checked = enabled, onCheckedChange = { AppLog.setEnabled(it) })
         }
-        if (!enabled) return@Column
+        if (!enabled && AppLog.size == 0) {
+            Text("Detailed logging is off. Fatal crash reports are still saved locally.")
+            return@Column
+        }
+        if (!enabled) Text("Detailed logging is off. Saved crash reports remain available.")
 
         val lineStyle = MaterialTheme.typography.labelSmall.copy(
             fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp,
