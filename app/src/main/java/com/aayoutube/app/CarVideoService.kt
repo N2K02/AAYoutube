@@ -81,6 +81,17 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private var visibleArea: Rect? = null
     private var stableArea: Rect? = null
     private var contentArea = CarArea(0, 0, 1, 1)
+    private val viewportUpdate = Runnable { applyViewport() }
+    private val viewportSettled = Runnable { applyViewport() }
+
+    private fun scheduleViewport() {
+        main.removeCallbacks(viewportUpdate)
+        main.removeCallbacks(viewportSettled)
+        // Host overlays animate their reported bounds; debounce the transition, then
+        // settle again after Android Auto's action strip finishes moving.
+        main.postDelayed(viewportUpdate, 50)
+        main.postDelayed(viewportSettled, 400)
+    }
 
     private val callback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) = start(surfaceContainer)
@@ -95,11 +106,11 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         }
         override fun onVisibleAreaChanged(area: Rect) {
             visibleArea = Rect(area)
-            applyViewport()
+            scheduleViewport()
         }
         override fun onStableAreaChanged(area: Rect) {
             stableArea = Rect(area)
-            applyViewport()
+            scheduleViewport()
         }
         override fun onClick(x: Float, y: Float) = tap(x, y)
         override fun onScroll(distanceX: Float, distanceY: Float) {
@@ -117,6 +128,8 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
                 stop()
+                main.removeCallbacks(viewportUpdate)
+                main.removeCallbacks(viewportSettled)
                 mediaController?.let { MediaController.releaseFuture(it) }
                 mediaController = null
                 scope.cancel()
