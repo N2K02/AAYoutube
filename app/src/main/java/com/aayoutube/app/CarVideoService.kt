@@ -2,12 +2,14 @@ package com.aayoutube.app
 
 import android.app.Presentation
 import android.content.Intent
+import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.car.app.CarAppService
@@ -60,14 +62,38 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private var display: VirtualDisplay? = null
+    private var activeSurface: Surface? = null
     private var presentation: Presentation? = null
+    private var root: FrameLayout? = null
     private var container: FrameLayout? = null
     private var fullscreenJob: Job? = null
     private var density = 1f
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
+    private var surfaceDpi = 0
+    private var visibleArea: Rect? = null
+    private var stableArea: Rect? = null
+    private var contentArea = CarArea(0, 0, 1, 1)
 
     private val callback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) = start(surfaceContainer)
-        override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) = stop()
+        // Do not destroy or detach the WebView when the AA host replaces its Surface.
+        // AABrowser keeps its virtual display alive for this exact reason.
+        override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
+            if (activeSurface === surfaceContainer.surface) {
+                runCatching { display?.surface = null }
+                activeSurface = null
+                AppLog.add("CAR", "Surface detached; player preserved")
+            }
+        }
+        override fun onVisibleAreaChanged(area: Rect) {
+            visibleArea = Rect(area)
+            applyViewport()
+        }
+        override fun onStableAreaChanged(area: Rect) {
+            stableArea = Rect(area)
+            applyViewport()
+        }
         override fun onClick(x: Float, y: Float) = tap(x, y)
         override fun onScroll(distanceX: Float, distanceY: Float) {
             if (WebHost.fullscreenView.value == null) {
@@ -89,26 +115,78 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         })
     }
 
+    private fun Rect.toCarArea(): CarArea = CarArea(left, top, right, bottom)
+
+    /** Layout changes are deliberately independent of Surface dimensions and WebView lifetime. */
+    private fun applyViewport() {
+        if (surfaceWidth <= 0 || surfaceHeight <= 0) return
+        val area = CarViewport.contentArea(
+            surfaceWidth, surfaceHeight,
+            visibleArea?.toCarArea(), stableArea?.toCarArea(),
+        )
+        if (area == contentArea && container?.layoutParams != null) return
+        contentArea = area
+        container?.let { frame ->
+            frame.layoutParams = FrameLayout.LayoutParams(area.width, area.height).apply {
+                leftMargin = area.left
+                topMargin = area.top
+            }
+            frame.requestLayout()
+        }
+        AppLog.add("CAR", "Viewport ${area.width}x${area.height} @ ${area.left},${area.top}")
+    }
+
     private fun start(c: SurfaceContainer) {
-        stop()
-        AppLog.add("CAR", "Surface ${c.width}x${c.height} dpi=${c.dpi}")
         val surface = c.surface ?: return
-        density = c.dpi / 160f
+        val width = c.width.coerceAtLeast(1)
+        val height = c.height.coerceAtLeast(1)
+        val dpi = c.dpi.coerceAtLeast(160)
+        AppLog.add("CAR", "Surface ${width}x${height} dpi=$dpi")
+        density = dpi / 160f
+
+        // The Android Auto host replaces and resizes Surfaces, especially in split-screen.
+        // Rebind the Surface while keeping the original Presentation and video decoder.
+        val existing = display
+        if (existing != null && presentation != null && container != null) {
+            val reused = runCatching {
+                existing.surface = surface
+                if (surfaceWidth != width || surfaceHeight != height || surfaceDpi != dpi)
+                    existing.resize(width, height, dpi)
+            }.isSuccess
+            if (reused) {
+                surfaceWidth = width
+                surfaceHeight = height
+                surfaceDpi = dpi
+                activeSurface = surface
+                applyViewport()
+                AppLog.add("CAR", "Surface rebound without detaching player")
+                return
+            }
+        }
+
+        stop()
+        surfaceWidth = width
+        surfaceHeight = height
+        surfaceDpi = dpi
+        activeSurface = surface
         val manager = carContext.getSystemService(DisplayManager::class.java)
         val vd = manager.createVirtualDisplay(
-            "aay-car", c.width, c.height, c.dpi, surface,
+            "aay-car", width, height, dpi, surface,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
         ) ?: return
         display = vd
         val p = Presentation(carContext, vd.display)
+        val outer = FrameLayout(p.context)
         val frame = FrameLayout(p.context)
-        p.setContentView(frame, ViewGroup.LayoutParams(-1, -1))
+        outer.addView(frame, FrameLayout.LayoutParams(-1, -1))
+        p.setContentView(outer, ViewGroup.LayoutParams(-1, -1))
         p.show()
         presentation = p
+        root = outer
         container = frame
+        applyViewport()
         WebHost.showOnCar(true)
         show(p, frame)
-        // YouTube's fullscreen player is a separate view: show it instead of the page while it is open.
         fullscreenJob?.cancel()
         fullscreenJob = scope.launch {
             WebHost.fullscreenView.collect {
@@ -131,27 +209,36 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private fun stop() {
         fullscreenJob?.cancel()
         fullscreenJob = null
-        AppLog.add("CAR", "Surface released")
+        AppLog.add("CAR", "Display released")
         val frame = container
         container = null
+        root = null
+        activeSurface = null
         if (frame != null) {
             WebHost.detach(frame)
             WebHost.showOnCar(false)
         }
         runCatching { presentation?.dismiss() }
         presentation = null
-        display?.release()
+        runCatching { display?.release() }
         display = null
     }
 
     private fun tap(x: Float, y: Float) {
-        AppLog.add("CAR", "Tap $x,$y")
         val target = container ?: return
+        val (localX, localY) = CarViewport.localTouch(x, y, contentArea) ?: return
         val down = SystemClock.uptimeMillis()
-        target.dispatchTouchEvent(MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0))
+        MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, localX, localY, 0).let {
+            target.dispatchTouchEvent(it)
+            it.recycle()
+        }
         main.postDelayed({
+            if (target !== container) return@postDelayed
             val up = SystemClock.uptimeMillis()
-            target.dispatchTouchEvent(MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, x, y, 0))
+            MotionEvent.obtain(down, up, MotionEvent.ACTION_UP, localX, localY, 0).let {
+                target.dispatchTouchEvent(it)
+                it.recycle()
+            }
         }, 60)
     }
 
