@@ -176,15 +176,23 @@ private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                // Compact, unfilled settings shortcut; the icon matches the header's scale.
-                IconButton(onClick = onSettings, modifier = Modifier.size(40.dp)) {
-                    dev.n2k02.updater.N2K02UpdateBadgedIcon(updateStatus) {
+                // Keep the entire "New" label inside a reserved header area. A badge
+                // attached directly to a compact icon can be clipped by the IconButton.
+                Box(modifier = Modifier.size(width = 56.dp, height = 48.dp)) {
+                    IconButton(
+                        onClick = onSettings,
+                        modifier = Modifier.align(Alignment.CenterStart).size(40.dp),
+                    ) {
                         Icon(
                             Icons.Filled.Settings,
                             contentDescription = "Settings",
                             modifier = Modifier.size(20.dp),
                         )
                     }
+                    dev.n2k02.updater.N2K02UpdateBadge(
+                        updateStatus,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
                 }
                 dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
                 Text(
