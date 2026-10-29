@@ -70,7 +70,8 @@ val fetchLegacySdk = tasks.register("fetchAABrowserProjectionSdk") {
         val digest = java.security.MessageDigest.getInstance("SHA-1")
         fun shaGitBlob(bytes: ByteArray): String {
             digest.reset()
-            digest.update("blob ${bytes.size}\\u0000".toByteArray(Charsets.UTF_8))
+            digest.update("blob ${bytes.size}".toByteArray(Charsets.UTF_8))
+            digest.update(0.toByte())
             digest.update(bytes)
             return digest.digest().joinToString("") { "%02x".format(it) }
         }
