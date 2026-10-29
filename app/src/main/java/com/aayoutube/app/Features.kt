@@ -19,9 +19,6 @@ data class FeatureFlags(
     val sponsorExtra: Boolean = false,
     val returnDislike: Boolean = true,
     val desktopSite: Boolean = false,
-    /** Hide the menu bar after this many seconds without touching the screen. */
-    val autoHideMenu: Boolean = true,
-    val autoHideSecs: Int = 3,
     /** Page text size in percent (bigger helps on a car screen). */
     val pageZoom: Int = 100,
     /** Open the last page you were on when the app starts. */
@@ -62,8 +59,6 @@ object Features {
             sponsorExtra = prefs.getBoolean("sponsorExtra", d.sponsorExtra),
             returnDislike = prefs.getBoolean("returnDislike", d.returnDislike),
             desktopSite = prefs.getBoolean("desktopSite", d.desktopSite),
-            autoHideMenu = prefs.getBoolean("autoHideMenu", d.autoHideMenu),
-            autoHideSecs = prefs.getInt("autoHideSecs", d.autoHideSecs).coerceIn(1, 5),
             pageZoom = prefs.getInt("pageZoom", d.pageZoom).coerceIn(50, 200),
             resumeLast = prefs.getBoolean("resumeLastPage", d.resumeLast),
         )
@@ -84,8 +79,6 @@ object Features {
             .putBoolean("sponsorExtra", n.sponsorExtra)
             .putBoolean("returnDislike", n.returnDislike)
             .putBoolean("desktopSite", n.desktopSite)
-            .putBoolean("autoHideMenu", n.autoHideMenu)
-            .putInt("autoHideSecs", n.autoHideSecs)
             .putInt("pageZoom", n.pageZoom)
             .putBoolean("resumeLastPage", n.resumeLast)
             .apply()

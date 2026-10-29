@@ -38,18 +38,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.layout.boundsInRoot
 import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -80,8 +72,6 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.OutlinedButton
@@ -203,30 +193,17 @@ private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val features by Features.state.collectAsState()
-    // The round menu button fades after a few seconds without a touch, and comes back on the next one.
-    var touches by remember { mutableIntStateOf(0) }
-    var faded by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
-    val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
     val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
     // The page-side shortcut opens Settings directly, not another navigation menu.
-    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L && !onCar) tab = Tab.Settings.ordinal }
+    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L) tab = Tab.Settings.ordinal }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
-    LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
-        faded = false
-        if (features.autoHideMenu && !menuOpen) {
-            delay(features.autoHideSecs * 1000L)
-            faded = true
-        }
-    }
     // Picture in picture always shows the video: go back to the YouTube tab.
-    LaunchedEffect(inPip) { if (inPip) { tab = 0; menuOpen = false } }
+    LaunchedEffect(inPip) { if (inPip) tab = Tab.Watch.ordinal }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
 
     // Fullscreen video: landscape, no system bars.
@@ -245,7 +222,7 @@ fun AppRoot(activity: MainActivity) {
         }
     }
 
-    // Back (gesture, button, or Back in the menu): close fullscreen, then other tabs, then the
+    // Back (system or Settings action): close fullscreen, then other tabs, then the
     // page's own history (asked live from the WebView, because YouTube changes pages without
     // reloading), then YouTube home. On the home page the app goes to the background (it keeps playing).
     val goBack: () -> Unit = {
@@ -271,23 +248,11 @@ fun AppRoot(activity: MainActivity) {
             }
         }
     }
-    BackHandler(enabled = true) {
-        if (menuOpen) menuOpen = false else goBack()
-    }
+    BackHandler(enabled = true) { goBack() }
 
     // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
     // moved between parents, because detaching a WebView from its window pauses the video.
-    Box(
-        Modifier.fillMaxSize().pointerInput(Unit) {
-            awaitPointerEventScope {
-                while (true) {
-                    // Initial pass: seen before the page or any button handles the touch.
-                    val e = awaitPointerEvent(PointerEventPass.Initial)
-                    if (e.type == PointerEventType.Press) touches++
-                }
-            }
-        },
-    ) {
+    Box(Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
                 if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
@@ -361,230 +326,6 @@ fun AppRoot(activity: MainActivity) {
                 },
                 onRelease = { it.removeAllViews() },
             )
-        }
-        if (full == null && !inPip) {
-            // Car displays keep the draggable Back control while phone navigation lives in Settings.
-            if (onCar) {
-                MenuButton(
-                    backButton = true,
-                    looseTaps = true,
-                    selected = tab,
-                    open = menuOpen,
-                    faded = faded,
-                    updateAvailable = sharedUpdateStatus.hasPendingUpdate(),
-                    onOpenChange = { menuOpen = it },
-                    onSelect = { tab = it; menuOpen = false },
-                    onBack = { menuOpen = false; goBack() },
-                    onQuit = { menuOpen = false; activity.quit() },
-                )
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------- menu button
-
-/** Where the mini player is on screen (root coordinates), so the round button can keep clear of it. */
-private object MiniPlace {
-    val rect = kotlinx.coroutines.flow.MutableStateFlow<androidx.compose.ui.geometry.Rect?>(null)
-}
-
-/**
- * The round menu button: floats over everything, can be dragged anywhere (its place is
- * remembered), and opens the menu (pages, Back, Quit) next to itself.
- */
-@Composable
-private fun MenuButton(
-    backButton: Boolean,
-    looseTaps: Boolean,
-    selected: Int,
-    open: Boolean,
-    faded: Boolean,
-    updateAvailable: Boolean,
-    onOpenChange: (Boolean) -> Unit,
-    onSelect: (Int) -> Unit,
-    onBack: () -> Unit,
-    onQuit: () -> Unit,
-) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
-    var originRoot by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    BoxWithConstraints(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
-            .onGloballyPositioned { originRoot = it.positionInRoot() },
-    ) {
-        val density = LocalDensity.current
-        val fab = 56.dp
-        val gap = 12.dp
-        val fabPx = with(density) { fab.toPx() }
-        val gapPx = with(density) { gap.toPx() }
-        val maxX = (constraints.maxWidth - fabPx - gapPx).coerceAtLeast(gapPx)
-        val maxY = (constraints.maxHeight - fabPx - gapPx).coerceAtLeast(gapPx)
-        // Saved as fractions, so the place survives rotation and different screens (phone / car).
-        var fx by remember { mutableStateOf(prefs.getFloat("fabX", 1f)) }
-        var fy by remember { mutableStateOf(prefs.getFloat("fabY", 0.72f)) }
-        val homeX = gapPx + (maxX - gapPx) * fx.coerceIn(0f, 1f)
-        val homeY = gapPx + (maxY - gapPx) * fy.coerceIn(0f, 1f)
-
-        // Keep clear of the mini player: if they would overlap, step to the nearest free spot
-        // (above, below, left or right of it). The saved place is unchanged; the button returns
-        // there when the mini player closes.
-        val mini by MiniPlace.rect.collectAsState()
-        val origin = originRoot
-        val clear = run {
-            val r = mini ?: return@run homeX to homeY
-            val left = r.left - origin.x - gapPx
-            val top = r.top - origin.y - gapPx
-            val right = r.right - origin.x + gapPx
-            val bottom = r.bottom - origin.y + gapPx
-            val overlaps = homeX < right && homeX + fabPx > left && homeY < bottom && homeY + fabPx > top
-            if (!overlaps) return@run homeX to homeY
-            listOf(
-                homeX to (top - fabPx),
-                homeX to bottom,
-                (left - fabPx) to homeY,
-                right to homeY,
-            ).filter { (cx, cy) -> cx in gapPx..maxX && cy in gapPx..maxY }
-                .minByOrNull { (cx, cy) -> kotlin.math.abs(cx - homeX) + kotlin.math.abs(cy - homeY) }
-                ?: (homeX to homeY)
-        }
-        val x by androidx.compose.animation.core.animateFloatAsState(clear.first, label = "menuX")
-        val y by androidx.compose.animation.core.animateFloatAsState(clear.second, label = "menuY")
-
-        if (open) {
-            Box(
-                Modifier.fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.35f))
-                    .pointerInput(Unit) { detectTapGestures { onOpenChange(false) } },
-            )
-            val right = x + fabPx / 2 > constraints.maxWidth / 2
-            val up = y + fabPx / 2 > constraints.maxHeight / 2
-            val wDp = with(density) { constraints.maxWidth.toDp() }
-            val hDp = with(density) { constraints.maxHeight.toDp() }
-            val xDp = with(density) { x.toDp() }
-            val yDp = with(density) { y.toDp() }
-            val place = Modifier
-                .align(
-                    when {
-                        up && right -> Alignment.BottomEnd
-                        up -> Alignment.BottomStart
-                        right -> Alignment.TopEnd
-                        else -> Alignment.TopStart
-                    },
-                )
-                .padding(
-                    start = if (right) 0.dp else xDp,
-                    end = if (right) (wDp - xDp - fab).coerceAtLeast(0.dp) else 0.dp,
-                    top = if (up) 0.dp else yDp + fab + 8.dp,
-                    bottom = if (up) (hDp - yDp + 8.dp).coerceAtLeast(0.dp) else 0.dp,
-                )
-            val items: List<@Composable () -> Unit> = listOf(Tab.Watch, Tab.Settings).map { t ->
-                @Composable { MenuItem(t.label, t.icon, right, selected == t.ordinal, badge = t == Tab.Settings && updateAvailable) { onSelect(t.ordinal) } }
-            } + listOf(
-                @Composable { MenuItem("Back", Icons.AutoMirrored.Filled.ArrowBack, right, false) { onBack() } },
-                @Composable { MenuItem("Quit", Icons.Rounded.PowerSettingsNew, right, false) { onQuit() } },
-            )
-            // One column if it fits next to the button, otherwise two (short, wide car screens).
-            val room = if (up) yDp - 8.dp else hDp - yDp - fab - 8.dp
-            val perColumn = if (room >= 56.dp * items.size) items.size else (items.size + 1) / 2
-            Row(place, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val columns = items.chunked(perColumn).let { if (right) it.reversed() else it }
-                columns.forEach { col ->
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = if (right) Alignment.End else Alignment.Start,
-                    ) { col.forEach { it() } }
-                }
-            }
-        }
-
-        Box(
-            Modifier
-                .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                .size(fab)
-                .graphicsLayer { alpha = if (faded && !open) 0.35f else 1f }
-                .pointerInput(maxX, maxY, looseTaps, backButton, open) {
-                    // Tap: menu (or Back). Drag: move the button. A car touchscreen jitters a few
-                    // pixels during a tap, so there a tap may move further before it counts as a drag.
-                    val slop = if (looseTaps) maxOf(28.dp.toPx(), viewConfiguration.touchSlop) else viewConfiguration.touchSlop
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        var dragging = false
-                        var moved = androidx.compose.ui.geometry.Offset.Zero
-                        while (true) {
-                            val e = awaitPointerEvent()
-                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!c.pressed) {
-                                c.consume()
-                                when {
-                                    dragging -> prefs.edit().putFloat("fabX", fx).putFloat("fabY", fy).apply()
-                                    open -> onOpenChange(false)
-                                    backButton -> {
-                                        AppLog.add("UI", "Back button")
-                                        onBack()
-                                    }
-                                    else -> onOpenChange(true)
-                                }
-                                break
-                            }
-                            val d = c.position - c.previousPosition
-                            moved += d
-                            if (!dragging && moved.getDistance() > slop) dragging = true
-                            if (dragging) {
-                                val span = (maxX - gapPx).coerceAtLeast(1f)
-                                val spanY = (maxY - gapPx).coerceAtLeast(1f)
-                                fx = (fx + d.x / span).coerceIn(0f, 1f)
-                                fy = (fy + d.y / spanY).coerceIn(0f, 1f)
-                            }
-                            c.consume()
-                        }
-                    }
-                },
-        ) {
-            Surface(
-                shape = androidx.compose.foundation.shape.CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                shadowElevation = 6.dp,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    when {
-                        backButton && !open -> Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        updateAvailable && !open -> dev.n2k02.updater.N2K02UpdateBadgedIcon(LiveUpdater.controller.status.collectAsState().value) { Icon(Icons.Filled.Menu, contentDescription = "Menu") }
-                        else -> Icon(if (open) Icons.Filled.Close else Icons.Filled.Menu, contentDescription = if (open) "Close menu" else "Menu")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MenuItem(label: String, icon: ImageVector, iconRight: Boolean, selected: Boolean, badge: Boolean = false, onClick: () -> Unit) {
-    val updateStatus by LiveUpdater.controller.status.collectAsState()
-    val container = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
-    val content = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
-    Surface(
-        onClick = onClick,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-        color = container,
-        contentColor = content,
-        shadowElevation = 3.dp,
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            val ic: @Composable () -> Unit = {
-                if (badge) dev.n2k02.updater.N2K02UpdateBadgedIcon(updateStatus) { Icon(icon, "Update", Modifier.size(22.dp)) }
-                else Icon(icon, null, Modifier.size(22.dp))
-            }
-            if (!iconRight) ic()
-            Text(label, style = MaterialTheme.typography.labelLarge)
-            if (iconRight) ic()
         }
     }
 }
@@ -720,10 +461,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 val pos = if (snap.playing) snap.posMs + ((now - seenAt) * snap.rate).toLong() else snap.posMs
                 val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
 
-                DisposableEffect(Unit) { onDispose { MiniPlace.rect.value = null } }
                 Box(
                     miniMod
-                        .onGloballyPositioned { MiniPlace.rect.value = it.boundsInRoot() }
                         .pointerInput(maxX, maxY) {
                             detectDragGestures(
                                 onDragEnd = { prefs.edit().putFloat("miniX", mx).putFloat("miniY", my).apply() },
@@ -902,29 +641,6 @@ fun FeaturesPage() {
                             onClick = { Features.update { it.copy(pageZoom = z) } },
                             shape = SegmentedButtonDefaults.itemShape(index = i, count = zooms.size),
                         ) { Text("$z%") }
-                    }
-                }
-            }
-        }
-        Text("Car display back button", style = MaterialTheme.typography.titleMedium)
-        Card() {
-            Toggle(
-                "Fade the floating Back button",
-                "On the car display, the draggable Back button fades when idle. Touch the screen to restore it.",
-                f.autoHideMenu,
-            ) { s, v -> s.copy(autoHideMenu = v) }
-            if (f.autoHideMenu) {
-                Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
-                    Text("Fade after", style = MaterialTheme.typography.labelLarge)
-                    Spacer(Modifier.height(8.dp))
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        (1..5).forEach { secs ->
-                            SegmentedButton(
-                                selected = f.autoHideSecs == secs,
-                                onClick = { Features.update { it.copy(autoHideSecs = secs) } },
-                                shape = SegmentedButtonDefaults.itemShape(index = secs - 1, count = 5),
-                            ) { Text("${secs}s") }
-                        }
                     }
                 }
             }

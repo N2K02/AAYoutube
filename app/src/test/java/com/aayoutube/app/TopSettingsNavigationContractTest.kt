@@ -18,7 +18,7 @@ class TopSettingsNavigationContractTest {
         val header = text.substringAfter("private fun AAYoutubePageHeader(")
             .substringBefore("fun AppRoot(")
         val root = text.substringAfter("fun AppRoot(")
-            .substringBefore("// ---------------------------------------------------------------------------- menu button")
+            .substringBefore("// ---------------------------------------------------------------------------- web")
         assertTrue(header.contains("FilledTonalIconButton(onClick = onSettings)"))
         assertTrue(header.contains("N2K02AppIcon"))
         assertTrue(root.contains("onSettings = {"))
@@ -26,6 +26,11 @@ class TopSettingsNavigationContractTest {
         assertFalse(root.contains("NavigationBarItem("))
         assertFalse(root.contains("ModalBottomSheet("))
         assertFalse(root.contains("BottomCenter).fillMaxWidth()"))
+        assertFalse(text.contains("private fun MenuButton("))
+        assertFalse(text.contains("private fun MenuItem("))
+        assertFalse(text.contains("MiniPlace.rect"))
+        assertFalse(text.contains("Fade the floating Back button"))
+        assertFalse(text.contains("autoHideMenu"))
     }
 
     @Test fun homeBackQuitAreInsideExistingSettingsNotInAnotherMenu() {
