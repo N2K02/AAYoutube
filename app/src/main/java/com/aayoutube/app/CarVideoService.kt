@@ -2,6 +2,8 @@ package com.aayoutube.app
 
 import android.app.Presentation
 import android.content.Intent
+import android.content.ComponentName
+import android.os.Bundle
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -27,6 +29,10 @@ import androidx.car.app.validation.HostValidator
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -67,6 +73,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private var root: FrameLayout? = null
     private var container: FrameLayout? = null
     private var fullscreenJob: Job? = null
+    private var mediaController: ListenableFuture<MediaController>? = null
     private var density = 1f
     private var surfaceWidth = 0
     private var surfaceHeight = 0
@@ -110,9 +117,26 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) {
                 stop()
+                mediaController?.let { MediaController.releaseFuture(it) }
+                mediaController = null
                 scope.cancel()
             }
         })
+    }
+
+    /** The legacy CarAppService can start without any phone Activity. Keep the media
+     * library linked to this WebView so Android Auto can control what is playing. */
+    private fun connectMedia() {
+        if (mediaController != null) return
+        val token = SessionToken(carContext, ComponentName(carContext, PlaybackService::class.java))
+        val future = MediaController.Builder(carContext.applicationContext, token).buildAsync()
+        mediaController = future
+        future.addListener({
+            runCatching {
+                if (mediaController === future)
+                    future.get().sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
+            }.onFailure { AppLog.add("CAR", "Media controller connection failed") }
+        }, MoreExecutors.directExecutor())
     }
 
     private fun Rect.toCarArea(): CarArea = CarArea(left, top, right, bottom)
@@ -138,9 +162,10 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
 
     private fun start(c: SurfaceContainer) {
         val surface = c.surface ?: return
+        connectMedia()
         val width = c.width.coerceAtLeast(1)
         val height = c.height.coerceAtLeast(1)
-        val dpi = c.dpi.coerceAtLeast(160)
+        val dpi = c.dpi.coerceAtLeast(1)
         AppLog.add("CAR", "Surface ${width}x${height} dpi=$dpi")
         density = dpi / 160f
 
@@ -214,6 +239,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         container = null
         root = null
         activeSurface = null
+        contentArea = CarArea(0, 0, 1, 1)
         if (frame != null) {
             WebHost.detach(frame)
             WebHost.showOnCar(false)
