@@ -151,7 +151,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
 @Composable
-private fun AAYoutubePageHeader(tab: Tab) {
+private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
+    val updateStatus by LiveUpdater.controller.status.collectAsState()
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
             modifier = Modifier.fillMaxWidth().statusBarsPadding()
@@ -182,6 +183,11 @@ private fun AAYoutubePageHeader(tab: Tab) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                FilledTonalIconButton(onClick = onSettings) {
+                    dev.n2k02.updater.N2K02UpdateBadgedIcon(updateStatus) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                }
                 dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
                 Text(
                     "AAYoutube",
@@ -208,7 +214,8 @@ fun AppRoot(activity: MainActivity) {
     val snap by WebHost.snapshot.collectAsState()
     val sharedUpdateStatus by LiveUpdater.controller.status.collectAsState()
     val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
-    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L) menuOpen = true }
+    // The page-side shortcut opens Settings directly, not another navigation menu.
+    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L && !onCar) tab = Tab.Settings.ordinal }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     LaunchedEffect(touches, tab, menuOpen, features.autoHideMenu, features.autoHideSecs) {
@@ -284,7 +291,12 @@ fun AppRoot(activity: MainActivity) {
         Scaffold(
             topBar = {
                 if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
-                    AAYoutubePageHeader(Tab.entries[tab])
+                    AAYoutubePageHeader(
+                        Tab.entries[tab],
+                        onSettings = {
+                            tab = if (tab == Tab.Settings.ordinal) Tab.Watch.ordinal else Tab.Settings.ordinal
+                        },
+                    )
                 }
             },
         ) { padding ->
@@ -303,51 +315,19 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
                             Tab.Info -> InfoPage()
-                            Tab.Settings -> AAYoutubeSettingsMenu(onSelect = { tab = it.ordinal })
-                        }
-                    }
-                }
-            }
-        }
-        // mRadio navigation: Home and Settings only; all other pages live under Settings.
-        if (!inPip && fullscreen == null && !onCar) {
-            Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                tonalElevation = 4.dp,
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().height(56.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Surface(onClick = {
-                        tab = Tab.Watch.ordinal
-                        menuOpen = false
-                        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
-                            WebHost.enterMini()
-                        else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
-                            BrowseHost.navigate(WebHost.home())
-                        else WebHost.openUrl(WebHost.home())
-                    }, modifier = Modifier.weight(1f)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = "Home")
-                            Text("Home", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    Surface(onClick = {
-                        tab = Tab.Settings.ordinal
-                        menuOpen = false
-                    }, modifier = Modifier.weight(1f)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                            Text("Settings", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    Surface(onClick = { activity.quit() }, modifier = Modifier.weight(1f)) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Quit")
-                            Text("Quit", style = MaterialTheme.typography.labelSmall)
+                            Tab.Settings -> AAYoutubeSettingsMenu(
+                                onSelect = { tab = it.ordinal },
+                                onHome = {
+                                    tab = Tab.Watch.ordinal
+                                    if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
+                                        WebHost.enterMini()
+                                    else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
+                                        BrowseHost.navigate(WebHost.home())
+                                    else WebHost.openUrl(WebHost.home())
+                                },
+                                onBack = goBack,
+                                onQuit = { activity.quit() },
+                            )
                         }
                     }
                 }
@@ -383,9 +363,7 @@ fun AppRoot(activity: MainActivity) {
             )
         }
         if (full == null && !inPip) {
-            // Car screen: the round button is only a Back button (a video shrinks to the mini player
-            // with Home underneath, like the YouTube app). On the phone it is the menu.
-            val backButton = onCar
+            // Car displays keep the draggable Back control while phone navigation lives in Settings.
             if (onCar) {
                 MenuButton(
                     backButton = true,
@@ -399,72 +377,6 @@ fun AppRoot(activity: MainActivity) {
                     onBack = { menuOpen = false; goBack() },
                     onQuit = { menuOpen = false; activity.quit() },
                 )
-            } else {
-                if (menuOpen) {
-                    ModalBottomSheet(
-                        onDismissRequest = { menuOpen = false },
-                        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                    ) {
-                        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).windowInsetsPadding(WindowInsets.navigationBars)) {
-                        Text(
-                            "AAYoutube",
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                        )
-                        listOf(Tab.Watch, Tab.Settings).forEach { item ->
-                            val index = item.ordinal
-                            Surface(
-                                onClick = { tab = index; menuOpen = false },
-                                shape = RoundedCornerShape(22.dp),
-                                color = if (tab == index) MaterialTheme.colorScheme.secondaryContainer
-                                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                                modifier = Modifier.fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 3.dp),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                ) {
-                                    Icon(item.icon, contentDescription = null)
-                                    Text(item.label, style = MaterialTheme.typography.bodyLarge)
-                                    if (item == Tab.Settings) {
-                                        // Settings links to About & updates on the phone.
-                                        dev.n2k02.updater.N2K02UpdateBadge(sharedUpdateStatus)
-                                    }
-                                }
-                            }
-                        }
-                        Surface(
-                            onClick = { menuOpen = false; goBack() },
-                            shape = RoundedCornerShape(22.dp),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
-                        ) {
-                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                                Text("Back")
-                            }
-                        }
-                        Surface(
-                            onClick = { menuOpen = false; activity.quit() },
-                            shape = RoundedCornerShape(22.dp),
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
-                        ) {
-                            Row(Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null)
-                                Text("Quit")
-                            }
-                        }
-                        Spacer(Modifier.height(24.dp))
-                        }
-
-                    }
-                }
             }
         }
     }
@@ -871,7 +783,12 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 
 /** Secondary pages live under Settings, like mRadio; the WebView keeps running underneath. */
 @Composable
-private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
+private fun AAYoutubeSettingsMenu(
+    onSelect: (Tab) -> Unit,
+    onHome: () -> Unit,
+    onBack: () -> Unit,
+    onQuit: () -> Unit,
+) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -906,6 +823,24 @@ private fun AAYoutubeSettingsMenu(onSelect: (Tab) -> Unit) {
                         dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
                 },
                 modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
+            )
+        }
+        HorizontalDivider(Modifier.padding(top = 8.dp))
+        Text(
+            "Navigation",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp),
+        )
+        listOf(
+            Triple("Back", Icons.AutoMirrored.Filled.ArrowBack, onBack),
+            Triple("Home", Icons.Filled.PlayArrow, onHome),
+            Triple("Quit", Icons.Rounded.PowerSettingsNew, onQuit),
+        ).forEach { (label, icon, action) ->
+            ListItem(
+                headlineContent = { Text(label) },
+                leadingContent = { Icon(icon, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().clickable(onClick = action),
             )
         }
     }
@@ -971,11 +906,11 @@ fun FeaturesPage() {
                 }
             }
         }
-        Text("Menu button", style = MaterialTheme.typography.titleMedium)
+        Text("Car display back button", style = MaterialTheme.typography.titleMedium)
         Card() {
             Toggle(
-                "Fade the menu button",
-                "The round menu button turns see-through when you don't touch the screen. Touch anywhere to bring it back. Drag it to move it.",
+                "Fade the floating Back button",
+                "On the car display, the draggable Back button fades when idle. Touch the screen to restore it.",
                 f.autoHideMenu,
             ) { s, v -> s.copy(autoHideMenu = v) }
             if (f.autoHideMenu) {
