@@ -161,8 +161,8 @@ test('mini layout exposes the video surface and preserves play until explicitly 
 
 test('video state reaches the media process after initialization', () => {
   const p = playerPage();
-  p.flush();
-  p.video.trigger('playing');
+  // Script can attach after YouTube's original playing event; the first report
+  // must not depend on another media event occurring.
   p.flush();
   assert.ok(p.stateReports.length > 0);
   const snap = p.stateReports.at(-1);
