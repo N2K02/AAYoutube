@@ -12,7 +12,7 @@ class UpdateBadgeContractTest {
             .firstOrNull { it.isFile }?.readText() ?: error("Missing $path")
         val header = src.substringAfter("private fun AAYoutubePageHeader(")
             .substringBefore("fun AppRoot(")
-        assertTrue(header.contains("FilledTonalIconButton(onClick = onSettings)"))
+        assertTrue(header.contains("IconButton(onClick = onSettings, modifier = Modifier.size(40.dp))"))
         assertTrue(header.contains("N2K02UpdateBadgedIcon(updateStatus)"))
         val settings = src.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")

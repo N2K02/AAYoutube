@@ -13,13 +13,15 @@ class TopSettingsNavigationContractTest {
             .firstOrNull { it.isFile }?.readText() ?: error("Missing $relative")
     }
 
-    @Test fun headerOwnsSettingsAndThePhoneHasNoAppBottomBar() {
+    @Test fun headerOwnsCompactSettingsAndTheMainScreenHasNoAppBottomBar() {
         val text = source()
         val header = text.substringAfter("private fun AAYoutubePageHeader(")
             .substringBefore("fun AppRoot(")
         val root = text.substringAfter("fun AppRoot(")
             .substringBefore("// ---------------------------------------------------------------------------- web")
-        assertTrue(header.contains("FilledTonalIconButton(onClick = onSettings)"))
+        assertTrue(header.contains("IconButton(onClick = onSettings, modifier = Modifier.size(40.dp))"))
+        assertTrue(header.contains("modifier = Modifier.size(20.dp)"))
+        assertFalse(header.contains("FilledTonalIconButton(onClick = onSettings)"))
         assertTrue(header.contains("N2K02AppIcon"))
         assertTrue(root.contains("onSettings = {"))
         assertFalse(root.contains("NavigationBar("))
@@ -38,9 +40,15 @@ class TopSettingsNavigationContractTest {
         val settings = text.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
         assertTrue(settings.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update)"))
-        assertTrue(settings.contains("Triple(\"Back\","))
-        assertTrue(settings.contains("Triple(\"Home\","))
-        assertTrue(settings.contains("Triple(\"Quit\","))
+        val quit = settings.indexOf("Triple(\"Quit\",")
+        val home = settings.indexOf("Triple(\"Home\",")
+        val back = settings.indexOf("Triple(\"Back\",")
+        assertTrue("Navigation must be Quit, Home, Back", quit >= 0 && quit < home && home < back)
+        assertTrue(settings.contains("Modifier.weight(1f).fillMaxWidth().verticalScroll"))
+        assertTrue(settings.contains("NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer)"))
+        assertTrue(settings.contains("NavigationBarItem("))
+        assertTrue(settings.indexOf("NavigationBar(") > settings.indexOf("verticalScroll"))
+        assertTrue(settings.contains("alwaysShowLabel = true"))
         assertTrue(text.contains("onBack = goBack"))
         assertTrue(text.contains("onQuit = { activity.quit() }"))
     }

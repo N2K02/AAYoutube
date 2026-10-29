@@ -12,6 +12,7 @@ class QuitNavigationContractTest {
             .firstOrNull { it.isFile }?.readText() ?: error("Missing $relative")
         val menu = source.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
+        assertTrue(menu.contains("NavigationBar("))
         assertTrue(menu.contains("Triple(\"Quit\", Icons.Rounded.PowerSettingsNew, onQuit)"))
         assertTrue(menu.contains("Triple(\"Back\", Icons.AutoMirrored.Filled.ArrowBack, onBack)"))
         assertTrue(menu.contains("Triple(\"Home\", Icons.Filled.PlayArrow, onHome)"))

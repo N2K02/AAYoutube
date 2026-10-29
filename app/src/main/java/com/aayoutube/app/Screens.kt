@@ -68,6 +68,9 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -173,9 +176,14 @@ private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                FilledTonalIconButton(onClick = onSettings) {
+                // Compact, unfilled settings shortcut; the icon matches the header's scale.
+                IconButton(onClick = onSettings, modifier = Modifier.size(40.dp)) {
                     dev.n2k02.updater.N2K02UpdateBadgedIcon(updateStatus) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
                 dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
@@ -529,58 +537,59 @@ private fun AAYoutubeSettingsMenu(
     onQuit: () -> Unit,
 ) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(
-            "Make watching your own",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
-        )
-        listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
-            if (destination == Tab.Logs) HorizontalDivider()
-            ListItem(
-                headlineContent = {
-                    Text(if (destination == Tab.Update) "About & updates" else destination.label)
-                },
-                supportingContent = {
-                    Text(when (destination) {
-                        Tab.Features -> "Playback, video and display preferences"
-                        Tab.Lyrics -> "Lyrics provider and overlay preferences"
-                        Tab.Logs -> "Diagnostics and session events"
-                        Tab.Info -> "App information"
-                        Tab.Update -> "Version, experimental releases and update checks"
-                        else -> ""
-                    })
-                },
-                leadingContent = { Icon(destination.icon, contentDescription = null) },
-                trailingContent = {
-                    if (destination == Tab.Update)
-                        dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
-                },
-                modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
+    Column(Modifier.fillMaxSize()) {
+        // Only Settings owns this fixed navigation bar; its submenu content scrolls above it.
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                "Make watching your own",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
             )
+            listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
+                if (destination == Tab.Logs) HorizontalDivider()
+                ListItem(
+                    headlineContent = {
+                        Text(if (destination == Tab.Update) "About & updates" else destination.label)
+                    },
+                    supportingContent = {
+                        Text(when (destination) {
+                            Tab.Features -> "Playback, video and display preferences"
+                            Tab.Lyrics -> "Lyrics provider and overlay preferences"
+                            Tab.Logs -> "Diagnostics and session events"
+                            Tab.Info -> "App information"
+                            Tab.Update -> "Version, experimental releases and update checks"
+                            else -> ""
+                        })
+                    },
+                    leadingContent = { Icon(destination.icon, contentDescription = null) },
+                    trailingContent = {
+                        if (destination == Tab.Update)
+                            dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                    },
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
+                )
+            }
         }
-        HorizontalDivider(Modifier.padding(top = 8.dp))
-        Text(
-            "Navigation",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, top = 8.dp),
-        )
-        listOf(
-            Triple("Back", Icons.AutoMirrored.Filled.ArrowBack, onBack),
-            Triple("Home", Icons.Filled.PlayArrow, onHome),
-            Triple("Quit", Icons.Rounded.PowerSettingsNew, onQuit),
-        ).forEach { (label, icon, action) ->
-            ListItem(
-                headlineContent = { Text(label) },
-                leadingContent = { Icon(icon, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth().clickable(onClick = action),
-            )
+        HorizontalDivider()
+        NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+            listOf(
+                Triple("Quit", Icons.Rounded.PowerSettingsNew, onQuit),
+                Triple("Home", Icons.Filled.PlayArrow, onHome),
+                Triple("Back", Icons.AutoMirrored.Filled.ArrowBack, onBack),
+            ).forEach { (label, icon, action) ->
+                NavigationBarItem(
+                    selected = false,
+                    onClick = action,
+                    icon = { Icon(icon, contentDescription = label) },
+                    label = { Text(label) },
+                    alwaysShowLabel = true,
+                )
+            }
         }
     }
 }
