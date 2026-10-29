@@ -26,7 +26,7 @@ android {
     defaultConfig {
         applicationId = "com.aayoutube.app"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 37
         // One decimal place: 1.0, 1.1 … 1.9, 2.0. versionCode 1.4 -> 14 (always goes up).
         versionName = appVersion + ((findProperty("appVersionSuffix") as String?) ?: "")
         versionCode = (findProperty("appVersionCode") as String?)?.toIntOrNull() ?: appVersionCode
@@ -34,6 +34,7 @@ android {
     }
 
     buildTypes {
+        getByName("debug") { applicationIdSuffix = ".experimental"; versionNameSuffix = "-debug" }
         getByName("release") {
             // R8 removes unused code (most of Compose and the icon set) and resources.
             isMinifyEnabled = true
