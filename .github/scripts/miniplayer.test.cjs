@@ -13,6 +13,8 @@ function playerPage(options = {}) {
   const timers = [];
   const classNames = new Set();
   const stateReports = [];
+  const accountReports = [];
+  const intervals = [];
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -83,7 +85,11 @@ function playerPage(options = {}) {
     __AAY_CFG: { backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false },
     __AAY_BROWSE: !!options.browse,
     __AAY_CAR: !!options.car,
+    ytcfg: options.signedIn === undefined ? null : {
+      get(name) { return name === 'LOGGED_IN' ? options.signedIn : undefined; },
+    },
     AAYNative: {
+      account(status) { accountReports.push(status); },
       mini() { miniRequests++; },
       state(json) { stateReports.push(JSON.parse(json)); },
     },
@@ -109,13 +115,14 @@ function playerPage(options = {}) {
     getComputedStyle() { return { visibility: 'visible', direction: 'ltr' }; },
     Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { timers.push(fn); return timers.length; },
-    setInterval() { return 1; },
+    setInterval(fn) { intervals.push(fn); return intervals.length; },
     clearInterval() {},
   };
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
-    window, navigator, video, seekBar, document, classNames, styleElements, stateReports,
+    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports,
+    runIntervals() { for (const fn of intervals) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
@@ -240,4 +247,33 @@ test('phone taps never use the car-only seek override', () => {
   });
   p.emitWindow('pointerup', { pointerId: 1, clientX: 110, clientY: 40 });
   assert.equal(p.video.currentTime, 20);
+});
+
+test('logged-out YouTube page reports signed_out but never signed_in', () => {
+  const p = playerPage({ signedIn: false });
+  p.flush();
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, ['signed_out']);
+});
+
+test('sign-in status follows YouTube configuration changes without cookie guesses', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, [], 'unknown auth state must not be treated as login');
+  p.window.ytcfg = { get(name) { return name === 'LOGGED_IN' ? true : undefined; } };
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, ['signed_in']);
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, ['signed_in'], 'unchanged login must not spam native UI');
+  p.window.ytcfg = { get(name) { return name === 'LOGGED_IN' ? false : undefined; } };
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, ['signed_in', 'signed_out']);
+});
+
+test('browse WebView does not report login over main player auth state', () => {
+  const p = playerPage({ browse: true, signedIn: true });
+  p.flush();
+  p.runIntervals();
+  assert.deepEqual(p.accountReports, []);
 });

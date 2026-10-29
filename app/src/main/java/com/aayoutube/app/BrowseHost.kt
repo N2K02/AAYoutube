@@ -64,6 +64,31 @@ object BrowseHost {
 
     fun pause() { web?.onPause() }
     fun resume() { web?.onResume() }
+    /** A second YouTube WebView must not keep a stale account UI after sign-out. */
+    fun onSessionCleared() {
+        web?.clearCache(true)
+        web?.loadUrl(WebHost.home())
+    }
+
+    /** Changes on Features also affect the browse page behind the mini player. */
+    fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
+        val w = web ?: return
+        w.settings.textZoom = f.pageZoom
+        if (desktopChanged) {
+            w.settings.userAgentString = WebHost.userAgent(f.desktopSite)
+            runCatching { handler?.remove() }
+            handler = null
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                handler = WebViewCompat.addDocumentStartJavaScript(
+                    w, "window.__AAY_BROWSE=true;\n" + WebHost.script(), setOf("https://*.youtube.com"),
+                )
+            }
+            w.loadUrl(WebHost.home())
+        } else {
+            w.evaluateJavascript("window.__aay&&window.__aay.config(${f.toJson()})", null)
+        }
+    }
+
 
     /** Called when the mini player opens: start where the user came from. */
     fun navigate(url: String) {

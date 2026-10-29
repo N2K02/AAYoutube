@@ -81,6 +81,7 @@ object WebHost {
     val onWatchPage = MutableStateFlow(false)
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
+    val youtubeAccount = MutableStateFlow(YouTubeAccountState.CHECKING)
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
     /** YouTube HTML bottom-nav menu tap, delivered from the page bridge. */
@@ -221,11 +222,16 @@ object WebHost {
     }
 
     private fun applyFeatures(f: FeatureFlags) {
+        val desktopChanged = f.desktopSite != lastDesktop
+        lastDesktop = f.desktopSite
+        // The mini-player BrowseHost shares the same features and YouTube session.
+        // Update both WebViews instead of leaving the browse page on stale settings.
+        BrowseHost.applyFeatures(f, desktopChanged)
         val w = web ?: return
-        if (f.desktopSite != lastDesktop) {
-            lastDesktop = f.desktopSite
+        if (desktopChanged) {
             w.settings.userAgentString = userAgent(f.desktopSite)
             installScript(w)
+            youtubeAccount.value = YouTubeAccountState.CHECKING
             w.loadUrl(home())
             return
         }
@@ -405,13 +411,25 @@ object WebHost {
         web?.clearCache(true)
     }
 
-    /** Sign out and forget everything the page stored. */
+    /** Sign out and forget everything the page stored, including the mini-player browser.
+     * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
     fun clearSession() {
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
-        WebStorage.getInstance().deleteAllData()
-        web?.clearCache(true)
-        web?.loadUrl(home())
+        youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
+        CookieManager.getInstance().removeAllCookies {
+            main.post {
+                CookieManager.getInstance().flush()
+                WebStorage.getInstance().deleteAllData()
+                web?.clearCache(true)
+                web?.loadUrl(home())
+                BrowseHost.onSessionCleared()
+            }
+        }
+    }
+
+    /** Called by the injected script, using YouTube's own LOGGED_IN flag. */
+    fun reportAccountStatus(value: String) {
+        val state = YouTubeAccountState.fromScript(value) ?: return
+        main.post { youtubeAccount.value = state }
     }
 
     fun exitFullscreen() {
@@ -465,6 +483,7 @@ object WebHost {
         wrapper = null
         frozen = false
         snapshot.value = Snap()
+        youtubeAccount.value = YouTubeAccountState.CHECKING
         webVersion.update { it + 1 }
     }
 
@@ -703,6 +722,7 @@ object WebHost {
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             AppLog.add("PAGE", "Started $url")
+            youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
             offline.value = false
             // Older WebViews cannot run a script before the page: inject as early as possible instead.
@@ -808,6 +828,11 @@ class WebBridge {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json)
+    }
+
+    @JavascriptInterface
+    fun account(status: String) {
+        WebHost.reportAccountStatus(status)
     }
 
     /** Swipe down on the playing video. */

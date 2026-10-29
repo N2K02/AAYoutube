@@ -15,6 +15,31 @@
   var BROWSE = !!window.__AAY_BROWSE;
   var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
+  // YouTube provides a real login flag in its page configuration. Generic Google
+  // cookies and avatar placeholders are not proof that YouTube is signed in.
+  var lastAccountReport = '';
+  function reportAccount() {
+    if (BROWSE || !N || typeof N.account !== 'function') return;
+    try {
+      var cfg = window.ytcfg;
+      if (!cfg) return;
+      var signedIn = typeof cfg.get === 'function' ? cfg.get('LOGGED_IN') : undefined;
+      if (typeof signedIn !== 'boolean' && cfg.data_)
+        signedIn = cfg.data_.LOGGED_IN;
+      if (typeof signedIn !== 'boolean') return;
+      var status = signedIn ? 'signed_in' : 'signed_out';
+      if (status !== lastAccountReport) {
+        lastAccountReport = status;
+        N.account(status);
+      }
+    } catch (e) {}
+  }
+  A.checkAccount = reportAccount;
+  if (!BROWSE) {
+    window.addEventListener('yt-navigate-finish', reportAccount);
+    window.addEventListener('pageshow', reportAccount);
+    setInterval(reportAccount, 5000);
+  }
 
   function later(fn, ms) { return setTimeout(function () { try { fn(); } catch (e) {} }, ms || 0); }
 
@@ -758,6 +783,7 @@
       rydApply();
       openFirstResult();
       carLayout();
+      reportAccount();
     } catch (e) {}
   }
   function schedTick() { if (!tickTimer) tickTimer = setTimeout(tick, 300); }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -607,14 +608,15 @@ private fun AAYoutubeSettingsMenu(
 @Composable
 fun FeaturesPage() {
     val f by Features.state.collectAsState()
+    val account by WebHost.youtubeAccount.collectAsState()
 
     @Composable
-    fun Toggle(title: String, text: String, value: Boolean, change: (FeatureFlags, Boolean) -> FeatureFlags) {
+    fun Toggle(title: String, text: String, value: Boolean, enabled: Boolean = true, change: (FeatureFlags, Boolean) -> FeatureFlags) {
         ListItem(
             headlineContent = { Text(title) },
             supportingContent = { Text(text) },
             trailingContent = {
-                Switch(checked = value, onCheckedChange = { on -> Features.update { change(it, on) } })
+                Switch(checked = value, enabled = enabled, onCheckedChange = { on -> Features.update { change(it, on) } })
             },
             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         )
@@ -628,20 +630,20 @@ fun FeaturesPage() {
             Toggle("Block ads", "Strips ads from video data and skips what remains.", f.blockAds) { s, v -> s.copy(blockAds = v) }
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
-            Toggle("Background play", "Keeps playing with the screen off and in Android Auto.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
-            Toggle("Low quality in background", "Lowest video quality while the screen is hidden. Saves battery.", f.lowQualityInBackground) { s, v -> s.copy(lowQualityInBackground = v) }
+            Toggle("Background play", "Prevents YouTube pausing when the screen is hidden. Android Auto playback also uses the media service.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
+            Toggle("Low quality in background", "Lower video resolution while playing with the screen hidden. Saves data and battery.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
             Toggle("Picture in picture", "Shrink to a floating player when you leave the app.", f.autoPip) { s, v -> s.copy(autoPip = v) }
-            Toggle("Keep watching", "Confirms “Are you still watching?” for you.", f.autoContinue) { s, v -> s.copy(autoContinue = v) }
+            Toggle("Keep watching", "Attempts to dismiss YouTube's inactivity prompts.", f.autoContinue) { s, v -> s.copy(autoContinue = v) }
         }
         Card() {
-            Toggle("SponsorBlock", "Skips sponsor segments.", f.sponsorBlock) { s, v -> s.copy(sponsorBlock = v) }
-            Toggle("Also skip intros and outros", "Self-promo, intro, outro and reminders.", f.sponsorExtra) { s, v -> s.copy(sponsorExtra = v) }
+            Toggle("SponsorBlock", "Skips sponsors, self-promotion and interaction reminders.", f.sponsorBlock) { s, v -> s.copy(sponsorBlock = v) }
+            Toggle("Also skip intros and outros", "Adds introductions and end segments to SponsorBlock.", f.sponsorExtra, enabled = f.sponsorBlock) { s, v -> s.copy(sponsorExtra = v) }
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
-            Toggle("Desktop site", "Use www.youtube.com instead of the mobile site.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
+            Toggle("Desktop site", "Use desktop YouTube. Switching returns to Home and interrupts the current video.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
         }
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card() {
-            Toggle("Resume where you left off", "Off: the app always starts on YouTube Home. On: it reopens the last page.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
+            Toggle("Resume where you left off", "Reopens your last page when starting the app; playback does not automatically resume.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp, top = 4.dp)) {
                 Text("Text size", style = MaterialTheme.typography.labelLarge)
                 Text(
@@ -662,11 +664,15 @@ fun FeaturesPage() {
                 }
             }
         }
-        // Left, centre, right.
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        // Account action is shown only after YouTube's own configuration confirms login.
+        // Wrap the controls on narrow screens rather than clipping a third button.
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
             AppButton("Reload", Icons.Filled.Refresh) { WebHost.reload() }
             AppButton("Clear cache", Icons.Filled.DeleteSweep) { WebHost.clearCache() }
-            AppButton("Sign out", Icons.AutoMirrored.Filled.Logout) { WebHost.clearSession() }
+            if (account == YouTubeAccountState.SIGNED_IN) {
+                AppButton("Sign out", Icons.AutoMirrored.Filled.Logout) { WebHost.clearSession() }
+            }
         }
         Text(
             "Ad blocking, dislikes and background play rely on how YouTube's website works today, and may need an update when it changes.",
