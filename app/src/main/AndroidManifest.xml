@@ -120,15 +120,17 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- Media session for the notification, lock screen and Bluetooth. No Android Auto media player
-             (no MediaBrowserService filter): Android Auto hides an app's screen when it has one, so it
-             shows AAYoutube's full screen with the video (CAR_LAUNCHER, above) instead. -->
+        <!-- Media3 media library: exposed to Android Auto as an audio player, independently of
+             the video screen (CarVideoService / car launcher). The same session also serves
+             Bluetooth, notifications, and voice search. -->
         <service
             android:name=".PlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 
