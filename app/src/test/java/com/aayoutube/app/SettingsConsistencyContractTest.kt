@@ -13,9 +13,9 @@ class SettingsConsistencyContractTest {
         val menu = source.substringAfter("private fun AAYoutubeSettingsMenu(", "")
         assertTrue("Settings section missing", menu.isNotBlank())
         assertTrue("Settings group title is missing", menu.contains("Make watching your own"))
-        assertTrue("Settings menu item is missing", menu.contains("listOf(Tab.Features, Tab.Info, Tab.Logs, Tab.Update)"))
+        assertTrue("Lyrics must remain a Settings submenu", menu.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update)"))
         assertTrue("Updates or diagnostic footer missing", menu.contains("if (destination == Tab.Logs) HorizontalDivider()"))
-        assertTrue("Diagnostics must be after ordinary Settings links", menu.contains("listOf(Tab.Features, Tab.Info, Tab.Logs, Tab.Update)"))
+        assertTrue("Diagnostics must be after ordinary Settings links", menu.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update)"))
         assertTrue("Divider must appear immediately before the diagnostics and update group", menu.contains("if (destination == Tab.Logs) HorizontalDivider()"))
     }
 }
