@@ -42,8 +42,13 @@ import kotlinx.coroutines.launch
  * (only one of the two shows it at a time). Audio and the media session are unchanged.
  */
 class CarVideoService : CarAppService() {
-    // Personal sideloaded app: accept any host (Android Auto).
-    override fun createHostValidator(): HostValidator = HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+    // Match AABrowser's trusted-host model: debug permits the desktop head-unit emulator;
+    // release accepts only Android Auto / car-system hosts, not arbitrary apps.
+    override fun createHostValidator(): HostValidator =
+        if (BuildConfig.DEBUG) HostValidator.ALLOW_ALL_HOSTS_VALIDATOR
+        else HostValidator.Builder(applicationContext)
+            .addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample)
+            .build()
 
     override fun onCreateSession(): Session = object : Session() {
         override fun onCreateScreen(intent: Intent): Screen = VideoScreen(carContext)
