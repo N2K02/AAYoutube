@@ -675,6 +675,9 @@
     var p = document.querySelector('.html5-video-player');
     if (p) new MutationObserver(function () { skipAd(); }).observe(p, { attributes: true, attributeFilter: ['class'] });
     if (v.readyState >= 1) onLoaded(v);
+    // If the script attaches after YouTube's initial play event, report immediately rather
+    // than waiting for the 30-second heartbeat. The media service needs the active state.
+    schedReport(120);
   }
 
   function openFirstResult() {
