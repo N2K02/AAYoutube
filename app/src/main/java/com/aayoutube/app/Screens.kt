@@ -328,7 +328,7 @@ fun AppRoot(activity: MainActivity) {
                             WebHost.enterMini()
                         else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
                             BrowseHost.navigate(WebHost.home())
-                        else WebHost.load(WebHost.home())
+                        else WebHost.openUrl(WebHost.home())
                     }, modifier = Modifier.weight(1f)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = "Home")
