@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -136,7 +136,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Lyrics("Lyrics", Icons.Filled.Info),
-    Logs("Logs", Icons.Filled.BugReport),
+    Logs("Logs", Icons.Rounded.Article),
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
