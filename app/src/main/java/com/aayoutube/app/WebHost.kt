@@ -329,16 +329,20 @@ object WebHost {
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun enterMini() {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
-        AppLog.add("VIEW", "Mini player on")
-        mode.value = PlayerMode.MINI
-        // Like the YouTube app: Home underneath (or wherever you were browsing before).
-        BrowseHost.showFrom(home())
+        AppLog.add("VIEW", "Mini player on (playing=${snapshot.value.playing})")
+        // Arm page-side pause protection *before* changing the WebView viewport. YouTube can
+        // pause during the resize, before Compose finishes drawing the mini player.
+        noteVisibilityChange()
         js("window.__aay&&window.__aay.mini(true)")
+        mode.value = PlayerMode.MINI
+        // Keep the same player WebView and browse independently underneath it.
+        BrowseHost.showFrom(home())
     }
 
     fun expandPlayer() {
         if (mode.value == PlayerMode.FULL) return
         AppLog.add("VIEW", "Mini player expanded")
+        noteVisibilityChange()
         mode.value = PlayerMode.FULL
         js("window.__aay&&window.__aay.mini(false)")
     }
@@ -701,6 +705,9 @@ object WebHost {
             progress.value = 100
             CookieManager.getInstance().flush()
             canGoBack.value = view.canGoBack()
+            // A new document resets __aay.isMini; reapply our layout if navigation or reload
+            // happened while the mini player was open.
+            if (mode.value == PlayerMode.MINI) js("window.__aay&&window.__aay.mini(true)")
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
