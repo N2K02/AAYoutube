@@ -172,7 +172,7 @@
       swipeStart = null;
       if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar ||
           document.fullscreenElement || document.webkitFullscreenElement) return;
-      if (!/^\\/(watch|live\\/)/.test(location.pathname)) return;
+      if (!/^\/(watch|live\/)/.test(location.pathname)) return;
       var target = e.target;
       if (!target || !target.closest) return;
       var player = target.closest('.html5-video-player,#player-container-id,#player,' +
@@ -333,7 +333,7 @@
     'html.aay-pip .html5-video-container,html.aay-pip .html5-video-player .html5-video-container{' +
     'position:fixed!important;top:0!important;left:0!important;' +
     'width:100vw!important;height:100vh!important;z-index:2147483646!important}' +
-    'html.aay-pip video{position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
+    'html.aay-pip video{visibility:visible!important;position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
     'height:100vh!important;min-width:100vw!important;min-height:100vh!important;' +
     'max-width:none!important;max-height:none!important;object-fit:contain!important;' +
     'transform:none!important;z-index:2147483647!important}' +
