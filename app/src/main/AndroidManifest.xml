@@ -35,6 +35,8 @@
         android:theme="@style/Theme.AAYoutube"
         android:usesCleartextTraffic="false"
         android:appCategory="game">
+        <provider android:name="com.aayoutube.app.CrashJournalProvider" android:authorities="${applicationId}.crashjournal" android:exported="false" android:initOrder="100" />
+
 
         <meta-data
             android:name="distractionOptimized"
