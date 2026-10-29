@@ -194,6 +194,39 @@
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
   }
 
+  /* ---------- 1g. AABrowser-style tap-to-seek for Android Auto ---------- */
+  // The Car App Library surface exposes taps, not horizontal scrubbing gestures.
+  // A tap within a visible YouTube progress bar seeks without altering other controls.
+  if (!BROWSE) {
+    var seekTap = null;
+    window.addEventListener('pointerdown', function (e) {
+      seekTap = e.isPrimary && A.isCar && /^\/(watch|live\/)/.test(location.pathname) ?
+        { id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target } : null;
+    }, true);
+    window.addEventListener('pointermove', function (e) {
+      if (seekTap && e.pointerId === seekTap.id &&
+          Math.hypot(e.clientX - seekTap.x, e.clientY - seekTap.y) > 12) seekTap = null;
+    }, true);
+    window.addEventListener('pointercancel', function () { seekTap = null; }, true);
+    window.addEventListener('pointerup', function (e) {
+      var t = seekTap; seekTap = null;
+      if (!t || t.id !== e.pointerId || !A.isCar || isAd()) return;
+      var bar = document.querySelector('.ytPlayerProgressBarDragContainer,.ytp-progress-bar-container,.ytp-progress-bar');
+      if (!bar || getComputedStyle(bar).visibility !== 'visible') return;
+      var rect = bar.getBoundingClientRect();
+      if (rect.width <= 0 || t.x < rect.left || t.x > rect.right || t.y < rect.top || t.y > rect.bottom) return;
+      var el = t.target;
+      if (el && el.closest && !bar.contains(el) && el.closest('button,a,[role="button"]')) return;
+      var v = getVideo();
+      if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+      var fraction = Math.max(0, Math.min(1,
+        (getComputedStyle(bar).direction === 'rtl' ? rect.right - t.x : t.x - rect.left) / rect.width));
+      v.currentTime = fraction * v.duration;
+      console.log('[aay] car progress tap seeks to ' + Math.round(v.currentTime) + 's');
+      schedReport(120);
+    }, true);
+  }
+
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
   function strip(o, depth) {
@@ -402,28 +435,50 @@
 
   /* ---------- 4. Media session: title, artwork and next/previous from YouTube itself ---------- */
   var curMeta = null;
+  // AABrowser's WebView compatibility technique: Android WebView may not expose the
+  // Media Session API at all. Supply a minimal implementation before YouTube loads,
+  // so artist, artwork and playlist transport actions are still reported to Media3.
   try {
+    if (!navigator.mediaSession) {
+      var virtualSession = {
+        metadata: null, playbackState: 'none',
+        setActionHandler: function () {}, setPositionState: function () {}
+      };
+      Object.defineProperty(navigator, 'mediaSession', {
+        configurable: true, get: function () { return virtualSession; }
+      });
+      if (!window.MediaMetadata) {
+        window.MediaMetadata = function (values) {
+          values = values || {};
+          this.title = values.title || '';
+          this.artist = values.artist || '';
+          this.album = values.album || '';
+          this.artwork = values.artwork || [];
+        };
+      }
+    }
     var ms = navigator.mediaSession;
     if (ms) {
-      var desc = Object.getOwnPropertyDescriptor(MediaSession.prototype, 'metadata');
-      if (desc && desc.set) {
-        Object.defineProperty(ms, 'metadata', {
-          configurable: true,
-          get: function () { return curMeta; },
-          set: function (m) {
-            curMeta = m;
-            try { desc.set.call(ms, m); } catch (e) {}
-            schedReport(150);
-          }
-        });
-      }
-      var origSet = ms.setActionHandler.bind(ms);
+      var realProto = typeof MediaSession !== 'undefined' ? MediaSession.prototype : null;
+      var desc = realProto && Object.getOwnPropertyDescriptor(realProto, 'metadata');
+      curMeta = ms.metadata || null;
+      Object.defineProperty(ms, 'metadata', {
+        configurable: true,
+        get: function () { return curMeta; },
+        set: function (m) {
+          curMeta = m;
+          try { if (desc && desc.set) desc.set.call(ms, m); } catch (e) {}
+          schedReport(150);
+        }
+      });
+      var origSet = ms.setActionHandler && ms.setActionHandler.bind(ms);
       ms.setActionHandler = function (action, handler) {
-        H[action] = handler;
-        try { return origSet(action, handler); } catch (e) {}
+        if (typeof handler === 'function') H[action] = handler;
+        else delete H[action];
+        try { if (origSet) return origSet(action, handler); } catch (e) {}
       };
     }
-  } catch (e) {}
+  } catch (e) { console.log('[aay] media session compatibility: ' + e); }
 
   /* ---------- 5. Reporting what the video is doing to the app ---------- */
   var lastId = '';
