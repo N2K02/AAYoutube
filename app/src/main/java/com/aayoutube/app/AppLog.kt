@@ -39,8 +39,10 @@ object AppLog {
                 ?.sortedBy { it.name }?.forEach { file ->
                     file.forEachLine { appendMemory(it) }
                 }
-            File(app.filesDir, "crash-journal.log").takeIf { it.exists() }
-                ?.forEachLine { appendMemory("[CRASH] " + it) }
+            listOf("crash-journal.log", "crash-journal-web.log").forEach { name ->
+                File(app.filesDir, name).takeIf { it.exists() }
+                    ?.forEachLine { appendMemory("[CRASH] " + it) }
+            }
             _enabled.value = app.getSharedPreferences("diagnostic_settings", Context.MODE_PRIVATE)
                 .getBoolean("enabled", false)
             _version.value++
