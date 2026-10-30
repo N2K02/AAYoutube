@@ -36,6 +36,7 @@ object BrowseHost {
     private val main = Handler(Looper.getMainLooper())
 
     val created = MutableStateFlow(false)
+    val revision = MutableStateFlow(0)
 
     fun init(application: Application) {
         app = application
@@ -64,6 +65,21 @@ object BrowseHost {
 
     fun pause() { web?.onPause() }
     fun resume() { web?.onResume() }
+
+    /** Dispose the secondary WebView and its injected scripts during explicit Quit. */
+    fun release() {
+        val previous = web
+        web = null
+        runCatching { handler?.remove() }
+        handler = null
+        (previous?.parent as? ViewGroup)?.removeView(previous)
+        previous?.stopLoading()
+        previous?.destroy()
+        wrapper = null
+        pendingUrl = null
+        created.value = false
+        revision.value++
+    }
     /** A second YouTube WebView must not keep a stale account UI after sign-out. */
     fun onSessionCleared() {
         web?.clearCache(true)
@@ -137,6 +153,25 @@ object BrowseHost {
             )
         }
         w.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(
+                view: WebView, detail: android.webkit.RenderProcessGoneDetail
+            ): Boolean {
+                if (web !== view) return true
+                val address = view.url?.takeIf {
+                    runCatching { WebHost.allowedHost(Uri.parse(it).host) }.getOrDefault(false)
+                }
+                AppLog.add("CRASH", "Browse renderer gone: crashed=${detail.didCrash()}")
+                (view.parent as? ViewGroup)?.removeView(view)
+                runCatching { handler?.remove() }
+                handler = null
+                runCatching { view.destroy() }
+                web = null
+                wrapper = null
+                pendingUrl = address ?: WebHost.home()
+                revision.value++
+                return true
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
                 if (uri.scheme != "https" && uri.scheme != "http") return true

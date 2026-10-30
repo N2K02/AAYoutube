@@ -15,6 +15,20 @@ class LyricsVideoIdentityContractTest {
         assertNotEquals(LyricsCache.key(Snap(id = "first")), LyricsCache.key(Snap(id = "second")))
     }
 
+    @Test fun lyricsCacheRetriggersAfterArtistOrTitleIsCorrected() {
+        LyricsCache.clear()
+        val first = Snap(id = "v1", title = "Song", artist = "")
+        val better = first.copy(artist = "Artist")
+        val result = emptyList<LyricLine>() to "Plain lyrics"
+        LyricsCache.put("v1", first, result)
+        assertEquals(result, LyricsCache.get("v1", first))
+        assertNull(LyricsCache.get("v1", better))
+        LyricsCache.put("v1", better, listOf(LyricLine(0L, "Timed")) to null)
+        assertEquals("Timed", LyricsCache.get("v1", better)?.first?.single()?.text)
+        assertNull(LyricsCache.get("v1", better.copy(title = "Corrected title")))
+        LyricsCache.clear()
+    }
+
     @Test fun routeAndTimeEventsRefreshPlaybackSnapshots() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("v.addEventListener('timeupdate', function () {"))
@@ -26,6 +40,6 @@ class LyricsVideoIdentityContractTest {
         val projection = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         assertTrue(projection.contains("if (frame.childCount == 0 && WebHost.fullscreenView.value == null)"))
         assertTrue(projection.contains("WebHost.detach(frame)"))
-        assertTrue(projection.contains("key(version)")))
+        assertTrue(projection.contains("key(version)"))
     }
 }

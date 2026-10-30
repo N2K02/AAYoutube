@@ -13,6 +13,20 @@
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
+  // The secondary browse WebView is never allowed competing audible playback.
+  if (BROWSE) {
+    try {
+      var browsePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        this.muted = true;
+        return browsePlay.apply(this, arguments);
+      };
+      document.addEventListener('playing', function (event) {
+        if (event.target && event.target instanceof HTMLMediaElement)
+          event.target.muted = true;
+      }, true);
+    } catch (e) {}
+  }
   var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
@@ -479,7 +493,7 @@
   var curMeta = null;
   // AABrowser's WebView compatibility technique: Android WebView may not expose the
   // Media Session API at all. Supply a minimal implementation before YouTube loads,
-  // so artist, artwork and playlist transport actions are still reported to Media3.
+  // so artist, artwork and playlist transport actions are still reported to MediaCompat.
   try {
     if (!navigator.mediaSession) {
       var virtualSession = {

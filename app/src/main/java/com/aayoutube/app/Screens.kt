@@ -252,13 +252,13 @@ fun AppRoot(activity: MainActivity) {
 
     // Lookup begins for the current video regardless of overlay visibility. A hidden
     // overlay must never leave the top Lyrics button permanently disabled.
-    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live, snap.title.isBlank(), snap.artist.isBlank()) {
+    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live, snap.title, snap.artist) {
         foundLyrics = LyricsContent()
         if (!lyricsEnabled || snap.id.isBlank() || snap.title.isBlank() || snap.live || snap.ad)
             return@LaunchedEffect
-        val cached = LyricsCache.get(lyricsKey)
+        val cached = LyricsCache.get(lyricsKey, snap)
         val result = cached ?: LyricsProviders.fetch(context, snap).also {
-            LyricsCache.put(lyricsKey, it)
+            LyricsCache.put(lyricsKey, snap, it)
         }
         foundLyrics = LyricsContent(lyricsKey, result.first, result.second)
         AppLog.add("LYRICS", "Result for video ${snap.id}: timed=${result.first.size} plain=${!result.second.isNullOrBlank()}")
@@ -450,6 +450,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val inPip by WebHost.inPip.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val browseOn by BrowseHost.created.collectAsState()
+    val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
@@ -463,16 +464,18 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     Box(modifier) {
         // Browse page (behind): made the first time the mini player opens.
         if (browseOn) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    val activity = ctx.findActivity()!!
-                    FrameLayout(ctx).also { frame ->
-                        frame.addView(BrowseHost.attach(activity), FrameLayout.LayoutParams(-1, -1))
-                    }
-                },
-                onRelease = { BrowseHost.detach(it) },
-            )
+            key(browseRevision) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        val activity = ctx.findActivity()!!
+                        FrameLayout(ctx).also { frame ->
+                            frame.addView(BrowseHost.attach(activity), FrameLayout.LayoutParams(-1, -1))
+                        }
+                    },
+                    onRelease = { BrowseHost.detach(it) },
+                )
+            }
         }
 
         // Player page: never moved to another parent (that would pause the video); only its size

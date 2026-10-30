@@ -59,16 +59,29 @@ internal object LyricsParser {
 }
 
 internal object LyricsCache {
-    private val values = mutableMapOf<String, Pair<List<LyricLine>, String?>>()
+    private data class Entry(
+        val title: String, val artist: String,
+        val result: Pair<List<LyricLine>, String?>
+    )
+    private val values = mutableMapOf<String, Entry>()
     // The video ID, not rapidly changing Media Session title/artist metadata, owns the lyrics.
     // Metadata changes during playback used to invalidate the displayed lyrics every time.
     fun key(snap: Snap) = snap.id
-    @Synchronized fun get(key: String) = values[key]
+    @Synchronized fun get(key: String, snap: Snap): Pair<List<LyricLine>, String?>? {
+        val entry = values[key] ?: return null
+        val title = LyricsQuery.title(snap.title, snap.artist)
+        // A plain match found before the artist or accurate title arrived
+        // must not prevent a fresh search for better synchronized lyrics.
+        return entry.result.takeIf {
+            entry.title.equals(title, ignoreCase = true) &&
+                entry.artist.equals(snap.artist.trim(), ignoreCase = true)
+        }
+    }
     @Synchronized fun clear() { values.clear() }
-    @Synchronized fun put(key: String, value: Pair<List<LyricLine>, String?>) {
+    @Synchronized fun put(key: String, snap: Snap, value: Pair<List<LyricLine>, String?>) {
         if (value.first.isNotEmpty() || !value.second.isNullOrBlank()) {
             if (values.size >= 40) values.remove(values.keys.first())
-            values[key] = value
+            values[key] = Entry(LyricsQuery.title(snap.title, snap.artist), snap.artist.trim(), value)
         }
     }
 }
@@ -227,7 +240,7 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
     var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
     var now by remember { mutableLongStateOf(0L) }
     var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
-    // The direct WebView clock is authoritative. Media3's snapshot is only a
+    // The direct WebView clock is authoritative. the media session's snapshot is only a
     // fallback before the first sample arrives or after WebView replacement.
     LaunchedEffect(snap.id, offsetMs) {
         while (true) {
