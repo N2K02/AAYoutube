@@ -17,6 +17,9 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("Library.favourites().map"))
         assertTrue(source.contains("override fun onPlayFromSearch"))
         assertTrue(source.contains("override fun onSeekTo"))
+        assertTrue(source.contains("override fun onFastForward()"))
+        assertTrue(source.contains("override fun onRewind()"))
+        assertTrue(source.contains("METADATA_KEY_ART_URI"))
     }
     @Test fun notificationManagerIsSeparated() {
         val manager = listOf(File("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"),
@@ -31,9 +34,10 @@ class CompatPlaybackServiceContractTest {
         val connection = listOf(File("app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt"),
             File("../app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt"))
             .first { it.isFile }.readText()
-        assertTrue(connection.contains("override fun onConnectionFailed() { reconnect() }"))
-        assertTrue(connection.contains("override fun onConnectionSuspended() { reconnect() }"))
+        assertTrue(connection.contains("override fun onConnectionFailed() { if (browser === generationBrowser) reconnect() }"))
+        assertTrue(connection.contains("override fun onConnectionSuspended() { if (browser === generationBrowser) reconnect() }"))
         assertTrue(connection.contains("handler.removeCallbacks(retry)"))
+        assertTrue(connection.contains("browser === generationBrowser"))
         assertTrue(source.contains("val toDrain = pending.size"))
         assertTrue(source.contains("if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty())"))
     }
