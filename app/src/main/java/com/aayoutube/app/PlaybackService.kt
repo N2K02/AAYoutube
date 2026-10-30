@@ -62,7 +62,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val idleStop = Runnable { if (!snapshot.playing) stopSelf() }
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
-        if (message.what == Msg.STATE) {
+        if (message.what == Msg.QUIT_ACK && quitRequested) {
+            handler.removeCallbacks(finishQuit)
+            finishQuit.run()
+        } else if (message.what == Msg.STATE && !quitRequested) {
             snapshot = Snap.from(message.data)
             publish(snapshot)
         }
@@ -72,8 +75,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             outgoing = Messenger(binder)
             if (quitRequested) {
-                send(Msg.QUIT)
-                handler.postDelayed(finishQuit, 350L)
+                send(Msg.QUIT, replyTo = incoming)
+                handler.removeCallbacks(finishQuit)
+                handler.postDelayed(finishQuit, 1_500L)
                 return
             }
             retries = 0
@@ -229,7 +233,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                             snapshot = snapshot.copy(playing = false)
                             publish(snapshot)
                             if (outgoing == null) ensureWeb()
-                            send(Msg.QUIT)
+                            send(Msg.QUIT, replyTo = incoming)
+                            handler.removeCallbacks(finishQuit)
                             handler.postDelayed(finishQuit, 1_500L)
                         }
                     }
