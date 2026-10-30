@@ -73,8 +73,7 @@
                 android:gravity="fill"
                 android:defaultWidth="800dp"
                 android:defaultHeight="480dp" />
-            <!-- Legacy Assistant / Android Auto voice request. Media3 also handles modern
-                 onSearch / onAddMediaItems calls in PlaybackService. -->
+            <!-- Android Auto voice search entry. -->
             <intent-filter>
                 <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -112,23 +111,19 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- Media3 media library: exposed to Android Auto as an audio player, independently of
-             the video screen (CarVideoService / car launcher). The same session also serves
-             Bluetooth, notifications, and voice search. -->
+        <!-- MediaCompat browser, session and foreground notification for Android Auto. -->
         <service
             android:name=".PlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
-                <action android:name="androidx.media3.session.MediaLibraryService" />
-                <action android:name="androidx.media3.session.MediaSessionService" />
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 
-        <!-- Enables media-button delivery and Media3 playback resumption after service recreation -->
+        <!-- MediaCompat media-button delivery -->
         <receiver
-            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />

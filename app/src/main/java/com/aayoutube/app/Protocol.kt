@@ -2,7 +2,6 @@ package com.aayoutube.app
 
 import android.os.Bundle
 import android.os.SystemClock
-import androidx.media3.session.SessionCommand
 
 /**
  * Messages between the two processes.
@@ -34,10 +33,9 @@ object Msg {
 
 /** Custom commands on the media session (app -> service, and notification buttons). */
 object Commands {
-    /** Sent by the app screen when it connects, so the service links up with the web process. */
-    val HELLO = SessionCommand("com.aayoutube.app.HELLO", Bundle.EMPTY)
-    val FAVOURITE = SessionCommand("com.aayoutube.app.FAVOURITE", Bundle.EMPTY)
-    val EXIT = SessionCommand("com.aayoutube.app.EXIT", Bundle.EMPTY)
+    const val HELLO = "com.aayoutube.app.HELLO"
+    const val FAVOURITE = "com.aayoutube.app.FAVOURITE"
+    const val EXIT = "com.aayoutube.app.EXIT"
 }
 
 /** One entry of the queue shown in Android Auto (playlist, Mix, or Up next). */
