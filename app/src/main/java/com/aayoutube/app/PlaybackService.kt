@@ -46,6 +46,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private var retries = 0
     private var registrationEpoch = 0
+    private var awaitingRegistration = false
     private var recoveringPlayback = false
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
@@ -58,6 +59,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         } else if (message.what == Msg.REGISTER_ACK && !quitRequested) {
             // Only a response from the current binding can reset the retry budget.
             if (bound && outgoing != null && message.data.getInt("epoch", -1) == registrationEpoch) {
+                awaitingRegistration = false
                 retries = 0
                 handler.removeCallbacks(retry)
             }
@@ -78,6 +80,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
             handler.removeCallbacks(retry)
             registrationEpoch++
+            awaitingRegistration = true
             send(Msg.REGISTER, Bundle().apply { putInt("epoch", registrationEpoch) }, replyTo = incoming)
             if (outgoing == null) return
             // Drain only the commands present at connection time. A failed send can
@@ -123,8 +126,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
             snapshot = snapshot.copy(playing = false, buffering = true)
             publish(snapshot)
             scheduleRetry()
-        } else if (!shuttingDown && !quitRequested && pending.isNotEmpty()) {
-            // A binder can die before the first playback snapshot arrives.
+        } else if (!shuttingDown && !quitRequested && (pending.isNotEmpty() || awaitingRegistration)) {
+            // A binder can die before registration or the first playback snapshot arrives.
             scheduleRetry()
         }
     }
@@ -290,6 +293,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         quitRequested = true
         pending.clear()
         recoveringPlayback = false
+        awaitingRegistration = false
         handler.removeCallbacks(retry)
         handler.removeCallbacks(freeze)
         handler.removeCallbacks(idleStop)
