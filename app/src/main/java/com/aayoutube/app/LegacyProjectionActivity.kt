@@ -5,6 +5,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Window
+import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.BaseInputConnection
+import android.webkit.WebView
+import com.google.android.gms.car.input.CarEditable
+import com.google.android.gms.car.input.CarEditableListener
+import com.google.android.gms.car.input.InputManager
 import android.view.ViewGroup
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -76,6 +84,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var playerContainer: FrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
+    private var carInput: LegacyCarInput? = null
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
@@ -127,7 +136,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     private fun configureLegacyCarInput() {
-        val input = findCarInputManager()
+        val input = findCarInputManager() as? InputManager
+        carInput?.stop()
+        carInput = input?.let { LegacyCarInput(it) }
         AppLog.add("CAR", if (input == null) {
             "Legacy input manager unavailable; retaining WebView touch input"
         } else {
@@ -171,12 +182,16 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     factory = { context ->
                         FrameLayout(context).also { frame ->
                             playerContainer = frame
-                            frame.addView(WebHost.attach(context), FrameLayout.LayoutParams(-1, -1))
+                            val web = WebHost.attach(context)
+                            frame.addView(web, FrameLayout.LayoutParams(-1, -1))
+                            carInput?.bind(web)
                         }
                     },
                     update = { frame ->
                         if (frame.childCount == 0 && WebHost.fullscreenView.value == null) {
-                            frame.addView(WebHost.attach(frame.context), FrameLayout.LayoutParams(-1, -1))
+                            val web = WebHost.attach(frame.context)
+                            frame.addView(web, FrameLayout.LayoutParams(-1, -1))
+                            carInput?.bind(web)
                         }
                     },
                     onRelease = { frame ->
@@ -265,7 +280,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private fun attachIfNeeded() {
         playerContainer?.let { frame ->
             if (frame.childCount == 0 && WebHost.fullscreenView.value == null) {
-                frame.addView(WebHost.attach(frame.context), FrameLayout.LayoutParams(-1, -1))
+                val web = WebHost.attach(frame.context)
+                frame.addView(web, FrameLayout.LayoutParams(-1, -1))
+                carInput?.bind(web)
             }
         }
     }
@@ -301,6 +318,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         carStarted = false
         handler.removeCallbacksAndMessages(null)
+        carInput?.stop()
+        carInput = null
         playerContainer?.let { WebHost.detach(it) }
         WebHost.showOnCar(false, "legacy-projection")
         if (WebHost.requestLink === relink) WebHost.requestLink = null
@@ -318,10 +337,52 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         handler.removeCallbacksAndMessages(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
+        carInput?.stop()
+        carInput = null
         playerContainer?.let { WebHost.detach(it) }
         playerContainer = null
         mediaController?.let { MediaController.releaseFuture(it) }
         mediaController = null
         super.onDestroy()
     }
+}
+
+/** Legacy Android Auto IME bridge, based on AABrowser's CarInputManager contract. */
+private class LegacyCarInput(private val manager: InputManager) : CarEditable {
+    private var target: WebView? = null
+
+    fun bind(web: WebView) {
+        if (target === web) return
+        stop()
+        target = web
+        // The car IME is requested only for a focused WebView, not for video touches.
+        web.onFocusChangeListener = View.OnFocusChangeListener { _, focused ->
+            if (focused) web.post { if (target === web) start() } else stopInputOnly()
+        }
+        if (web.hasFocus()) web.post { if (target === web) start() }
+    }
+
+    private fun start() {
+        runCatching { manager.startInput(this) }
+    }
+
+    private fun stopInputOnly() {
+        runCatching { manager.stopInput() }
+    }
+
+    fun stop() {
+        stopInputOnly()
+        target?.onFocusChangeListener = null
+        target = null
+    }
+
+    override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
+        val web = target ?: return null
+        val connection = web.onCreateInputConnection(editorInfo)
+        editorInfo?.imeOptions = (editorInfo?.imeOptions ?: 0) or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        return connection ?: BaseInputConnection(web, true)
+    }
+
+    override fun setCarEditableListener(carEditableListener: CarEditableListener?) = Unit
+    override fun setInputEnabled(enabled: Boolean) = Unit
 }

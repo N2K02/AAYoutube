@@ -45,6 +45,10 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("setViewTreeLifecycleOwner(this)"))
         assertTrue(activity.contains("updateCarWindow()"))
         assertTrue(activity.contains("findCarInputManager()"))
+        assertTrue(activity.contains("class LegacyCarInput(private val manager: InputManager) : CarEditable"))
+        assertTrue(activity.contains("manager.startInput(this)"))
+        assertTrue(activity.contains("manager.stopInput()"))
+        assertTrue(activity.contains("web.onCreateInputConnection(editorInfo)"))
         assertTrue(activity.contains("configureLegacyCarInput()"))
         assertTrue(activity.contains("method.returnType.name.endsWith(\".input.InputManager\")"))
     }
