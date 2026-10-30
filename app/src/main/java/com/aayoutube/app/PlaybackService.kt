@@ -48,6 +48,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private val channelId = "aay_media"
     private var shuttingDown = false
+    private var quitRequested = false
+    private val finishQuit = Runnable {
+        if (quitRequested) {
+            shuttingDown = true
+            pending.clear()
+            stopSelf()
+        }
+    }
     private var retries = 0
     private val retry = Runnable { if (!shuttingDown && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && outgoing != null) send(Msg.FREEZE) }
@@ -63,6 +71,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             outgoing = Messenger(binder)
+            if (quitRequested) {
+                send(Msg.QUIT)
+                handler.postDelayed(finishQuit, 350L)
+                return
+            }
             retries = 0
             handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
@@ -83,7 +96,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (!bound) scheduleRetry()
     }
     private fun scheduleRetry() {
-        if (shuttingDown || retries >= 4) return
+        if (shuttingDown || quitRequested || retries >= 4) return
         handler.removeCallbacks(retry)
         handler.postDelayed(retry, 1_000L shl retries++)
     }
@@ -91,7 +104,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         outgoing = null
         if (bound) runCatching { unbindService(connection) }
         bound = false
-        if (!shuttingDown && snapshot.playing && snapshot.id.isNotBlank()) {
+        if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank()) {
             pending.clear()
             pending.addFirst(Msg.OPEN to Bundle().apply {
                 putString("id", snapshot.id)
@@ -103,7 +116,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
-        if (shuttingDown) return
+        if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
         if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
         val target = outgoing ?: run {
             if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
@@ -161,6 +174,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastSavedId = s.id
             }
         }
+        if (quitRequested) return
         if (s.playing) {
             idleSince = 0L
             handler.removeCallbacks(freeze)
@@ -207,11 +221,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                             notifyChildrenChanged("favourites")
                         }
                         Commands.EXIT -> {
+                            quitRequested = true
                             pending.clear()
-                            send(Msg.QUIT)
+                            handler.removeCallbacks(retry)
+                            handler.removeCallbacks(freeze)
+                            handler.removeCallbacks(idleStop)
                             snapshot = snapshot.copy(playing = false)
                             publish(snapshot)
-                            stopSelf()
+                            if (outgoing == null) ensureWeb()
+                            send(Msg.QUIT)
+                            handler.postDelayed(finishQuit, 1_500L)
                         }
                     }
                 }
