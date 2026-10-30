@@ -44,8 +44,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var retries = 0
     private var recoveringPlayback = false
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
-    private val freeze = Runnable { if (!snapshot.playing && outgoing != null) send(Msg.FREEZE) }
-    private val idleStop = Runnable { if (!snapshot.playing) stopSelf() }
+    private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
+    private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested) stopSelf() }
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == Msg.QUIT_ACK && quitRequested) {
@@ -240,7 +240,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                             handler.removeCallbacks(retry)
                             handler.removeCallbacks(freeze)
                             handler.removeCallbacks(idleStop)
-                            snapshot = snapshot.copy(playing = false)
+                            snapshot = snapshot.copy(playing = false, buffering = false)
                             publish(snapshot)
                             if (outgoing == null) ensureWeb()
                             send(Msg.QUIT, replyTo = incoming)
