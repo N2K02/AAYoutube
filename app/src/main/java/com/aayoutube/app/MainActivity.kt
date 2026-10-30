@@ -24,9 +24,15 @@ class MainActivity : ComponentActivity() {
         // sharing one page. Only the last of them to hide may pause or hide the page.
         private val started = mutableSetOf<MainActivity>()
         private val resumed = mutableSetOf<MainActivity>()
+        /** Restore ownership when the projected car activity relinquishes the media link. */
+        fun restorePhoneLink() {
+            val phone = started.lastOrNull() ?: return
+            WebHost.requestLink = { phone.runOnUiThread { phone.sayHello() } }
+        }
     }
 
     private var compatConnection: CompatMediaConnection? = null
+    private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -71,7 +77,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         started += this
-        WebHost.requestLink = { runOnUiThread { sayHello() } }
+        if (!WebHost.carShown) WebHost.requestLink = relinkPhone
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         WebHost.setCarScreen(!onPhoneScreen())
         sayHello()
@@ -105,12 +111,12 @@ class MainActivity : ComponentActivity() {
         started -= this
         releaseController()
         val other = started.lastOrNull()
-        if (other != null) {
-            // Another screen is still showing the page: it keeps the link, the page stays visible.
-            WebHost.requestLink = { other.runOnUiThread { other.sayHello() } }
-            return
+        if (WebHost.requestLink === relinkPhone) {
+            // Never remove a link now owned by the projection activity.
+            WebHost.requestLink = null
+            if (other != null) restorePhoneLink()
         }
-        WebHost.requestLink = null
+        if (other != null) return
         WebHost.onActivityVisible(false)
         BrowseHost.pause()
     }
@@ -143,7 +149,10 @@ class MainActivity : ComponentActivity() {
 
     private fun closeEverything() {
         WebHost.onQuit = null
+        WebHost.requestLink = null
+        releaseController()
         WebHost.cmd("pause")
+        BrowseHost.release()
         finishAndRemoveTask()
         android.os.Handler(mainLooper).postDelayed({
             WebHost.release()

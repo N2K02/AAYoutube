@@ -288,8 +288,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             if (frame.childCount == 0 && WebHost.fullscreenView.value == null) {
                 val web = WebHost.attach(frame.context)
                 frame.addView(web, FrameLayout.LayoutParams(-1, -1))
-                carInput?.bind(web)
             }
+            // Rebind after onStart replaces the SDK manager, even if the WebView
+            // was already attached before the activity temporarily stopped.
+            (frame.getChildAt(0) as? WebView)?.let { carInput?.bind(it) }
         }
     }
 
@@ -314,7 +316,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carInput = null
         playerContainer?.let { WebHost.detach(it) }
         WebHost.showOnCar(false, "legacy-projection")
-        if (WebHost.requestLink === relink) WebHost.requestLink = null
+        if (WebHost.requestLink === relink) {
+            WebHost.requestLink = null
+            MainActivity.restorePhoneLink()
+        }
         mediaController?.disconnect()
         mediaController = null
         // A still-running phone Compose window can reclaim the existing WebView.
@@ -324,7 +329,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onDestroy() {
         carStarted = false
-        if (WebHost.requestLink === relink) WebHost.requestLink = null
+        if (WebHost.requestLink === relink) {
+            WebHost.requestLink = null
+            MainActivity.restorePhoneLink()
+        }
         WebHost.showOnCar(false, "legacy-projection")
         handler.removeCallbacksAndMessages(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)

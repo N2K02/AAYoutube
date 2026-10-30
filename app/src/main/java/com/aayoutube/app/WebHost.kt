@@ -73,6 +73,8 @@ object WebHost {
     private var lastDesktop = false
     private var jsSource: String? = null
     private var lastLinkRequest = 0L
+    private var lastRendererCrashAt = 0L
+    private var rendererCrashCount = 0
 
     // What the screens show.
     val progress = MutableStateFlow(100)
@@ -509,8 +511,9 @@ object WebHost {
     }
 
     /** Frees the WebView completely (nothing is playing and no screen is open). */
-    fun release() {
+    fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
+        main.removeCallbacks(freezeSoon)
         exitFullscreen()
         val w = web ?: return
         web = null
@@ -518,12 +521,15 @@ object WebHost {
         scriptHandler = null
         (w.parent as? ViewGroup)?.removeView(w)
         w.stopLoading()
+        w.pauseTimers()
         w.destroy()
         wrapper = null
         frozen = false
         snapshot.value = Snap()
-        carOwners.clear()
-        carShown = false
+        if (!preserveCarOwners) {
+            carOwners.clear()
+            carShown = false
+        }
         lyricsTracking = false
         lyricsClock.value = LyricsClock()
         youtubeAccount.value = YouTubeAccountState.CHECKING
@@ -554,7 +560,10 @@ object WebHost {
                 linkEpoch = d.getInt("epoch", -1)
                 // The service resets its reconnect budget only after this acknowledgement.
                 send(Msg.REGISTER_ACK, Bundle().apply { putInt("epoch", linkEpoch) })
-                if (snapshot.value.id.isNotEmpty()) send(Msg.STATE, snapshot.value.toBundle())
+            }
+            Msg.SYNC -> {
+                if (web == null) send(Msg.PLAYER_MISSING, Bundle())
+                else send(Msg.STATE, snapshot.value.toBundle())
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
@@ -630,7 +639,8 @@ object WebHost {
         val l = link ?: return
         try {
             val m = Message.obtain(null, what)
-            if (what == Msg.STATE) data.putInt("epoch", linkEpoch)
+            if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)
+                data.putInt("epoch", linkEpoch)
             m.data = data
             l.send(m)
         } catch (e: RemoteException) {
@@ -784,7 +794,7 @@ object WebHost {
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
-            view.evaluateJavascript("window.__aay&&window.__aay.car($carDisplay)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
@@ -810,14 +820,28 @@ object WebHost {
             if (request.isForMainFrame) offline.value = true
         }
 
-        // The page's renderer died (out of memory, crash): rebuild the WebView instead of crashing the app.
+        // Preserve visible car ownership and playback intent while replacing the
+        // renderer. Only two automatic resumptions are allowed per 15-second window.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            AppLog.add("CRASH", "Renderer gone, crashed=${detail.didCrash()} url=$lastUrl")
-            val resume = lastUrl
-            val visible = shown
-            release()
-            if (visible) {
-                pendingUrl = resume
+            if (web !== view) return true
+            val now = SystemClock.elapsedRealtime()
+            rendererCrashCount = if (now - lastRendererCrashAt <= 15_000L) rendererCrashCount + 1 else 1
+            lastRendererCrashAt = now
+            val before = snapshot.value
+            val mayResume = rendererCrashCount <= 2 && before.playing && before.id.isNotBlank()
+            val reopen = if (before.id.isNotBlank()) {
+                val base = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
+                base + "watch?v=" + Uri.encode(before.id) +
+                    (if (before.posMs > 0) "&t=" + before.posMs / 1000 + "s" else "") +
+                    (if (mayResume) "&aay=1" else "&aay=paused")
+            } else lastUrl
+            AppLog.add("CRASH", "Renderer gone; repeat=$rendererCrashCount resume=$mayResume")
+            if (mayResume) send(Msg.RENDERER_GONE, before.toBundle())
+            else send(Msg.STATE, before.copy(playing = false, buffering = false).toBundle())
+            release(preserveCarOwners = true)
+            pendingUrl = reopen
+            if (shown || mayResume) {
+                if (!shown) main.post { if (web == null) ensureWeb() }
                 webVersion.update { it + 1 }
             }
             return true

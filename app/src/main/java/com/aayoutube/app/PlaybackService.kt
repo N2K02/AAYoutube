@@ -1,6 +1,7 @@
 package com.aayoutube.app
 
 import android.content.Intent
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.os.IBinder
@@ -52,6 +53,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var registrationEpoch = 0
     private var awaitingRegistration = false
     private var recoveringPlayback = false
+    private val recovery = PlaybackRecovery()
     /** A binder connection alone is not evidence that the WebView can accept commands. */
     private val registrationTimeout = Runnable {
         if (!shuttingDown && !quitRequested && awaitingRegistration && bound) {
@@ -75,17 +77,38 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 handler.removeCallbacks(retry)
                 handler.removeCallbacks(registrationTimeout)
                 drainPending()
+                send(Msg.SYNC)
             }
-        } else if (message.what == Msg.STATE && !quitRequested &&
-            bound && !awaitingRegistration && message.data.getInt("epoch", -1) == registrationEpoch
-        ) {
-            // Ignore in-flight reports from a disconnected or superseded WebView link.
-            snapshot = Snap.from(message.data)
+        } else if (message.what == Msg.STATE && !quitRequested && validWebMessage(message)) {
+            val fresh = Snap.from(message.data)
+            val resume = recovery.onExistingPlayer(fresh)
+            recoveringPlayback = recovery.active
+            snapshot = fresh
+            publish(fresh)
+            if (resume) send(Msg.PLAY)
+        } else if (message.what == Msg.PLAYER_MISSING && !quitRequested && validWebMessage(message)) {
+            // OPEN is allowed only when the WebView confirms the player is missing.
+            val wanted = recovery.onMissingPlayer()
+            recoveringPlayback = false
+            if (wanted != null) {
+                send(Msg.OPEN, Bundle().apply {
+                    putString("id", wanted.id)
+                    putLong("sec", wanted.posMs.coerceAtLeast(0L) / 1_000L)
+                })
+            }
+        } else if (message.what == Msg.RENDERER_GONE && !quitRequested && validWebMessage(message)) {
+            val previous = Snap.from(message.data)
+            recoveringPlayback = recovery.onRendererGone(previous)
+            snapshot = previous.copy(playing = false, buffering = recoveringPlayback)
             publish(snapshot)
         }
         true
     })
     private var connection: ServiceConnection? = null
+
+    private fun validWebMessage(message: Message): Boolean =
+        bound && !awaitingRegistration && outgoing != null &&
+            message.data.getInt("epoch", -1) == registrationEpoch
 
     private fun newConnection(): ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -154,14 +177,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         connection = null
         bound = false
         if (wasBound && previous != null) runCatching { unbindService(previous) }
-        if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank()) {
+        if (!shuttingDown && !quitRequested && recovery.onLinkLost(snapshot)) {
             recoveringPlayback = true
             idleSince = 0L
-            pending.clear()
-            pending.addFirst(Msg.OPEN to Bundle().apply {
-                putString("id", snapshot.id)
-                putLong("sec", snapshot.posMs.coerceAtLeast(0L) / 1000L)
-            })
+            // The WebView might still be playing; ask it before any navigation.
             snapshot = snapshot.copy(playing = false, buffering = true)
             publish(snapshot)
             scheduleRetry()
@@ -173,9 +192,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
         if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
-        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) {
-            pending.clear()
+        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT ||
+            command == Msg.OPEN || command == Msg.SEARCH) {
+            recovery.cancel()
             recoveringPlayback = false
+            if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
         }
         // Never issue queued play/open/search commands before WebHost acknowledged
         // its new Messenger. Pause, stop and Quit must bypass this barrier.
@@ -281,6 +302,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
         notifications.createChannel()
         Library.init(this)
         session = MediaSessionCompat(this, "AAYoutube").apply {
+            setSessionActivity(PendingIntent.getActivity(
+                this@PlaybackService, 0,
+                Intent(this@PlaybackService, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            ))
             setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
             setCallback(object : MediaSessionCompat.Callback() {
@@ -345,6 +372,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         quitRequested = true
         pending.clear()
         recoveringPlayback = false
+        recovery.cancel()
         awaitingRegistration = false
         handler.removeCallbacks(retry)
         handler.removeCallbacks(registrationTimeout)
@@ -435,6 +463,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         bound = false
         outgoing = null
         pending.clear()
+        recovery.cancel()
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         session.isActive = false
         session.release()
