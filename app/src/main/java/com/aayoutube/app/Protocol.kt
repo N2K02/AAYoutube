@@ -30,6 +30,7 @@ object Msg {
     // web process -> media process
     const val STATE = 101
     const val QUIT_ACK = 102  // web process confirms quit command received
+    const val REGISTER_ACK = 103  // web process confirms the session message channel is ready
 }
 
 /** Custom commands on the media session (app -> service, and notification buttons). */
