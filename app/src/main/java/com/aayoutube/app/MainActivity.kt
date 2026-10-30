@@ -118,14 +118,18 @@ class MainActivity : ComponentActivity() {
     private fun sayHello() {
         if (compatConnection != null) return
         compatConnection = CompatMediaConnection(this) {
-            it.transportControls.sendCustomAction("com.aayoutube.app.HELLO", Bundle.EMPTY)
+            it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)
         }.also { it.connect() }
     }
 
     fun quit() {
         AppLog.add("UI", "Quit")
-        compatConnection?.command("com.aayoutube.app.EXIT")
-        closeEverything()
+        compatConnection?.command(Commands.EXIT)
+        // Give the media process time to acknowledge the request before tearing down :web.
+        // The local fallback still quits when the media service is unavailable.
+        android.os.Handler(mainLooper).postDelayed({
+            if (!isFinishing && !isDestroyed) closeEverything()
+        }, 1_600L)
     }
 
     private fun closeEverything() {
