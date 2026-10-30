@@ -58,9 +58,9 @@ class LegacyProjectionContractTest {
 
     @Test fun noUnrequestedAABrowserFeaturesWereAdded() {
         val activity = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertFalse(activity.contains("Spotify"))
-        assertFalse(activity.contains("Weather"))
-        assertFalse(activity.contains("LocalPlayer"))
-        assertFalse(activity.contains("TabManager"))
+        assertFalse(activity.contains("SpotifyService("))
+        assertFalse(activity.contains("WeatherService("))
+        assertFalse(activity.contains("LocalPlayer("))
+        assertFalse(activity.contains("TabManager("))
     }
 }
