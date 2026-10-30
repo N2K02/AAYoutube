@@ -30,6 +30,9 @@ class FeaturesPageContractTest {
             assertTrue("Missing script option $script", features.contains(".put(\"$script\""))
         }
         assertTrue(features.contains("putBoolean(\"autoPip\""))
+        assertTrue(features.contains("putInt(\"topMenuTimeoutSeconds\""))
+        assertTrue(screen.contains("Top menu auto-hide"))
+        assertTrue(screen.contains("TopMenuPolicy.options"))
         assertTrue(screen.contains("LaunchedEffect(snap.playing, flags.autoPip, playerMode, tab, inPip)"))
         assertTrue(web.contains("w.settings.textZoom = f.pageZoom"))
         assertTrue(web.contains("if (desktopChanged)"))

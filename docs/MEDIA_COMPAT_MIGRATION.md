@@ -175,3 +175,16 @@ foreground media permissions; none were added or changed for this patch.
 - The base AndroidX Car App API alone does not provide the projected Android
   Auto host implementation. Pinned app-projected:1.7.0 to match AABrowser's
   dual app + app-projected dependency graph, with an integration regression check.
+
+## Shared phone and projected video top-menu auto-hide (2026-10-31)
+
+- The phone/secondary Android Auto display watch header is rendered as a
+  transparent-to-layout overlay rather than Scaffold topBar. Hiding it does not
+  resize Chromium's WebView or disrupt video surfaces.
+- The AABrowser-style legacy projection menu uses the same persisted timeout:
+  default 3 seconds; choices Never, 1, 2, 3, 5, 10, 15 seconds.
+- Tap the top 28dp edge to reveal the header; each reveal rearms the timeout.
+  Non-video Settings/subpages retain their always-visible single header,
+  while fullscreen/PiP hide app-owned header as before.
+- The AndroidX NavigationTemplate action strip is rendered by the Android Auto
+  host, so this preference cannot force-hide system-owned controls.

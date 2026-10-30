@@ -90,6 +90,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.material3.SegmentedButton
@@ -248,6 +250,25 @@ fun AppRoot(activity: MainActivity) {
     val snap by WebHost.snapshot.collectAsState()
     val playerMode by WebHost.mode.collectAsState()
     val flags by Features.state.collectAsState()
+    val watchTab = tab == Tab.Watch.ordinal
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null)
+    var topMenuVisible by rememberSaveable { mutableStateOf(true) }
+    var topMenuEpoch by remember { mutableIntStateOf(0) }
+    // Every return to the video opens the menu briefly; Settings and all
+    // subpages keep their normal, permanent single app header.
+    LaunchedEffect(watchTab, headerAllowed) {
+        if (watchTab && headerAllowed) {
+            topMenuVisible = true
+            topMenuEpoch++
+        }
+    }
+    LaunchedEffect(watchTab, headerAllowed, topMenuVisible, topMenuEpoch, flags.topMenuTimeoutSeconds) {
+        val timeout = TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)
+        if (watchTab && headerAllowed && topMenuVisible && timeout != null) {
+            delay(timeout)
+            topMenuVisible = false
+        }
+    }
     val lyricsKey = LyricsCache.key(snap)
     var foundLyrics by remember { mutableStateOf(LyricsContent()) }
 
@@ -334,17 +355,16 @@ fun AppRoot(activity: MainActivity) {
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-                if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
+                // Non-video pages keep the same single header. The watch
+                // header is an overlay so auto-hide never resizes the WebView
+                // or interrupts its hardware-decoded video surface.
+                if (!watchTab && headerAllowed) {
                     AAYoutubePageHeader(
                         Tab.entries[tab],
-                        lyricsAvailable = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL,
-                        lyricsShown = lyricsShown,
-                        onLyrics = {
-                            if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
-                        },
-                        onSettings = {
-                            tab = if (tab == Tab.Settings.ordinal) Tab.Watch.ordinal else Tab.Settings.ordinal
-                        },
+                        lyricsAvailable = false,
+                        lyricsShown = false,
+                        onLyrics = {},
+                        onSettings = { tab = Tab.Watch.ordinal },
                     )
                 }
             },
@@ -382,9 +402,41 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
+        // App-owned watch header overlays the WebView without relayout.
+        // Android Auto's separate native host bars remain host-controlled.
+        if (watchTab && headerAllowed) {
+            if (!topMenuVisible) {
+                Box(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .statusBarsPadding().height(28.dp)
+                        .clickable {
+                            topMenuVisible = true
+                            topMenuEpoch++
+                        }
+                )
+            }
+            AnimatedVisibility(
+                visible = topMenuVisible,
+                enter = fadeIn() + slideInVertically { -it },
+                exit = fadeOut() + slideOutVertically { -it },
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) {
+                AAYoutubePageHeader(
+                    Tab.entries[tab],
+                    lyricsAvailable = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL,
+                    lyricsShown = lyricsShown,
+                    onLyrics = {
+                        if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
+                        topMenuEpoch++
+                    },
+                    onSettings = { tab = Tab.Settings.ordinal },
+                )
+            }
+        }
         if (lyricsOnScreen) {
-            // Keep the draggable lyrics panel below the single top app header.
-            Box(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp)) {
+            // Reduce overlap while the menu is hidden; no second app header.
+            Box(Modifier.align(Alignment.TopCenter).statusBarsPadding()
+                .padding(top = if (topMenuVisible && headerAllowed) 76.dp else 30.dp)) {
                 LyricsOverlay(snap, foundLyrics) {
                     LyricsPrefs.set(context, "show", false)
                 }
@@ -710,6 +762,32 @@ fun FeaturesPage() {
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card() {
             Toggle("Resume where you left off", "Reopens your last page when starting the app; playback does not automatically resume.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 8.dp)) {
+                Text("Top menu auto-hide", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Hide the video top menu on your phone and Android Auto. Tap the top edge to show it again.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TopMenuPolicy.options.forEach { seconds ->
+                        val label = if (seconds == 0) "Never" else "${seconds}s"
+                        if (f.topMenuTimeoutSeconds == seconds) {
+                            Button(onClick = { Features.update { it.copy(topMenuTimeoutSeconds = seconds) } }) {
+                                Text(label)
+                            }
+                        } else {
+                            OutlinedButton(onClick = { Features.update { it.copy(topMenuTimeoutSeconds = seconds) } }) {
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+            }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp, top = 4.dp)) {
                 Text("Text size", style = MaterialTheme.typography.labelLarge)
                 Text(

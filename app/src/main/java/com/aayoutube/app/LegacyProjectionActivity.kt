@@ -184,11 +184,13 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val version by WebHost.webVersion.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
+        val flags by Features.state.collectAsState()
         var controlsVisible by remember { mutableStateOf(true) }
         var controlsVersion by remember { mutableIntStateOf(0) }
-        LaunchedEffect(controlsVisible, controlsVersion) {
-            if (controlsVisible) {
-                delay(3_000)
+        LaunchedEffect(controlsVisible, controlsVersion, flags.topMenuTimeoutSeconds) {
+            val timeout = TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)
+            if (controlsVisible && timeout != null) {
+                delay(timeout)
                 controlsVisible = false
             }
         }
