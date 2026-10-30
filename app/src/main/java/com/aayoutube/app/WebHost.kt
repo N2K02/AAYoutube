@@ -550,7 +550,7 @@ object WebHost {
             Msg.REGISTER -> {
                 link = m.replyTo
                 // The service resets its reconnect budget only after this acknowledgement.
-                send(Msg.REGISTER_ACK, Bundle.EMPTY)
+                send(Msg.REGISTER_ACK, Bundle().apply { putInt("epoch", d.getInt("epoch", -1)) })
                 if (snapshot.value.id.isNotEmpty()) send(Msg.STATE, snapshot.value.toBundle())
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
