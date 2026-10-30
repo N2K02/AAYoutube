@@ -71,6 +71,14 @@ internal class MediaArtworkLoader(private val onChanged: () -> Unit) {
     companion object {
         private val trusted = listOf("ytimg.com", "ggpht.com", "googleusercontent.com")
         /** Do not request arbitrary URLs from WebView-controlled metadata. */
+        fun urlFor(input: String, videoId: String): String {
+            val trusted = allowedUrl(input)
+            if (trusted.isNotBlank()) return trusted
+            return if (videoId.matches(Regex("[A-Za-z0-9_-]{11}"))) {
+                "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+            } else ""
+        }
+
         fun allowedUrl(input: String): String = try {
             val uri = URI(input)
             val host = uri.host?.lowercase().orEmpty()

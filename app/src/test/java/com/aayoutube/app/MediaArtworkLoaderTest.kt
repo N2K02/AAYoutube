@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MediaArtworkLoaderTest {
+    @Test fun missingMetadataArtworkUsesKnownYoutubeThumbnail() {
+        assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            MediaArtworkLoader.urlFor("", "dQw4w9WgXcQ"))
+        assertEquals("", MediaArtworkLoader.urlFor("", "invalid"))
+        assertEquals("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            MediaArtworkLoader.urlFor("https://not-trusted.example/p.jpg", "dQw4w9WgXcQ"))
+    }
+
     @Test fun onlyTrustedHttpsArtworkIsLoaded() {
         assertEquals("https://i.ytimg.com/vi/example/hqdefault.jpg",
             MediaArtworkLoader.allowedUrl("https://i.ytimg.com/vi/example/hqdefault.jpg"))

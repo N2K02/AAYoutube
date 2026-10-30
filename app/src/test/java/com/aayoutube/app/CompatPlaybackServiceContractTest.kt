@@ -110,7 +110,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("override fun onStartCommand"))
         assertTrue(source.contains("notifications.placeholder()"))
         assertTrue(source.contains("if (foreground && lastNotification == key) return"))
-        assertTrue(source.contains("NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev)"))
+        assertTrue(source.contains("NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev,"))
         assertTrue(source.contains("if (!shuttingDown) updateNotification(snapshot)"))
     }
     @Test fun acknowledgedHandshakeAndDirectExitFallback() {

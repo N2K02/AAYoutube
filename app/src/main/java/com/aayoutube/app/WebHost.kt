@@ -588,6 +588,7 @@ object WebHost {
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
+                BrowseHost.release()
                 runCatching {
                     m.replyTo?.send(Message.obtain(null, Msg.QUIT_ACK))
                 }.onFailure { AppLog.add("LINK", "Quit acknowledgement failed") }
