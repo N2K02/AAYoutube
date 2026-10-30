@@ -26,10 +26,14 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("WebHost.cmd(if (playing.playing) \"pause\" else \"play\")"))
     }
 
-    @Test fun carControlsLiveOnlyInLegacyProjection() {
-        val code = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertTrue(code.contains("CarControl("))
+    @Test fun legacyControlsAndWideFallbackCoexist() {
+        val legacy = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        assertTrue(legacy.contains("CarControl("))
+        val wide = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
+        assertTrue(wide.contains("NavigationTemplate.Builder()"))
+        assertTrue(wide.contains("WebHost.cmd(\"pause\")"))
         val manifest = source("app/src/main/AndroidManifest.xml")
-        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
+        assertTrue(manifest.contains("android:name=\".LegacyProjectionService\""))
+        assertTrue(manifest.contains("android:name=\".CarVideoService\""))
     }
 }

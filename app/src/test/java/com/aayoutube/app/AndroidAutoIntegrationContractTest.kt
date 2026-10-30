@@ -69,7 +69,9 @@ class AndroidAutoIntegrationContractTest {
             "old.resize(rawWidth, rawHeight, rawDpi)", "onVisibleAreaChanged",
             "onStableAreaChanged", "CarSurfacePolicy.viewport", "WebHost.requestReattachment()",
             "WebHost.showOnCar(true, carOwner)", "WebHost.showOnCar(false, carOwner)",
-            "mediaController?.disconnect()", "scope.cancel()").forEach {
+            "mediaController?.disconnect()", "scope.cancel()",
+            "WebHost.webVersion.drop(1)", "show(p, frame, forceRefresh = true)",
+            "rendererJob?.cancel()").forEach {
             assertTrue("Missing " + it, src.contains(it))
         }
         val frame = source("app/src/main/java/com/aayoutube/app/CarFrameLayout.kt")

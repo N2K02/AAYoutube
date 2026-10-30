@@ -35,6 +35,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -65,6 +66,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     private var presentation: Presentation? = null
     private var container: FrameLayout? = null
     private var fullscreenJob: Job? = null
+    private var rendererJob: Job? = null
     private var density = 1f
     private var rawWidth = 800
     private var rawHeight = 480
@@ -138,6 +140,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
                 old.surface = surface
                 old.resize(rawWidth, rawHeight, rawDpi)
                 updateViewport()
+                container?.let { frame -> presentation?.let { p -> show(p, frame, forceRefresh = true) } }
             }.isSuccess) {
                 AppLog.add("CAR", "Wide surface replaced without video reload")
                 return
@@ -175,6 +178,15 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
                 if (presentation === p && container === frame) show(p, frame)
             }
         }
+        // A renderer crash disposes the old WebView even if Android Auto keeps
+        // the same Surface. Reattach on WebHost generation changes, not just
+        // on Surface recreation or fullscreen changes.
+        rendererJob?.cancel()
+        rendererJob = scope.launch {
+            WebHost.webVersion.drop(1).collect {
+                if (presentation === p && container === frame) show(p, frame, forceRefresh = true)
+            }
+        }
         AppLog.add("CAR", "Wide video screen attached")
     }
 
@@ -185,17 +197,22 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
             Gravity.TOP or Gravity.START).apply { leftMargin = area.left; topMargin = area.top }
     }
 
-    private fun show(p: Presentation, frame: FrameLayout) {
+    private fun show(p: Presentation, frame: FrameLayout, forceRefresh: Boolean = false) {
         val full = WebHost.fullscreenView.value
-        if (full != null && frame.childCount == 1 && frame.getChildAt(0) === full) return
-        if (full == null && frame.childCount == 1 && frame.getChildAt(0) is WebView) return
-        frame.removeAllViews()
         if (full != null) {
+            if (frame.childCount == 1 && frame.getChildAt(0) === full) return
             (full.parent as? ViewGroup)?.removeView(full)
+            frame.removeAllViews()
             frame.addView(full, FrameLayout.LayoutParams(-1, -1))
-        } else {
-            frame.addView(WebHost.attach(p.context), FrameLayout.LayoutParams(-1, -1))
+            return
         }
+        val existing = frame.getChildAt(0) as? WebView
+        if (!forceRefresh && existing != null) return
+        val current = WebHost.attach(p.context)
+        // A redundant host callback must not detach and recreate video frames.
+        if (existing === current) return
+        frame.removeAllViews()
+        frame.addView(current, FrameLayout.LayoutParams(-1, -1))
     }
 
     private fun stop() {
@@ -203,6 +220,8 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         activeSurface = false
         fullscreenJob?.cancel()
         fullscreenJob = null
+        rendererJob?.cancel()
+        rendererJob = null
         AppLog.add("CAR", "Surface released")
         val frame = container
         container = null

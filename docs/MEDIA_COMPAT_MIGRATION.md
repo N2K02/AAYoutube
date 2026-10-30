@@ -166,3 +166,8 @@ foreground media permissions; none were added or changed for this patch.
 - Distinct from AABrowser: AAYouTube intentionally retains one playing YouTube
   WebView instead of independent website tabs and local/Spotify/weather engines.
   Do not assume in-motion video is permitted or device video proven by CI.
+
+- On wide mode, the shared WebView's renderer generation is now observed. A
+  crashed/recreated renderer reattaches to the existing car Presentation even
+  if Android Auto never destroys or replaces the Surface. The old test that
+  prohibited a second video service was updated to check both video paths.
