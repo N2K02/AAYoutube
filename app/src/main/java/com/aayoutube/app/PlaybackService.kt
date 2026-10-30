@@ -28,6 +28,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
     private val notifications = CarMediaNotificationManager(this)
+    private val updateGate = MediaUpdateGate()
+    private data class NotificationKey(val id: String, val title: String, val artist: String)
+    private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
     private var lastSavedId = ""
@@ -154,17 +157,29 @@ class PlaybackService : MediaBrowserServiceCompat() {
             s.id.isNotEmpty() -> PlaybackStateCompat.STATE_PAUSED
             else -> PlaybackStateCompat.STATE_NONE
         }
-        session.setPlaybackState(PlaybackStateCompat.Builder()
-            .setActions(ACTIONS)
-            .setState(state, s.posMs.coerceAtLeast(0L), if (s.playing) s.rate.coerceAtLeast(0.1f) else 0f)
-            .build())
-        session.setMetadata(MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.title)
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
-            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
-            .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, s.art.takeIf { it.startsWith("https://") }.orEmpty())
-            .build())
+        val position = s.posMs.coerceAtLeast(0L)
+        val speed = if (s.playing) s.rate.coerceAtLeast(0.1f) else 0f
+        val actions = actionsFor(s)
+        if (updateGate.playbackChanged(
+                state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
+            )) {
+            session.setPlaybackState(PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(state, position, speed)
+                .build())
+        }
+        val artwork = s.art.takeIf { it.startsWith("https://") }.orEmpty()
+        if (updateGate.metadataChanged(s.id, s.title, s.artist, artwork, s.durMs.coerceAtLeast(0L))) {
+            session.setMetadata(MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, s.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, s.artist)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
+                .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artwork)
+                .build())
+        }
         if (s.id.isNotBlank()) {
             if (s.playing && lastRecentId != s.id) {
                 Library.noteStarted(s)
@@ -263,7 +278,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onPlayFromSearch(query: String?, extras: Bundle?) {
-                    if (!query.isNullOrBlank()) send(Msg.SEARCH, Bundle().apply { putString("q", query) })
+                    if (query.isNullOrBlank()) onPlay()
+                    else send(Msg.SEARCH, Bundle().apply { putString("q", query) })
                 }
             })
             setPlaybackState(PlaybackStateCompat.Builder()
@@ -281,8 +297,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
             runCatching {
                 startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notifications.placeholder())
                 foreground = true
+                lastNotification = null
             }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
         }
+        // The placeholder is only a startup requirement, not an idle media card.
+        handler.post { if (!shuttingDown) updateNotification(snapshot) }
         return super.onStartCommand(intent, flags, startId)
     }
 
@@ -345,28 +364,42 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     private fun updateNotification(s: Snap) {
-        if (!s.playing && !foreground) return
-        if (s.playing) {
-            runCatching {
-                startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
-                    notifications.playback(s, session.sessionToken))
-                foreground = true
-            }.onFailure {
-                AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}")
+        if (!s.playing) {
+            lastNotification = null
+            if (foreground) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                foreground = false
             }
-        } else {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            foreground = false
+            return
         }
+        val key = NotificationKey(s.id, s.title, s.artist)
+        if (foreground && lastNotification == key) return
+        runCatching {
+            startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
+                notifications.playback(s, session.sessionToken))
+            foreground = true
+            lastNotification = key
+        }.onFailure {
+            AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}")
+        }
+    }
+
+    /** Match the controls to the actual YouTube player's capabilities. */
+    private fun actionsFor(s: Snap): Long {
+        var actions = ACTIONS
+        if (s.canNext) actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+        if (s.canPrev) actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+        if (!s.live && !s.ad && s.durMs > 0L) {
+            actions = actions or PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_FAST_FORWARD or PlaybackStateCompat.ACTION_REWIND
+        }
+        return actions
     }
 
     private companion object {
         const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_FAST_FORWARD or
-            PlaybackStateCompat.ACTION_REWIND or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-            PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO or
-            PlaybackStateCompat.ACTION_STOP or PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or
-            PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
+            PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
     }
 }
