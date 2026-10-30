@@ -25,6 +25,7 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     private var outgoing: Messenger? = null
     private var bound = false
     private val pending = ArrayDeque<Pair<Int, Bundle>>()
+    private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var shuttingDown = false
     private var retries = 0
@@ -81,7 +82,11 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         ensureWeb()
         val target = outgoing ?: run {
-            if (command != Msg.REGISTER) pending.addLast(command to data)
+            if (command != Msg.REGISTER) {
+                if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
+                if (pending.size >= maxPendingCommands) pending.removeFirst()
+                pending.addLast(command to data)
+            }
             return
         }
         runCatching {
@@ -109,8 +114,8 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs)
             .build())
-        if (s.playing && s.id.isNotBlank()) {
-            Library.noteStarted(s)
+        if (s.id.isNotBlank()) {
+            if (s.playing) Library.noteStarted(s)
             Library.saveLast(s)
         }
     }
