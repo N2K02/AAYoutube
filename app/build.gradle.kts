@@ -110,6 +110,8 @@ dependencies {
     // AABrowser-compatible MediaBrowserServiceCompat migration dependency.
     implementation("androidx.media:media:${v["mediaCompat"]}")
     implementation("androidx.car.app:app:${v["carApp"]}")
+    // Required for Android Auto projected host integration (AABrowser uses both).
+    implementation("androidx.car.app:app-projected:${v["carApp"]}")
 
     // WebView extras: script injection at document start, header control
     implementation("androidx.webkit:webkit:${v["webkit"]}")

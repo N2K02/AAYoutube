@@ -10,7 +10,7 @@ class AndroidAutoIntegrationContractTest {
         listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
             ?: error("Missing $path")
 
-    @Test fun legacyProjectionIsSoleVideoEntryWhileMediaSessionRemains() {
+    @Test fun legacyAndWideVideoEntriesCoexistWithMediaSession() {
         val xml = source("app/src/main/AndroidManifest.xml")
         assertTrue(xml.contains("android:name=\".LegacyProjectionService\""))
         assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
@@ -24,6 +24,7 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(xml.contains("androidx.car.app.NAVIGATION_TEMPLATES"))
         val gradle = source("app/build.gradle.kts")
         assertTrue(gradle.contains("androidx.car.app:app:"))
+        assertTrue(gradle.contains("androidx.car.app:app-projected:"))
     }
 
     @Test fun carPageKeepsMediaSessionFallbackAndTouchSeeking() {

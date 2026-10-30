@@ -171,3 +171,7 @@ foreground media permissions; none were added or changed for this patch.
   crashed/recreated renderer reattaches to the existing car Presentation even
   if Android Auto never destroys or replaces the Surface. The old test that
   prohibited a second video service was updated to check both video paths.
+
+- The base AndroidX Car App API alone does not provide the projected Android
+  Auto host implementation. Pinned app-projected:1.7.0 to match AABrowser's
+  dual app + app-projected dependency graph, with an integration regression check.
