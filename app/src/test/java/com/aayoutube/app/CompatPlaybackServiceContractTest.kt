@@ -20,6 +20,13 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("override fun onFastForward()"))
         assertTrue(source.contains("override fun onRewind()"))
         assertTrue(source.contains("METADATA_KEY_ART_URI"))
+        assertTrue(source.contains("updateGate.playbackChanged("))
+        assertTrue(source.contains("updateGate.metadataChanged("))
+        assertTrue(source.contains("val actions = actionsFor(s)"))
+        assertTrue(source.contains("if (s.canNext)"))
+        assertTrue(source.contains("if (s.canPrev)"))
+        assertTrue(source.contains("!s.live && !s.ad && s.durMs > 0L"))
+        assertTrue(source.contains("if (query.isNullOrBlank()) onPlay()"))
     }
     @Test fun notificationManagerIsSeparated() {
         val manager = listOf(File("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"),
@@ -71,5 +78,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("Msg.QUIT_ACK"))
         assertTrue(source.contains("override fun onStartCommand"))
         assertTrue(source.contains("notifications.placeholder()"))
+        assertTrue(source.contains("if (foreground && lastNotification == key) return"))
+        assertTrue(source.contains("if (!shuttingDown) updateNotification(snapshot)"))
     }
 }
