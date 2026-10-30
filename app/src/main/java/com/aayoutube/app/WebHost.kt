@@ -282,7 +282,7 @@ object WebHost {
             scheduleFreeze()
         }
         // Hidden screen = background mode: lowest video quality saves data and battery.
-        js("window.__aay&&window.__aay.setBg(${!shown})")
+        refreshBackgroundQuality()
     }
 
     /** Player buttons for the car screen: play, pause, next, prev. */
@@ -306,7 +306,7 @@ object WebHost {
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
-        js("window.__aay&&window.__aay.setBg(${!shown})")
+        refreshBackgroundQuality()
     }
 
     /** Rebind an already-created phone AndroidView after a car window relinquishes it.
@@ -324,6 +324,17 @@ object WebHost {
     }
 
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
+
+    /** Use the measured native video/WebView bounds as the Android PiP source. */
+    fun pipSourceRect(out: android.graphics.Rect): Boolean {
+        val w = web ?: return false
+        return w.isAttachedToWindow && w.getGlobalVisibleRect(out) &&
+            out.width() > 0 && out.height() > 0
+    }
+
+    fun refreshBackgroundQuality() {
+        js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
+    }
 
     fun openUrl(url: String) {
         // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
@@ -807,6 +818,7 @@ object WebHost {
         override fun onPageFinished(view: WebView, url: String?) {
             if (view !== web) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
+            if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
             AppLog.add("PAGE", "Finished $url")

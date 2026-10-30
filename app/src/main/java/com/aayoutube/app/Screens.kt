@@ -247,6 +247,7 @@ fun AppRoot(activity: MainActivity) {
     val onCar by WebHost.carScreen.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
     val playerMode by WebHost.mode.collectAsState()
+    val flags by Features.state.collectAsState()
     val lyricsKey = LyricsCache.key(snap)
     var foundLyrics by remember { mutableStateOf(LyricsContent()) }
 
@@ -276,7 +277,10 @@ fun AppRoot(activity: MainActivity) {
         onDispose { WebHost.setLyricsTracking(false) }
     }
 
-    LaunchedEffect(snap.playing) { activity.updatePip() }
+    // Respond to PiP setting changes and avoid entering PiP from a settings screen.
+    LaunchedEffect(snap.playing, flags.autoPip, playerMode, tab, inPip) {
+        activity.updatePip(tab == Tab.Watch.ordinal)
+    }
     // Picture in picture always shows the video: go back to the YouTube tab.
     LaunchedEffect(inPip) { if (inPip) tab = Tab.Watch.ordinal }
     LaunchedEffect(tab) { AppLog.add("UI", "Tab ${Tab.entries[tab].label}") }
@@ -457,13 +461,13 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
 
     // The browse page only works while you can see it.
-    LaunchedEffect(mode) {
-        if (mode == WebHost.PlayerMode.FULL) BrowseHost.pause() else BrowseHost.resume()
+    LaunchedEffect(mode, inPip) {
+        if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause() else BrowseHost.resume()
     }
 
     Box(modifier) {
         // Browse page (behind): made the first time the mini player opens.
-        if (browseOn) {
+        if (browseOn && !inPip) {
             key(browseRevision) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -501,30 +505,17 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             val py = minY + (maxY - minY) * my
             val miniMod = Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH)
 
-            // Animate the already-rendered WebView layer instead of changing its layout size
-            // on every frame. Repeated WebView resizes reconfigure the video decoder and
-            // make the mini/full and PiP transitions visibly stutter or briefly go black.
-            val miniProgress by animateFloatAsState(
-                targetValue = if (small) 1f else 0f,
-                animationSpec = tween(durationMillis = 260),
-                label = "mini-player-transition",
-            )
-            val miniScaleX = wPx / constraints.maxWidth.coerceAtLeast(1)
-            val miniScaleY = hPx / constraints.maxHeight.coerceAtLeast(1)
-            // Closed players must not cover the browse page with an invisible full-screen
-            // AndroidView: its touch target would swallow taps on YouTube navigation.
-            val playerMod = if (hidden) Modifier.size(1.dp).graphicsLayer { alpha = 0f }
-            else Modifier.fillMaxSize().graphicsLayer {
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    translationX = px * miniProgress
-                    translationY = py * miniProgress
-                    scaleX = 1f + (miniScaleX - 1f) * miniProgress
-                    scaleY = 1f + (miniScaleY - 1f) * miniProgress
-                    clip = miniProgress > 0f
-                    shape = RoundedCornerShape(if (miniProgress > 0f) 16.dp else 0.dp)
-                }
-                // Car screen swipes are active only in the expanded player.
-                .then(if (!small && onCar) carSwipeDown else Modifier)
+            // Resize the Android WebView itself. Scaling a graphicsLayer changes
+            // the Compose container, but can leave Chromium's video Surface
+            // at the old fullscreen dimensions (grey frames/letterboxing).
+            val playerMod = when {
+                inPip -> Modifier.fillMaxSize()
+                hidden -> Modifier.size(1.dp)
+                small -> Modifier.offset {
+                    IntOffset(px.roundToInt(), py.roundToInt())
+                }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
+                else -> Modifier.fillMaxSize()
+            }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
             key(version) {
                 AndroidView(
                     modifier = playerMod,

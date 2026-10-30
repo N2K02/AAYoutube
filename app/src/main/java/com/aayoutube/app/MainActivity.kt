@@ -2,6 +2,7 @@ package com.aayoutube.app
 
 import android.Manifest
 import android.app.PictureInPictureParams
+import android.graphics.Rect
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -32,6 +33,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private var compatConnection: CompatMediaConnection? = null
+    private var watchTabVisible = true
     private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
 
     private val askNotifications =
@@ -172,23 +174,35 @@ class MainActivity : ComponentActivity() {
         return id == null || id == android.view.Display.DEFAULT_DISPLAY
     }
 
-    fun updatePip() {
-        if (Build.VERSION.SDK_INT < 26) return
-        val playing = WebHost.snapshot.value.playing
+    /** Android chooses floating PiP dimensions. Use the real video source
+     * rectangle and disable WebView-unsafe seamless surface resizing. */
+    private fun pipParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
-        // Request a stable landscape PiP window; Android ultimately controls its size.
+        val bounds = Rect()
+        if (WebHost.pipSourceRect(bounds)) builder.setSourceRectHint(bounds)
         if (Build.VERSION.SDK_INT >= 31) {
-            builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
-            builder.setSeamlessResizeEnabled(true)
+            builder.setAutoEnterEnabled(
+                Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
+                    WebHost.isOnWatchPage() && onPhoneScreen() && !isInPictureInPictureMode
+            )
+            builder.setSeamlessResizeEnabled(false)
         }
-        runCatching { setPictureInPictureParams(builder.build()) }
+        return builder.build()
+    }
+
+    fun updatePip(isWatchTab: Boolean = watchTabVisible) {
+        if (Build.VERSION.SDK_INT < 26 || !onPhoneScreen()) return
+        watchTabVisible = isWatchTab
+        runCatching { setPictureInPictureParams(pipParams()) }
     }
 
     override fun onUserLeaveHint() {
+        if (Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
+            WebHost.isOnWatchPage() && onPhoneScreen()) WebHost.pip(true)
         super.onUserLeaveHint()
         if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && WebHost.isOnWatchPage() && onPhoneScreen()) {
             runCatching {
-                enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
+                enterPictureInPictureMode(pipParams())
             }
         }
     }
@@ -208,5 +222,6 @@ class MainActivity : ComponentActivity() {
             WebHost.setHold(false)
         }
         WebHost.pip(isInPictureInPictureMode)
+        WebHost.refreshBackgroundQuality()
     }
 }
