@@ -27,6 +27,11 @@ class CompatPlaybackServiceContractTest {
         assertTrue(manager.contains("setShowActionsInCompactView(0, 1, 2)"))
         assertTrue(manager.contains("fun placeholder()"))
     }
+    @Test fun commandQueueAndQuitContract() {
+        assertTrue(source.contains("pending.clear()"))
+        assertTrue(source.contains("Msg.QUIT_ACK"))
+        assertTrue(source.contains("if (quitRequested) return"))
+    }
     @Test fun reconnectionAndShutdown() {
         assertTrue(source.contains("if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank())"))
         assertTrue(source.contains("retries >= 4"))
