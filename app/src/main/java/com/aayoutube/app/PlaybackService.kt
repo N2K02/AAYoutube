@@ -68,7 +68,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
             retries = 0
             handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
-            while (pending.isNotEmpty()) {
+            // Drain only the commands present at connection time. A failed send can
+            // requeue its command; never spin indefinitely on a dead binder.
+            val toDrain = pending.size
+            repeat(toDrain) {
+                if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) return@repeat
                 val (command, data) = pending.removeFirst()
                 send(command, data)
             }
