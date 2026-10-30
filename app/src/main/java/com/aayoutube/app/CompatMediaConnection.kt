@@ -14,13 +14,15 @@ class CompatMediaConnection(
     private var browser: MediaBrowserCompat? = null
     private var controller: MediaControllerCompat? = null
     private val queuedActions = ArrayDeque<String>()
+    private var closed = false
 
     fun connect() {
-        if (browser != null) return
+        if (browser != null || closed) return
         val next = MediaBrowserCompat(context,
             ComponentName(context, PlaybackService::class.java),
             object : MediaBrowserCompat.ConnectionCallback() {
                 override fun onConnected() {
+                    if (closed) return
                     val connected = browser ?: return
                     controller = MediaControllerCompat(context, connected.sessionToken)
                     controller?.let { connectedController ->
@@ -38,12 +40,14 @@ class CompatMediaConnection(
     }
 
     fun command(action: String) {
+        if (closed) return
         val active = controller
         if (active != null) active.transportControls.sendCustomAction(action, Bundle.EMPTY)
         else if (queuedActions.size < 8) queuedActions.addLast(action)
     }
 
     fun disconnect() {
+        closed = true
         controller = null
         queuedActions.clear()
         browser?.disconnect()
