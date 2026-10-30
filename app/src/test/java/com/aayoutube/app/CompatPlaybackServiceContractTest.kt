@@ -37,7 +37,7 @@ class CompatPlaybackServiceContractTest {
         val manager = listOf(File("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"),
             File("../app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"))
             .first { it.isFile }.readText()
-        assertTrue(source.contains("notifications.playback(s, session.sessionToken)"))
+        assertTrue(source.contains("notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor("))
         assertTrue(manager.contains("MediaButtonReceiver.buildMediaButtonPendingIntent"))
         assertTrue(manager.contains("setShowActionsInCompactView(*compact.toIntArray())"))
         assertTrue(manager.contains("if (snapshot.canPrev)"))
@@ -126,7 +126,8 @@ class CompatPlaybackServiceContractTest {
         assertTrue(protocol.contains("const val REGISTER_ACK = 103"))
         assertTrue(web.contains("send(Msg.REGISTER_ACK"))
         assertTrue(web.contains("d.getInt(\"epoch\", -1)"))
-        assertTrue(web.contains("if (what == Msg.STATE) data.putInt(\"epoch\", linkEpoch)"))
+        assertTrue(web.contains("if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)"))
+        assertTrue(web.contains("data.putInt(\"epoch\", linkEpoch)"))
         assertTrue(web.contains("linkEpoch = -1"))
         assertTrue(source.contains("message.data.getInt(\"epoch\", -1) == registrationEpoch"))
         assertTrue(source.contains("if (intent?.action == ACTION_QUIT) requestQuit()"))
