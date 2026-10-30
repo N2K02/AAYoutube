@@ -186,6 +186,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             handler.removeCallbacks(idleStop)
         } else if (recoveringPlayback) {
             // A disconnected WebView is not an idle playback session.
+            idleSince = 0L
             handler.removeCallbacks(freeze)
             handler.removeCallbacks(idleStop)
         } else if (idleSince == 0L) {
@@ -213,12 +214,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         })
                     } else send(Msg.PLAY)
                 }
-                override fun onPause() = send(Msg.PAUSE)
+                override fun onPause() {
+                    send(Msg.PAUSE)
+                    snapshot = snapshot.copy(playing = false, buffering = false)
+                    publish(snapshot)
+                }
                 override fun onSkipToNext() = send(Msg.NEXT)
                 override fun onSkipToPrevious() = send(Msg.PREV)
                 override fun onStop() {
                     send(Msg.STOP)
-                    snapshot = snapshot.copy(playing = false)
+                    snapshot = snapshot.copy(playing = false, buffering = false)
                     publish(snapshot)
                 }
                 override fun onCustomAction(action: String?, extras: Bundle?) {
@@ -245,7 +250,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos.coerceAtLeast(0L)) })
-                override fun onFastForward() = onSeekTo((snapshot.posMs + 30_000L).coerceAtMost(snapshot.durMs.takeIf { it > 0 } ?: Long.MAX_VALUE))
+                override fun onFastForward() = onSeekTo((snapshot.posMs.coerceAtLeast(0L) + 30_000L).coerceAtMost(snapshot.durMs.takeIf { it > 0 } ?: Long.MAX_VALUE))
                 override fun onRewind() = onSeekTo((snapshot.posMs - 10_000L).coerceAtLeast(0L))
                 override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
                     when {
