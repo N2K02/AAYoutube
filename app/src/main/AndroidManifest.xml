@@ -62,17 +62,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <!-- Android 15+: Android Auto lists this screen in the car launcher and runs it on the car display.
-                     Same markers as AABrowser: the car launcher plus the navigation-app categories, which is how
-                     Android Auto picks up a sideloaded screen app ("Unknown sources" in its developer settings). -->
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
-            <!-- Personal use: keep the screen usable on the car display while driving (sideloaded, your responsibility). -->
-            <meta-data
-                android:name="distractionOptimized"
-                android:value="true" />
             <meta-data
                 android:name="android.max_aspect"
                 android:value="5.0" />
