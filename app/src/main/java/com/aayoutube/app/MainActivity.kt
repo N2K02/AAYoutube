@@ -125,6 +125,15 @@ class MainActivity : ComponentActivity() {
     fun quit() {
         AppLog.add("UI", "Quit")
         compatConnection?.command(Commands.EXIT)
+        // Deliver Quit even when MediaBrowser is disconnected or still reconnecting.
+        // The service deduplicates this with the MediaSession custom action.
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                this, Intent(this, PlaybackService::class.java).setAction(PlaybackService.ACTION_QUIT)
+            )
+        }.onFailure {
+            AppLog.add("UI", "Media shutdown intent failed: ${it.javaClass.simpleName}")
+        }
         // Give the media process time to acknowledge the request before tearing down :web.
         // The local fallback still quits when the media service is unavailable.
         android.os.Handler(mainLooper).postDelayed({
