@@ -45,6 +45,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private var retries = 0
+    private var registrationEpoch = 0
     private var recoveringPlayback = false
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
@@ -54,6 +55,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (message.what == Msg.QUIT_ACK && quitRequested) {
             handler.removeCallbacks(finishQuit)
             finishQuit.run()
+        } else if (message.what == Msg.REGISTER_ACK && !quitRequested) {
+            // Only a response from the current binding can reset the retry budget.
+            if (bound && outgoing != null && message.data.getInt("epoch", -1) == registrationEpoch) {
+                retries = 0
+                handler.removeCallbacks(retry)
+            }
         } else if (message.what == Msg.STATE && !quitRequested) {
             snapshot = Snap.from(message.data)
             publish(snapshot)
@@ -69,9 +76,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 handler.postDelayed(finishQuit, 1_500L)
                 return
             }
-            retries = 0
             handler.removeCallbacks(retry)
-            send(Msg.REGISTER, replyTo = incoming)
+            registrationEpoch++
+            send(Msg.REGISTER, Bundle().apply { putInt("epoch", registrationEpoch) }, replyTo = incoming)
             if (outgoing == null) return
             // Drain only the commands present at connection time. A failed send can
             // requeue its command; never spin indefinitely on a dead binder.
@@ -346,7 +353,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!snapshot.playing) stopSelf()
+        if (!snapshot.playing && !snapshot.buffering && !recoveringPlayback) stopSelf()
         super.onTaskRemoved(rootIntent)
     }
 
