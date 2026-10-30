@@ -816,6 +816,31 @@
     if (v && !v.paused) schedReport(0);
   }, 30000);
 
+  /* ---------- 9b. Timed lyrics: use real HTMLVideoElement.currentTime ---------- */
+  // Media-session snapshots are infrequent. A dedicated clock is necessary for
+  // seeking, buffering and playback rate changes while lyrics are actually visible.
+  // Never run this polling loop for the mini-browser or a hidden/plain-text panel.
+  var lyricClockTimer = 0;
+  function sendLyricClock() {
+    if (!lyricClockTimer || BROWSE || !N || typeof N.lyricsTime !== 'function') return;
+    var v = getVideo();
+    var pv = playerVideo();
+    var id = (pv && pv.video_id) || urlId();
+    if (!v || !id || !isFinite(v.currentTime) || isAd()) return;
+    N.lyricsTime(id, v.currentTime, !v.paused && !v.ended,
+      v.readyState < 3, v.playbackRate || 1);
+  }
+  A.lyricsSync = function (on) {
+    if (BROWSE) return;
+    if (!on) {
+      if (lyricClockTimer) { clearInterval(lyricClockTimer); lyricClockTimer = 0; }
+      return;
+    }
+    if (lyricClockTimer) return;
+    lyricClockTimer = setInterval(sendLyricClock, 250);
+    sendLyricClock();
+  };
+
   /* ---------- 10. Commands from the app ---------- */
   function next() {
     if (H.nexttrack) { try { H.nexttrack(); return; } catch (e) {} }

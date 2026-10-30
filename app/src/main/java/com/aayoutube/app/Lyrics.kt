@@ -76,6 +76,21 @@ internal object LyricsSync {
     }
 }
 
+/** Direct video-element position, sampled only while synchronized lyrics are visible.
+ * Unlike a media-session snapshot, this handles seeking and buffering within 250 ms. */
+internal data class LyricsClock(
+    val videoId: String = "",
+    val posMs: Long = 0L,
+    val playing: Boolean = false,
+    val buffering: Boolean = false,
+    val rate: Float = 1f,
+    val sampledAtMs: Long = 0L,
+) {
+    fun positionFor(id: String, nowMs: Long, offsetMs: Long): Long? =
+        if (id.isBlank() || videoId != id) null
+        else LyricsSync.position(posMs, playing, buffering, rate, nowMs - sampledAtMs, offsetMs)
+}
+
 internal object LyricsPrefs {
     private const val FILE = "lyrics"
     private val _enabled = MutableStateFlow(true)
@@ -120,6 +135,7 @@ internal object LyricsLookup {
                 if (conn.responseCode !in 200..299) return@withContext emptyList<LyricLine>() to null
                 val arr = JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
                 val normalized = snap.title.lowercase().trim()
+                var plainFallback: String? = null
                 for (i in 0 until arr.length().coerceAtMost(20)) {
                     val item = arr.getJSONObject(i)
                     val name = item.optString("trackName").lowercase()
@@ -130,9 +146,9 @@ internal object LyricsLookup {
                         if (lines.isNotEmpty()) return@withContext lines to null
                     }
                     val plain = item.optString("plainLyrics")
-                    if (plain.isNotBlank() && plain != "null") return@withContext emptyList<LyricLine>() to plain
+                    if (plain.isNotBlank() && plain != "null" && plainFallback == null) plainFallback = plain
                 }
-                emptyList<LyricLine>() to null
+                emptyList<LyricLine>() to plainFallback
             } finally { conn.disconnect() }
         } catch (_: Exception) { emptyList<LyricLine>() to null }
     }
@@ -189,15 +205,20 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
     val context = androidx.compose.ui.platform.LocalContext.current
     val lines = content.lines
     val plain = content.plain
+    val liveClock by WebHost.lyricsClock.collectAsState()
     var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
     var now by remember { mutableLongStateOf(0L) }
     var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
-    LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.buffering, snap.rate, offsetMs) {
-        val start = SystemClock.elapsedRealtime()
+    // The direct WebView clock is authoritative. Media3's snapshot is only a
+    // fallback before the first sample arrives or after WebView replacement.
+    LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.buffering, snap.rate, liveClock, offsetMs) {
+        val snapshotAt = SystemClock.elapsedRealtime()
         while (true) {
-            now = LyricsSync.position(snap.posMs, snap.playing, snap.buffering, snap.rate,
-                SystemClock.elapsedRealtime() - start, offsetMs)
-            delay(200)
+            val tickAt = SystemClock.elapsedRealtime()
+            now = liveClock.positionFor(snap.id, tickAt, offsetMs)
+                ?: LyricsSync.position(snap.posMs, snap.playing, snap.buffering, snap.rate,
+                    tickAt - snapshotAt, offsetMs)
+            delay(100)
         }
     }
     if (!content.foundFor(LyricsCache.key(snap))) return
@@ -223,6 +244,7 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
                 modifier = Modifier.clickable { onToggle() }.padding(horizontal = 8.dp))
         }
         if (lines.isNotEmpty()) {
+            Text("Synchronized lyrics", color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = {
                     offsetMs = (offsetMs - 250L).coerceAtLeast(-5000L)
@@ -246,7 +268,12 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
                         textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 5.dp))
                 }
             }
-            !plain.isNullOrBlank() -> Text(plain.take(1500), color = Color.White, textAlign = TextAlign.Center)
+            !plain.isNullOrBlank() -> {
+                Text("Lyrics without timestamps — cannot follow the song",
+                    color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.height(8.dp))
+                Text(plain.take(1500), color = Color.White, textAlign = TextAlign.Center)
+            }
         }
     }
 }

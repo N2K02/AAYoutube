@@ -81,6 +81,8 @@ object WebHost {
     val onWatchPage = MutableStateFlow(false)
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
+    val lyricsClock = MutableStateFlow(LyricsClock())
+    private var lyricsTracking = false
     val youtubeAccount = MutableStateFlow(YouTubeAccountState.CHECKING)
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
@@ -405,6 +407,32 @@ object WebHost {
         if (w.url.isNullOrEmpty() || w.url == "about:blank") w.loadUrl(home()) else w.reload()
     }
 
+    /** Only poll the real video position while the user is viewing timed lyrics. */
+    fun setLyricsTracking(active: Boolean) {
+        if (lyricsTracking == active) return
+        lyricsTracking = active
+        if (!active) lyricsClock.value = LyricsClock()
+        js("window.__aay&&window.__aay.lyricsSync($active)")
+    }
+
+    /** Invoked from the WebView's JavaScript bridge thread, never by another app. */
+    fun onJsLyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+        if (!seconds.isFinite() || seconds < 0 || seconds > 86_400 ||
+            !rate.isFinite() || rate <= 0 || rate > 8.0) return
+        main.post {
+            // Reject a sample from a previous video or a disposed lyrics panel.
+            if (!lyricsTracking || id.isBlank() || id != snapshot.value.id) return@post
+            lyricsClock.value = LyricsClock(
+                videoId = id,
+                posMs = (seconds * 1000).toLong(),
+                playing = playing,
+                buffering = buffering,
+                rate = rate.toFloat(),
+                sampledAtMs = SystemClock.elapsedRealtime(),
+            )
+        }
+    }
+
     fun clearCache() {
         web?.clearCache(true)
     }
@@ -481,6 +509,8 @@ object WebHost {
         wrapper = null
         frozen = false
         snapshot.value = Snap()
+        lyricsTracking = false
+        lyricsClock.value = LyricsClock()
         youtubeAccount.value = YouTubeAccountState.CHECKING
         webVersion.update { it + 1 }
     }
@@ -720,6 +750,7 @@ object WebHost {
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             AppLog.add("PAGE", "Started $url")
+            lyricsClock.value = LyricsClock()
             youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
             offline.value = false
@@ -730,6 +761,7 @@ object WebHost {
         override fun onPageFinished(view: WebView, url: String?) {
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car($carDisplay)", null)
+            if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
@@ -824,6 +856,12 @@ class WebBridge {
     @JavascriptInterface
     fun account(status: String) {
         WebHost.reportAccountStatus(status)
+    }
+
+    /** Real HTMLVideoElement position, sampled only while timed lyrics are displayed. */
+    @JavascriptInterface
+    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+        WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate)
     }
 
     /** Swipe down on the playing video. */

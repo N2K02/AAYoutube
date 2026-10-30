@@ -33,6 +33,9 @@ class LyricsHeaderContractTest {
         val overlay = read("app/src/main/java/com/aayoutube/app/Lyrics.kt")
         assertFalse(overlay.substringAfter("internal fun LyricsOverlay(").contains("LyricsProviders.fetch(context, snap)"))
         assertFalse(overlay.contains("internal fun LyricsFloatingButton("))
+        assertTrue(root.contains("WebHost.setLyricsTracking(lyricsOnScreen && foundLyrics.lines.isNotEmpty())"))
+        assertTrue(root.contains("onDispose { WebHost.setLyricsTracking(false) }"))
+        assertTrue(overlay.contains("liveClock.positionFor(snap.id, tickAt, offsetMs)"))
     }
 
     @Test fun browserDoesNotInjectAnotherSettingsOrMenuEntry() {

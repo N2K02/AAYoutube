@@ -258,12 +258,20 @@ fun AppRoot(activity: MainActivity) {
             LyricsCache.put(lyricsKey, it)
         }
         foundLyrics = LyricsContent(lyricsKey, result.first, result.second)
+        AppLog.add("LYRICS", "Result for video ${snap.id}: timed=${result.first.size} plain=${!result.second.isNullOrBlank()}")
     }
     val lyricsAvailable = lyricsEnabled && !snap.live && !snap.ad &&
         snap.id.isNotBlank() && foundLyrics.foundFor(lyricsKey)
     val lyricsOnScreen = lyricsAvailable && lyricsShown &&
         tab == Tab.Watch.ordinal && !inPip && fullscreen == null &&
         playerMode == WebHost.PlayerMode.FULL
+
+    // Subscribe to the actual HTML video clock only while timed lines are visible.
+    // A hidden/plain-text lyrics panel must not leave a 250 ms polling loop running.
+    DisposableEffect(lyricsOnScreen, snap.id, foundLyrics.lines.isNotEmpty()) {
+        WebHost.setLyricsTracking(lyricsOnScreen && foundLyrics.lines.isNotEmpty())
+        onDispose { WebHost.setLyricsTracking(false) }
+    }
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     // Picture in picture always shows the video: go back to the YouTube tab.

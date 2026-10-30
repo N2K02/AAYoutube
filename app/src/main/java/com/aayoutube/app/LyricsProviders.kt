@@ -159,14 +159,15 @@ internal object LyricsProviders {
         val entries = root.optJSONArray("data") ?: return null
         val sorted = (0 until entries.length()).mapNotNull { entries.optJSONObject(it) }
             .sortedByDescending { it.optInt("vote", 0) }
+        var plainFallback: String? = null
         for (entry in sorted) {
             val synced = entry.optString("syncedLyrics").ifBlank { entry.optString("richSyncLyrics") }
             val lines = LyricsParser.parse(synced)
             if (lines.isNotEmpty()) return lines to null
             val plain = entry.optString("plainLyric")
-            if (plain.isNotBlank()) return emptyList<LyricLine>() to plain
+            if (plain.isNotBlank() && plainFallback == null) plainFallback = plain
         }
-        return null
+        return if (plainFallback == null) null else emptyList<LyricLine>() to plainFallback
     }
     private fun netease(snap: Snap): Pair<List<LyricLine>, String?>? {
         val q = URLEncoder.encode((snap.title + " " + snap.artist).trim(), "UTF-8")

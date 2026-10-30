@@ -14,6 +14,7 @@ function playerPage(options = {}) {
   const classNames = new Set();
   const stateReports = [];
   const accountReports = [];
+  const lyricReports = [];
   const intervals = [];
   const requests = [];
   let miniRequests = 0;
@@ -91,6 +92,7 @@ function playerPage(options = {}) {
     },
     AAYNative: {
       account(status) { accountReports.push(status); },
+      lyricsTime(...args) { lyricReports.push(args); },
       mini() { miniRequests++; },
       state(json) { stateReports.push(JSON.parse(json)); },
     },
@@ -122,13 +124,13 @@ function playerPage(options = {}) {
     Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { timers.push(fn); return timers.length; },
     setInterval(fn) { intervals.push(fn); return intervals.length; },
-    clearInterval() {},
+    clearInterval(id) { intervals[id - 1] = null; },
   };
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
-    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, requests,
-    runIntervals() { for (const fn of intervals) fn(); },
+    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, lyricReports, requests,
+    runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
@@ -307,4 +309,39 @@ test('SponsorBlock re-queries when extra categories change on the same video', a
   p.window.__aay.config({ sponsorBlock: true });
   await step();
   assert.equal(p.requests.length, 3);
+});
+
+test('lyrics sync reports the actual video position during playback and seeking', () => {
+  const p = playerPage();
+  p.window.__aay.lyricsSync(true);
+  assert.equal(p.lyricReports.length, 1);
+  assert.equal(p.lyricReports[0][0], '86p7SP34qSc');
+  assert.equal(p.lyricReports[0][1], 20);
+  assert.equal(p.lyricReports[0][2], true);
+  p.video.currentTime = 84.5;
+  p.video.playbackRate = 1.5;
+  p.runIntervals();
+  assert.equal(p.lyricReports.at(-1)[1], 84.5, 'a seek must immediately replace the previous position');
+  assert.equal(p.lyricReports.at(-1)[4], 1.5);
+  p.video.readyState = 2;
+  p.runIntervals();
+  assert.equal(p.lyricReports.at(-1)[3], true, 'buffering reaches the lyrics clock');
+  p.video.pause();
+  p.runIntervals();
+  assert.equal(p.lyricReports.at(-1)[2], false, 'paused state reaches the lyrics clock');
+});
+
+test('lyrics sync stops reporting when hidden and never runs in the browse page', () => {
+  const p = playerPage();
+  p.window.__aay.lyricsSync(true);
+  p.runIntervals();
+  const beforeStop = p.lyricReports.length;
+  p.window.__aay.lyricsSync(false);
+  p.video.currentTime = 123;
+  p.runIntervals();
+  assert.equal(p.lyricReports.length, beforeStop);
+  const browse = playerPage({ browse: true });
+  browse.window.__aay.lyricsSync(true);
+  browse.runIntervals();
+  assert.equal(browse.lyricReports.length, 0);
 });
