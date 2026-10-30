@@ -42,6 +42,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private var retries = 0
+    private var recoveringPlayback = false
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && outgoing != null) send(Msg.FREEZE) }
     private val idleStop = Runnable { if (!snapshot.playing) stopSelf() }
@@ -66,6 +67,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 return
             }
             retries = 0
+            recoveringPlayback = false
             handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
             // Drain only the commands present at connection time. A failed send can
@@ -97,7 +99,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
         outgoing = null
         if (bound) runCatching { unbindService(connection) }
         bound = false
-        if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank()) {
+        if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank()) {
+            recoveringPlayback = true
             pending.clear()
             pending.addFirst(Msg.OPEN to Bundle().apply {
                 putString("id", snapshot.id)
@@ -111,7 +114,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
         if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
-        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
+        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) {
+            pending.clear()
+            recoveringPlayback = false
+        }
         val target = outgoing ?: run {
             if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
                 if (pending.size >= maxPendingCommands) pending.removeFirst()
@@ -164,6 +170,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastSavedId = s.id
             }
         }
+        if (s.playing) recoveringPlayback = false
         if (quitRequested) {
             updateNotification(s)
             return
