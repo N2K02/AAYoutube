@@ -61,6 +61,8 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // A car launcher can reuse an existing singleTop phone activity.
+        WebHost.setCarScreen(!onPhoneScreen())
         handleIntent(intent)
     }
 
@@ -173,6 +175,9 @@ class MainActivity : ComponentActivity() {
 
     /** False when Android Auto is showing this screen on the car display (no picture in picture there). */
     private fun onPhoneScreen(): Boolean {
+        // The hidden CAR_LAUNCHER category is a stable string, not a public SDK constant.
+        // Some projection hosts initially report the default display ID.
+        if (intent?.hasCategory("android.intent.category.CAR_LAUNCHER") == true) return false
         val id = if (Build.VERSION.SDK_INT >= 30) display?.displayId else @Suppress("DEPRECATION") windowManager.defaultDisplay.displayId
         return id == null || id == android.view.Display.DEFAULT_DISPLAY
     }

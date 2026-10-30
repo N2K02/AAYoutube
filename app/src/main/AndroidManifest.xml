@@ -62,10 +62,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <!-- AABrowser's car video launcher. Without this, Android Auto
+                     can select the audio-only media template for this package. -->
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
             <meta-data
                 android:name="android.max_aspect"
                 android:value="5.0" />
+            <meta-data android:name="distractionOptimized" android:value="true" />
             <!-- Fill the car display (it can be very wide and short). -->
             <layout
                 android:minWidth="1dp"
@@ -111,15 +117,14 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- MediaCompat browser, session and foreground notification for Android Auto. -->
+        <!-- MediaCompat session and notifications remain available to our explicit
+             in-app MediaBrowserCompat clients and Bluetooth controls. Do not
+             advertise an Android Auto media-browser launcher: it opens a music
+             template instead of the YouTube video screen. -->
         <service
             android:name=".PlaybackService"
-            android:exported="true"
-            android:foregroundServiceType="mediaPlayback">
-            <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService" />
-            </intent-filter>
-        </service>
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- MediaCompat media-button delivery -->
         <receiver

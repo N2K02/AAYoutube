@@ -16,7 +16,7 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
         assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM"))
         assertTrue(xml.contains("android:name=\".PlaybackService\""))
-        assertTrue(xml.contains("android.media.browse.MediaBrowserService"))
+        assertFalse(xml.contains("android.media.browse.MediaBrowserService"))
         assertTrue(xml.contains("MEDIA_PLAY_FROM_SEARCH"))
         assertFalse(xml.contains("android:name=\".CarVideoService\""))
         assertFalse(xml.contains("androidx.car.app.CarAppService"))
@@ -45,4 +45,24 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(kotlin.contains("MediaRetryPolicy.shouldRetry(retries, hasWork)"))
         assertTrue(kotlin.contains("handler.removeCallbacks(retry)"))
     }
+    @Test fun androidAutoLaunchesVideoInsteadOfMediaTemplate() {
+        val xml = source("app/src/main/AndroidManifest.xml")
+        val mainFilter = xml.substringAfter("android:name=\".MainActivity\"")
+            .substringAfter("<intent-filter>").substringBefore("</intent-filter>")
+        assertTrue(mainFilter.contains("android.intent.category.CAR_LAUNCHER"))
+        assertTrue(mainFilter.contains("androidx.car.app.category.NAVIGATION"))
+        assertTrue(mainFilter.contains("android.intent.category.APP_MAPS"))
+        val mediaEntry = xml.substringAfter("android:name=\".PlaybackService\"")
+            .substringBefore("/>")
+        assertTrue(mediaEntry.contains("android:exported=\"false\""))
+        assertFalse(mediaEntry.contains("<intent-filter>"))
+        val phone = source("app/src/main/java/com/aayoutube/app/MainActivity.kt")
+        assertTrue(phone.contains("intent?.hasCategory(\"android.intent.category.CAR_LAUNCHER\") == true"))
+        val service = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        assertTrue(service.contains("MediaBrowserServiceCompat()"))
+        assertTrue(service.contains("MediaSessionCompat(this"))
+        val client = source("app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt")
+        assertTrue(client.contains("ComponentName(context, PlaybackService::class.java)"))
+    }
+
 }
