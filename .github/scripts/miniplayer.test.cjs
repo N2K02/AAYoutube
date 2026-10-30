@@ -17,6 +17,7 @@ function playerPage(options = {}) {
   const lyricReports = [];
   const intervals = [];
   const requests = [];
+  const qualityCalls = [];
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -41,6 +42,7 @@ function playerPage(options = {}) {
     }
     pause() { this.paused = true; }
     play() { this.paused = false; return Promise.resolve(); }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 320, height: 180 }; }
     addEventListener(type, fn) {
       if (!this.events.has(type)) this.events.set(type, []);
       this.events.get(type).push(fn);
@@ -58,7 +60,12 @@ function playerPage(options = {}) {
       return selector === 'video.html5-main-video' || selector === 'video' ? video : null;
     }
     querySelectorAll() { return []; }
-    getElementById() { return null; }
+    getElementById(id) {
+      if (options.quality && id === 'movie_player') {
+        return { setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); } };
+      }
+      return null;
+    }
     createElement(tag) {
       const element = { tagName: tag.toUpperCase(), style: {}, parentNode: null };
       if (tag === 'style') styleElements.push(element);
@@ -129,7 +136,7 @@ function playerPage(options = {}) {
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
-    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, lyricReports, requests,
+    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
@@ -212,6 +219,19 @@ test('unmute overlay is hidden but video itself is not suppressed', () => {
   assert.ok(css.includes('ytm-unmute-button'));
   assert.ok(css.includes('video.html5-main-video'));
   assert.ok(!css.includes('body *{visibility:hidden'));
+});
+
+test('background quality policy restores visible PiP frames', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config({ lowQuality: true });
+  p.window.__aay.setBg(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  p.window.__aay.pip(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'PiP must not use tiny-only quality');
+  p.window.__aay.pip(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
 });
 
 test('video state reaches the media process after initialization', () => {
