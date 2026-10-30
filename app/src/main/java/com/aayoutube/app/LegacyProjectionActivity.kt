@@ -198,7 +198,6 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { it.removeAllViews() },
                 )
             }
-            }
             if (!controlsVisible) {
                 Box(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth().height(28.dp)

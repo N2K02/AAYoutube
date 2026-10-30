@@ -16,6 +16,8 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("Box(Modifier.fillMaxSize().background(Color.Black))"))
         assertTrue(code.contains("delay(3_000)"))
         assertTrue(code.contains("AnimatedVisibility("))
+        assertTrue(code.contains("            if (!controlsVisible) {"))
+        assertFalse(code.contains("            }\n            }\n            if (!controlsVisible) {"))
         assertTrue(code.contains("controlsVisible = true"))
         assertTrue(code.contains("height(28.dp)"))
         assertTrue(code.contains("CarControl(\"‹ Back\")"))
