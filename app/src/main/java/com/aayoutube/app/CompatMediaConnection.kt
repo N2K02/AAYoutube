@@ -41,7 +41,7 @@ class CompatMediaConnection(
                     runCatching { onConnected(active) }.onFailure {
                         AppLog.add("MEDIA", "Media connection callback failed: ${it.javaClass.simpleName}")
                     }
-                    while (!closed && queuedActions.isNotEmpty()) {
+                    while (!closed && browser === generationBrowser && queuedActions.isNotEmpty()) {
                         val action = queuedActions.first()
                         if (runCatching {
                             active.transportControls.sendCustomAction(action, Bundle.EMPTY)
@@ -63,8 +63,9 @@ class CompatMediaConnection(
     private fun reconnect() {
         if (closed) return
         controller = null
-        browser?.let { runCatching { it.disconnect() } }
+        val previous = browser
         browser = null
+        previous?.let { runCatching { it.disconnect() } }
         if (retries >= 5) {
             AppLog.add("MEDIA", "Media browser connection retries exhausted")
             return
