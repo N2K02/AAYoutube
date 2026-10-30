@@ -29,10 +29,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var foreground = false
     private val notificationId = 101
     private var lastRecentId = ""
+    private var lastSavedPosition = -1L
     private val channelId = "aay_media"
     private var shuttingDown = false
     private var retries = 0
     private val retry = Runnable { if (!shuttingDown && !bound) ensureWeb() }
+    private val freeze = Runnable { if (!snapshot.playing) send(Msg.FREEZE) }
+    private val idleStop = Runnable { if (!snapshot.playing) stopSelf() }
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == Msg.STATE) {
@@ -131,7 +134,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastRecentId = s.id
                 notifyChildrenChanged("recent")
             }
-            Library.saveLast(s)
+            if (lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || !s.playing) {
+                Library.saveLast(s)
+                lastSavedPosition = s.posMs
+            }
+        }
+        handler.removeCallbacks(freeze)
+        handler.removeCallbacks(idleStop)
+        if (!s.playing) {
+            handler.postDelayed(freeze, 120_000L)
+            handler.postDelayed(idleStop, 900_000L)
         }
         updateNotification(s)
     }
@@ -156,7 +168,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 override fun onPause() = send(Msg.PAUSE)
                 override fun onSkipToNext() = send(Msg.NEXT)
                 override fun onSkipToPrevious() = send(Msg.PREV)
-                override fun onStop() = send(Msg.STOP)
+                override fun onStop() {
+                    send(Msg.STOP)
+                    snapshot = snapshot.copy(playing = false)
+                    publish(snapshot)
+                }
                 override fun onCustomAction(action: String?, extras: Bundle?) {
                     when (action) {
                         "com.aayoutube.app.HELLO" -> ensureWeb()
@@ -252,6 +268,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
         super.onDestroy()
     }
 
+    private fun mediaButton(keyCode: Int): android.app.PendingIntent =
+        androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(this, keyCode.toLong())
+
     private fun createNotificationChannel() {
         if (android.os.Build.VERSION.SDK_INT >= 26) {
             val manager = getSystemService(android.app.NotificationManager::class.java)
@@ -271,10 +290,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
             .setContentText(s.artist)
             .setContentIntent(launch)
             .setOnlyAlertOnce(true)
+            .addAction(android.R.drawable.ic_media_previous, "Previous", mediaButton(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+            .addAction(if (s.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (s.playing) "Pause" else "Play", mediaButton(if (s.playing) android.view.KeyEvent.KEYCODE_MEDIA_PAUSE else android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
+            .addAction(android.R.drawable.ic_media_next, "Next", mediaButton(android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
             .setOngoing(s.playing)
             .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
             .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setMediaSession(session.sessionToken))
+                .setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
             .build()
         if (s.playing) {
             startForeground(notificationId, notification)
