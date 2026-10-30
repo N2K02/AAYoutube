@@ -38,7 +38,9 @@ class CompatMediaConnection(
                         return
                     }
                     controller = active
-                    onConnected(active)
+                    runCatching { onConnected(active) }.onFailure {
+                        AppLog.add("MEDIA", "Media connection callback failed: ${it.javaClass.simpleName}")
+                    }
                     while (!closed && queuedActions.isNotEmpty()) {
                         val action = queuedActions.first()
                         if (runCatching {
@@ -77,9 +79,19 @@ class CompatMediaConnection(
         if (active != null && runCatching {
                 active.transportControls.sendCustomAction(action, Bundle.EMPTY)
             }.isSuccess) return
-        if (queuedActions.size >= 8) queuedActions.removeFirst()
-        queuedActions.addLast(action)
-        if (active != null) reconnect() else connect()
+        if (action == Commands.EXIT) {
+            queuedActions.clear()
+            queuedActions.addLast(action)
+        } else {
+            if (queuedActions.contains(Commands.EXIT)) return
+            if (queuedActions.size >= 8) queuedActions.removeFirst()
+            queuedActions.addLast(action)
+        }
+        if (active != null) reconnect() else {
+            // A fresh explicit request can recover after the previous retry budget ran out.
+            if (browser == null && retries >= 5) retries = 0
+            connect()
+        }
     }
 
     fun disconnect() {
