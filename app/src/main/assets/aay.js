@@ -416,7 +416,22 @@
     'html.aay-car video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
     'height:100%!important;object-fit:contain!important}' +
     'html.aay-car #player-control-container{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483001!important}';
+    'width:100vw!important;height:100vh!important;z-index:2147483001!important}' +
+    // YouTube mobile watch pages use ytm-player and ytm-watch-player wrappers. Without
+    // these selectors the player remains at its original short mobile height, leaving
+    // the title/queue panel visible below it on wide Android Auto screens.
+    'html.aay-car ytm-watch-player,html.aay-car ytm-player,html.aay-car ytm-player-component,' +
+    'html.aay-car ytm-watch-player-component,html.aay-car ytm-player-container,' +
+    'html.aay-car .player-size,html.aay-car .player-placeholder{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;min-height:0!important;' +
+    'margin:0!important;padding:0!important;aspect-ratio:auto!important;' +
+    'transform:none!important;background:#000!important;z-index:2147483000!important}' +
+    'html.aay-car ytm-watch,html.aay-car ytm-watch-flexy{' +
+    'overflow:hidden!important}' +
+    'html.aay-car ytm-watch-metadata,html.aay-car ytm-watch-next-feed,' +
+    'html.aay-car ytm-item-section-renderer,html.aay-car ytm-playlist-panel-renderer{' +
+    'visibility:hidden!important}';
 
   var styleEl = null;
   function applyCss() {
