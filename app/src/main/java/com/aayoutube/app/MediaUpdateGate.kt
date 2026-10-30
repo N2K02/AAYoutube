@@ -47,7 +47,7 @@ internal class MediaUpdateGate {
             previous.speed != speed ||
             (speed == 0f && positionMs != previous.positionMs) ||
             (expected != null && abs(positionMs - expected) > 1_500L) ||
-            (previous != null && speed > 0f && atMs - previous.atMs >= 10_000L)
+            (speed > 0f && atMs - previous.atMs >= 10_000L)
 
         if (changed) playback = Playback(state, actions, positionMs, speed, atMs)
         return changed
