@@ -84,6 +84,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private fun ensureWeb() {
         if (bound || shuttingDown) return
+        // Mark binding before invoking the framework: a synchronous failure must not
+        // leave the service believing it still has a live connection.
         bound = runCatching {
             bindService(Intent(this, WebHostService::class.java), connection, BIND_AUTO_CREATE)
         }.getOrDefault(false)
@@ -100,6 +102,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         bound = false
         if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank()) {
             recoveringPlayback = true
+            idleSince = 0L
             pending.clear()
             pending.addFirst(Msg.OPEN to Bundle().apply {
                 putString("id", snapshot.id)
@@ -179,6 +182,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         if (s.playing) {
             idleSince = 0L
+            handler.removeCallbacks(freeze)
+            handler.removeCallbacks(idleStop)
+        } else if (recoveringPlayback) {
+            // A disconnected WebView is not an idle playback session.
             handler.removeCallbacks(freeze)
             handler.removeCallbacks(idleStop)
         } else if (idleSince == 0L) {
