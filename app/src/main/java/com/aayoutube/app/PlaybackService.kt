@@ -107,9 +107,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
         if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
+        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
         val target = outgoing ?: run {
             if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
-                if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
                 if (pending.size >= maxPendingCommands) pending.removeFirst()
                 pending.addLast(command to data)
             }
@@ -122,7 +122,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             })
         }.onFailure {
             AppLog.add("MEDIA", "Compat command failed: " + it.javaClass.simpleName)
-            if (command != Msg.REGISTER && command != Msg.QUIT) {
+            if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) {
                 if (pending.size >= maxPendingCommands) pending.removeFirst()
                 pending.addLast(command to data)
             }
@@ -139,7 +139,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(ACTIONS)
-            .setState(state, s.posMs, s.rate)
+            .setState(state, s.posMs.coerceAtLeast(0L), if (s.playing) s.rate.coerceAtLeast(0.1f) else 0f)
             .build())
         session.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
@@ -159,7 +159,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastSavedId = s.id
             }
         }
-        if (quitRequested) return
+        if (quitRequested) {
+            updateNotification(s)
+            return
+        }
         if (s.playing) {
             idleSince = 0L
             handler.removeCallbacks(freeze)
@@ -205,6 +208,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                             notifyChildrenChanged("favourites")
                         }
                         Commands.EXIT -> {
+                            if (quitRequested) return
                             quitRequested = true
                             pending.clear()
                             handler.removeCallbacks(retry)
