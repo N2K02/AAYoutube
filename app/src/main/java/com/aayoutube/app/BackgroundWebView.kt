@@ -5,21 +5,35 @@ import android.view.View
 import android.webkit.WebView
 
 /**
- * A WebView that does not tell the browser engine when its window is hidden.
- *
- * When the app goes to the background, Android marks the window as gone and the WebView
- * passes that on to Chromium, which pauses media below anything the page script can stop.
- * Reporting "visible" keeps the video (and its sound) playing; nothing is drawn while the
- * window is hidden, so this costs no rendering work.
- * Known workaround: https://github.com/react-native-webview/react-native-webview/issues/1570
+ * AABrowser's projection WebView keeps its renderer alive through transient
+ * host onPause/window-hide callbacks. The page's explicit pause command still
+ * pauses video: this intercepts only Android's automatic WebView lifecycle.
+ * When idle and not projected, the ordinary lifecycle remains available for
+ * WebHost.freeze() and its battery-saving timer shutdown.
  */
 class BackgroundWebView(context: Context) : WebView(context) {
+    private fun preservePlayback(): Boolean = WebPlaybackPolicy.preserveRenderer(
+        projectionVisible = WebHost.carShown || WebHost.carDisplay,
+        inPip = WebHost.inPip.value,
+        playing = WebHost.snapshot.value.playing,
+        backgroundPlay = Features.current.backgroundPlay,
+    )
+
+    override fun onPause() {
+        if (preservePlayback()) {
+            AppLog.add("VIEW", "Ignored automatic WebView pause while video is active on car/PiP")
+            return
+        }
+        super.onPause()
+    }
+
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (visibility != View.VISIBLE && Features.current.backgroundPlay) {
-            AppLog.add("VIEW", "Window hidden ($visibility): keeping the page visible for background play")
+        if (visibility != View.VISIBLE && preservePlayback()) {
+            AppLog.add("VIEW", "Window hidden ($visibility): preserving projected video renderer")
             super.onWindowVisibilityChanged(View.VISIBLE)
         } else {
             super.onWindowVisibilityChanged(visibility)
+            if (visibility == View.VISIBLE) invalidate()
         }
     }
 }

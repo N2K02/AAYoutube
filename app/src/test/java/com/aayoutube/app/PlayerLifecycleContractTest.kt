@@ -13,6 +13,8 @@ class PlayerLifecycleContractTest {
         val web = source("WebHost.kt")
         assertTrue(web.contains("car(\${carDisplay || carShown})"))
         assertTrue(web.contains("release(preserveCarOwners = true)"))
+        assertTrue(web.contains("it.onResume(); it.resumeTimers(); it.invalidate()"))
+        assertTrue(web.contains("load(withCarPlaybackIntent(normalise(url)))"))
         assertTrue(web.contains("webGeneration++"))
         assertTrue(web.contains("generation == webGeneration"))
         assertTrue(web.contains("rendererCrashCount <= 2"))

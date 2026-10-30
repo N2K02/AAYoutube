@@ -294,15 +294,21 @@ object WebHost {
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
     fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
-        // AABrowser exposes classic projection and the wide template independently.
-        // Closing one must not mark the shared WebView invisible if the other is active.
+        // AABrowser exposes classic projection and wide surfaces independently.
+        // A temporary car/phone handoff must not freeze or reset the shared player.
+        val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (carShown) {
             main.removeCallbacks(freezeSoon)
+            if (!alreadyProjected) noteVisibilityChange()
             unfreeze()
+            // Android can call WebView.onPause while moving between phone and
+            // projected windows. Explicitly restore the native renderer (as
+            // upstream AABrowser does), even when 'frozen' was already false.
+            web?.let { it.onResume(); it.resumeTimers(); it.invalidate() }
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
@@ -347,7 +353,7 @@ object WebHost {
         }
         unfreeze()
         mode.value = PlayerMode.FULL
-        load(normalise(url))
+        load(withCarPlaybackIntent(normalise(url)))
     }
 
     // ---------------------------------------------------------------- mini player
@@ -641,6 +647,17 @@ object WebHost {
         } else {
             w.loadUrl(url)
         }
+    }
+
+    /** Only a newly selected car video gets autoplay intent. A paused
+     * session restored on startup, or a user pressing Pause, stays paused. */
+    private fun withCarPlaybackIntent(url: String): String {
+        if (!carShown && !carDisplay) return url
+        val uri = Uri.parse(url)
+        if (!allowedHost(uri.host) || !uri.path.orEmpty().let {
+                it.startsWith("/watch") || it.startsWith("/live/")
+            } || uri.getQueryParameter("aay") != null) return url
+        return uri.buildUpon().appendQueryParameter("aay", "1").build().toString()
     }
 
     private fun normalise(url: String): String {

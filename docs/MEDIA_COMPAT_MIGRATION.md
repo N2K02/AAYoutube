@@ -107,3 +107,25 @@ device testing beyond CI compilation and JavaScript unit tests.
   The media-service process initializes logging as well; a file marker keeps
   opt-in logging enabled/disabled across processes without cached preference
   divergence. The Logs screen refreshes disk data off the main thread.
+
+
+## Android Auto AABrowser-style WebView playback continuity
+
+- Upstream AABrowser's primary WebView overrides onPause() with a no-op and
+  always marks the window visible. AAYouTube previously handled hidden-window
+  visibility but allowed WebView.onPause() to suspend Chromium video decoding.
+- The shared video WebView now ignores automatic onPause/window-hide events
+  **only** while projected in a car, in PiP, or when background playback is
+  both active and enabled. An idle non-projected page still freezes normally.
+- The projection page is marked active before Compose creates the player WebView.
+  On projection start, explicitly resume/invalidate the player renderer and
+  clear transient WebView hold; do not reload the surviving WebView.
+- Newly selected YouTube watch/live URLs opened through the app's navigation
+  receive the existing `aay=1` autoplay hint while on the car display. Existing
+  paused sessions and explicit user pauses remain respected.
+- No new permission or Android Auto manifest category is required: the app
+  already uses the upstream legacy CarActivityService projection categories,
+  hardware acceleration, INTERNET, WAKE_LOCK and foreground media playback.
+  This patch does not attempt to defeat vehicle/host driver-distraction policy.
+- Device test: on a parked vehicle, select and play a video, switch phone ↔ car,
+  interrupt/reconnect Android Auto, pause/resume, and verify frames with audio.

@@ -62,6 +62,9 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("WebHost.attach("))
         assertTrue(activity.contains("WebHost.detach("))
         assertTrue(activity.contains("WebHost.showOnCar(true, \"legacy-projection\")"))
+        assertTrue(activity.contains("WebHost.setHold(false)"))
+        assertTrue(activity.indexOf("WebHost.showOnCar(true, \"legacy-projection\")") <
+            activity.indexOf("setContent { AAYoutubeTheme { LegacyProjectionScreen() } }"))
         assertTrue(activity.contains("WebHost.showOnCar(false, \"legacy-projection\")"))
         assertTrue(activity.contains("WebHost.requestReattachment()"))
         assertTrue(activity.contains("mediaController?.disconnect()"))

@@ -89,6 +89,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         savedController.performRestore(bundle)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         AppLog.add("CAR", "Legacy AABrowser projection activity created")
+        // Projection must own the page before Compose creates/loads its WebView.
+        // Otherwise ensureWeb() can briefly initialize in phone/background mode.
+        WebHost.showOnCar(true, "legacy-projection")
 
         val compose = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@LegacyProjectionActivity)
@@ -270,6 +273,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carStarted = true
         configureLegacyCarInput()
         WebHost.showOnCar(true, "legacy-projection")
+        WebHost.setHold(false)
         WebHost.requestLink = relink
         connectMedia()
         attachIfNeeded()
