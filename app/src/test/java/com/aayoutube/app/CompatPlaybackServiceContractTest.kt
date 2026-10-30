@@ -38,11 +38,15 @@ class CompatPlaybackServiceContractTest {
         assertTrue(connection.contains("override fun onConnectionSuspended() { if (browser === generationBrowser) reconnect() }"))
         assertTrue(connection.contains("handler.removeCallbacks(retry)"))
         assertTrue(connection.contains("browser === generationBrowser"))
+        assertTrue(connection.contains("val previous = browser"))
+        assertTrue(connection.contains("browser = null\n        previous?.let"))
         assertTrue(connection.contains("queuedActions.clear()"))
         assertTrue(connection.contains("if (queuedActions.contains(Commands.EXIT)) return"))
         assertTrue(connection.contains("if (browser == null && retries >= 5) retries = 0"))
         assertTrue(connection.contains("if (browser == null && retries == 0) connect()"))
         assertTrue(source.contains("val toDrain = pending.size"))
+        assertTrue(source.contains("if (outgoing == null) return"))
+        assertTrue(source.contains("val wasBound = bound"))
         assertTrue(source.contains("if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty())"))
     }
     @Test fun commandQueueAndQuitContract() {
