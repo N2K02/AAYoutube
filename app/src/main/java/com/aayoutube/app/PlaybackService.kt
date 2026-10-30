@@ -27,8 +27,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
-    private var startedForeground = false
-    private val notificationId = 101
+    private val notifications = CarMediaNotificationManager(this)
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
     private var lastSavedId = ""
@@ -47,7 +46,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
     }
-    private val channelId = "aay_media"
     private var shuttingDown = false
     private var quitRequested = false
     private val finishQuit = Runnable {
@@ -194,7 +192,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        notifications.createChannel()
         Library.init(this)
         audioManager = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
         session = MediaSessionCompat(this, "AAYoutube").apply {
@@ -266,24 +264,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
         // A startForegroundService caller must be promoted before WebView IPC responds.
         if (!foreground) {
             runCatching {
-                startForeground(notificationId, placeholderNotification())
+                startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notifications.placeholder())
                 foreground = true
-                startedForeground = true
             }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
         }
         return super.onStartCommand(intent, flags, startId)
     }
-
-    private fun placeholderNotification(): android.app.Notification =
-        androidx.core.app.NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle("AAYoutube")
-            .setContentText("Preparing playback")
-            .setOnlyAlertOnce(true)
-            .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
-                Intent(this, MainActivity::class.java),
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
-            .build()
 
     override fun onGetRoot(
         clientPackageName: String,
@@ -365,47 +351,22 @@ class PlaybackService : MediaBrowserServiceCompat() {
         focusHeld = false
     }
 
-    private fun mediaButton(keyCode: Int): android.app.PendingIntent =
-        androidx.media.session.MediaButtonReceiver.buildMediaButtonPendingIntent(this, keyCode.toLong())
-
-    private fun createNotificationChannel() {
-        if (android.os.Build.VERSION.SDK_INT >= 26) {
-            val manager = getSystemService(android.app.NotificationManager::class.java)
-            manager.createNotificationChannel(android.app.NotificationChannel(
-                channelId, "AAYoutube playback", android.app.NotificationManager.IMPORTANCE_LOW))
-        }
-    }
-
     private fun updateNotification(s: Snap) {
         if (!s.playing && !foreground) return
-        val launch = android.app.PendingIntent.getActivity(this, 0,
-            Intent(this, MainActivity::class.java),
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
-        val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentTitle(s.title.ifBlank { "AAYoutube" })
-            .setContentText(s.artist)
-            .setContentIntent(launch)
-            .setOnlyAlertOnce(true)
-            .addAction(android.R.drawable.ic_media_previous, "Previous", mediaButton(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
-            .addAction(if (s.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                if (s.playing) "Pause" else "Play", mediaButton(if (s.playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY))
-            .addAction(android.R.drawable.ic_media_next, "Next", mediaButton(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
-            .setOngoing(s.playing)
-            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
-            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
-            .build()
         if (s.playing) {
-            startForeground(notificationId, notification)
-            foreground = true
-            startedForeground = false
+            runCatching {
+                startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
+                    notifications.playback(s, session.sessionToken))
+                foreground = true
+            }.onFailure {
+                AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}")
+            }
         } else {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
-            startedForeground = false
         }
     }
+
     private companion object {
         const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
