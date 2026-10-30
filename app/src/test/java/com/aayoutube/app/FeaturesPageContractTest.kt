@@ -13,10 +13,21 @@ class FeaturesPageContractTest {
         val screen = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val js = source("app/src/main/assets/aay.js")
-        for (flag in listOf("blockAds", "hideShorts", "hidePromos", "backgroundPlay",
-            "lowQuality", "autoContinue", "sponsorBlock", "sbExtra", "returnDislike")) {
-            assertTrue("Missing persisted flag $flag", features.contains("putBoolean(\"$flag\""))
-            assertTrue("Missing script option $flag", features.contains(".put(\"$flag\""))
+        // Persisted feature names and script-facing keys intentionally differ
+        // for lowQualityInBackground and sponsorExtra; test the actual mapping.
+        for ((stored, script) in listOf(
+            "blockAds" to "blockAds",
+            "hideShorts" to "hideShorts",
+            "hidePromos" to "hidePromos",
+            "backgroundPlay" to "backgroundPlay",
+            "lowQuality" to "lowQuality",
+            "autoContinue" to "autoContinue",
+            "sponsorBlock" to "sponsorBlock",
+            "sponsorExtra" to "sbExtra",
+            "returnDislike" to "returnDislike",
+        )) {
+            assertTrue("Missing persisted flag $stored", features.contains("putBoolean(\"$stored\""))
+            assertTrue("Missing script option $script", features.contains(".put(\"$script\""))
         }
         assertTrue(features.contains("putBoolean(\"autoPip\""))
         assertTrue(screen.contains("LaunchedEffect(snap.playing, flags.autoPip, playerMode, tab, inPip)"))

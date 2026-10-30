@@ -45,6 +45,10 @@ class MiniPlayerTransitionContractTest {
         assertFalse(js.contains("html.aay-pip body *{visibility:hidden!important}"))
         assertTrue(js.contains("!A.inPip && !A.isMini && CFG.lowQuality"))
         assertTrue(js.contains("CSS_UNMUTE"))
-        assertFalse(js.contains("b.click(); } catch (e) {} }"))
+        val unmute = js.substringAfter("/* ---------- 1d.").substringBefore("/* ---------- 1f.")
+        assertTrue(unmute.contains("CSS. Never click it"))
+        assertFalse(unmute.contains("b.click()"))
+        // SponsorBlock/ad skip buttons are unrelated and remain functional.
+        assertTrue(js.contains("if (b) { try { b.click(); } catch (e) {} }"))
     }
 }
