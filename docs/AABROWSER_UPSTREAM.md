@@ -58,11 +58,22 @@ The projected WebView fills the legacy car window. A centered control overlay hi
 three seconds after interaction; its top-edge reveal target is independent of the
 WebView, and video uses `object-fit: contain` to avoid cropping.
 
-## Legacy input-manager compatibility
+## Legacy input-manager and media compatibility
 
-The car activity now probes the archived SDK for its legacy car input manager
-using the same return-type discovery approach as upstream. The manager is logged
-for diagnostics; touch remains handled by the existing WebView. A full native
-input/rotary/voice adapter is **not** claimed until verified on the head unit.
-The existing Media3 and two-process playback implementation intentionally
-remains distinct from upstream's MediaBrowserServiceCompat single-process design.
+The projected activity discovers the archived SDK input manager through
+return-type reflection, with the named getter fallback from AABrowser. Its
+`CarEditable` bridge forwards the active WebView's input connection; on-screen
+touch stays with the WebView. Full rotary, voice and IME fidelity still needs
+car testing. The projection also requests that the SDK ignore transient
+configuration changes, following upstream.
+
+Media3 is **no longer present**. Phone and projection connect through
+`CompatMediaConnection` to `PlaybackService : MediaBrowserServiceCompat`
+and `MediaSessionCompat`, with recent/favourite browsing, transport, voice,
+notification and metadata parity. Unlike AABrowser's one-process media
+implementation, AAYouTube retains the independent `:web` process and Messenger
+link for uninterrupted single-WebView playback. Its reconnect watchdog waits
+for an acknowledged registration and rejects stale-epoch snapshots.
+
+See [MEDIA_COMPAT_MIGRATION.md](MEDIA_COMPAT_MIGRATION.md) for the current
+architecture and outstanding device checks.

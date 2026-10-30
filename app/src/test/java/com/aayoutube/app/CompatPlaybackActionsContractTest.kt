@@ -16,7 +16,8 @@ class CompatPlaybackActionsContractTest {
         assertTrue(source.contains("override fun onCustomAction(action: String?, extras: Bundle?)"))
         assertTrue(source.contains("Library.toggleFavourite(snapshot)"))
         assertTrue(source.contains("notifyChildrenChanged(\"favourites\")"))
-        assertTrue(source.contains("send(Msg.QUIT)"))
+        assertTrue(source.contains("Commands.EXIT -> requestQuit()"))
+        assertTrue(source.contains("send(Msg.QUIT, replyTo = incoming)"))
         assertTrue(source.contains("stopSelf()"))
     }
 

@@ -51,6 +51,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var registrationEpoch = 0
     private var awaitingRegistration = false
     private var recoveringPlayback = false
+    /** A binder connection alone is not evidence that the WebView can accept commands. */
+    private val registrationTimeout = Runnable {
+        if (!shuttingDown && !quitRequested && awaitingRegistration && bound) {
+            AppLog.add("MEDIA", "WebView registration timed out; reconnecting")
+            lost()
+        }
+    }
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
     private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested) stopSelf() }
@@ -65,8 +72,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 awaitingRegistration = false
                 retries = 0
                 handler.removeCallbacks(retry)
+                handler.removeCallbacks(registrationTimeout)
             }
-        } else if (message.what == Msg.STATE && !quitRequested) {
+        } else if (message.what == Msg.STATE && !quitRequested &&
+            bound && !awaitingRegistration && message.data.getInt("epoch", -1) == registrationEpoch
+        ) {
+            // Ignore in-flight reports from a disconnected or superseded WebView link.
             snapshot = Snap.from(message.data)
             publish(snapshot)
         }
@@ -85,10 +96,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 return
             }
             handler.removeCallbacks(retry)
+            handler.removeCallbacks(registrationTimeout)
             registrationEpoch++
             awaitingRegistration = true
             send(Msg.REGISTER, Bundle().apply { putInt("epoch", registrationEpoch) }, replyTo = incoming)
             if (outgoing == null) return
+            handler.postDelayed(registrationTimeout, 5_000L)
             // Drain only the commands present at connection time. A failed send can
             // requeue its command; never spin indefinitely on a dead binder.
             val toDrain = pending.size
@@ -128,6 +141,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         handler.postDelayed(retry, 1_000L shl retries++)
     }
     private fun lost() {
+        handler.removeCallbacks(registrationTimeout)
         outgoing = null
         val wasBound = bound
         val previous = connection
@@ -318,6 +332,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         recoveringPlayback = false
         awaitingRegistration = false
         handler.removeCallbacks(retry)
+        handler.removeCallbacks(registrationTimeout)
         handler.removeCallbacks(freeze)
         handler.removeCallbacks(idleStop)
         snapshot = snapshot.copy(playing = false, buffering = false)

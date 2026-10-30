@@ -65,6 +65,7 @@ object WebHost {
     private var web: WebView? = null
     private var scriptHandler: ScriptHandler? = null
     private var link: Messenger? = null
+    private var linkEpoch = -1
     private var frozen = false
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private var pendingUrl: String? = null
@@ -537,6 +538,7 @@ object WebHost {
     fun onLinkUnbound() {
         AppLog.add("LINK", "Media service disconnected")
         link = null
+        linkEpoch = -1
         if (!shown && !snapshot.value.playing) scheduleFreeze()
     }
 
@@ -544,13 +546,14 @@ object WebHost {
 
     fun onCommand(m: Message) {
         val d = m.data ?: Bundle.EMPTY
-        AppLog.add("LINK", "From media process: what=${m.what} data=${d.keySet().joinToString { k -> "$k=${d.get(k)}" }}")
+        AppLog.add("LINK", "From media process: what=${m.what} keys=${d.keySet().sorted().joinToString()}")
         if (m.what != Msg.FREEZE) unfreeze()
         when (m.what) {
             Msg.REGISTER -> {
                 link = m.replyTo
+                linkEpoch = d.getInt("epoch", -1)
                 // The service resets its reconnect budget only after this acknowledgement.
-                send(Msg.REGISTER_ACK, Bundle().apply { putInt("epoch", d.getInt("epoch", -1)) })
+                send(Msg.REGISTER_ACK, Bundle().apply { putInt("epoch", linkEpoch) })
                 if (snapshot.value.id.isNotEmpty()) send(Msg.STATE, snapshot.value.toBundle())
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
@@ -627,10 +630,12 @@ object WebHost {
         val l = link ?: return
         try {
             val m = Message.obtain(null, what)
+            if (what == Msg.STATE) data.putInt("epoch", linkEpoch)
             m.data = data
             l.send(m)
         } catch (e: RemoteException) {
             link = null
+            linkEpoch = -1
         }
     }
 

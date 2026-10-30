@@ -1,17 +1,42 @@
-# Media3 to AABrowser MediaCompat migration
+# MediaCompat architecture — AABrowser parity
 
-The upstream media implementation is MediaBrowserServiceCompat with MediaSessionCompat.
-AAYouTube currently has a Media3 library service plus a two-process Messenger bridge.
+Reference: [fcaronte/AABrowser](https://github.com/fcaronte/AABrowser), pinned at
+`dca3f543c83445ee4b38761eed824eb92208109f`.
 
-The non-exported CompatPlaybackService foundation provides the upstream media-browser
-API and media-session lifecycle without replacing the active playback session yet.
-It intentionally does not claim to implement playback controls: those callbacks
-must be connected to HostLink, and existing phone/car clients must migrate from
-MediaController before Media3 is removed.
+## Implemented
 
-Remaining cutover work:
-- Connect MediaSessionCompat callbacks and state/metadata to HostLink and Snap.
-- Implement recent/favourite browse results, search, playFromMediaId and voice.
-- Replace Media3 MediaController clients in MainActivity and LegacyProjectionActivity.
-- Replace the media-button receiver, notification, and manifest service registration.
-- Remove BridgePlayer and Media3 dependency, migrate tests, verify APK/Android Auto.
+- `PlaybackService : MediaBrowserServiceCompat` owns the `MediaSessionCompat`,
+  Android Auto audio discovery and transport, media buttons, notifications,
+  voice searches, recent and favourite browse trees, and the resumable last video.
+- `CompatMediaConnection` connects the phone and the classic projection screen.
+  Both use the same media session and issue `Commands.HELLO` to link the WebView.
+- `WebHostService` runs in the separate `:web` process with one shared WebView;
+  Messenger IPC forwards media controls and player snapshots across processes.
+- Registered `LegacyProjectionService : CarActivityService` owns the **only**
+  car-video entry, following AABrowser's v4 legacy projection SDK lifecycle.
+- Media3, `BridgePlayer`, `MediaController`, NavigationTemplate,
+  `CarVideoService`, and the experimental virtual-display renderer have been removed.
+- WebView registration is acknowledged and bounded by a five-second timeout.
+  Playback snapshots carry a connection epoch: stale/disconnected messages
+  cannot overwrite the current media session after a new connection.
+- Quit is an explicit cross-process handshake with a bounded fallback.
+
+## Deliberate differences from AABrowser
+
+AAYouTube keeps its **single YouTube player** instead of AABrowser's browser tab
+manager and local playback backends. Its media service and WebView run in
+separate processes for background playback, so IPC and reconnect logic are
+still necessary even though both sides now use MediaCompat. Spotify, local files,
+weather widgets and multi-tab navigation are excluded.
+
+The archived Google projection SDK has unverified redistribution rights. Its
+binary is fetched from the pinned upstream commit, verified by size and Git blob
+SHA, and restricted to personal experimental evaluation. Neither this code nor
+the upstream app establishes Android Auto video support on every head unit.
+
+## Validation requirements
+
+Compile, run unit tests and JS tests, then test a **parked** physical Android Auto
+head unit: car/phone WebView handoff, rotation/configuration changes, media
+browse/search, steering-wheel keys, buffering, seek, screen off, process death,
+reconnect, background playback and Quit. CI does not substitute for device tests.

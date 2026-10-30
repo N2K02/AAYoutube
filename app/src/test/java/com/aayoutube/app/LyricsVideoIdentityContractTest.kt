@@ -23,7 +23,9 @@ class LyricsVideoIdentityContractTest {
     }
 
     @Test fun carHostDoesNotDetachUnchangedWebViewOnRender() {
-        val service = read("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
-        assertTrue(service.contains("frame.getChildAt(0) is android.webkit.WebView) return"))
+        val projection = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        assertTrue(projection.contains("if (frame.childCount == 0 && WebHost.fullscreenView.value == null)"))
+        assertTrue(projection.contains("WebHost.detach(frame)"))
+        assertTrue(projection.contains("key(version)")))
     }
 }

@@ -104,6 +104,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             decor.setViewTreeSavedStateRegistryOwner(this)
         }
         updateCarWindow()
+        // As in upstream MainCarActivity, avoid destroying the projected WebView
+        // for transient automotive display configuration changes.
+        runCatching {
+            javaClass.getMethod("setIgnoreConfigChanges", Int::class.javaPrimitiveType)
+                .invoke(this, 0xFFFF)
+        }
         configureLegacyCarInput()
     }
 
@@ -128,7 +134,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             }
             type = type.superclass
         }
-        return null
+        // Some SDK revisions expose a named public getter rather than a typed
+        // no-argument method in the superclass.
+        return runCatching {
+            javaClass.getMethod("getInputManager").invoke(this) as? InputManager
+        }.getOrNull()
     }
 
     private fun configureLegacyCarInput() {
@@ -287,7 +297,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private fun connectMedia() {
         if (!carStarted || mediaController != null) return
         mediaController = CompatMediaConnection(this) {
-            it.transportControls.sendCustomAction("com.aayoutube.app.HELLO", Bundle.EMPTY)
+            it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)
         }.also { it.connect() }
     }
     override fun onPause() {
@@ -325,6 +335,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         playerContainer = null
         mediaController?.disconnect()
         mediaController = null
+        WebHost.requestReattachment()
         super.onDestroy()
     }
 }
@@ -361,7 +372,7 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
         val web = target ?: return null
         val connection = web.onCreateInputConnection(editorInfo)
-        editorInfo?.imeOptions = (editorInfo?.imeOptions ?: 0) or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        editorInfo?.let { it.imeOptions = it.imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI }
         return connection ?: BaseInputConnection(web, true)
     }
 

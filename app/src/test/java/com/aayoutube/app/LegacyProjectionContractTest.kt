@@ -51,6 +51,9 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("web.onCreateInputConnection(editorInfo)"))
         assertTrue(activity.contains("configureLegacyCarInput()"))
         assertTrue(activity.contains("method.returnType.name.endsWith(\".input.InputManager\")"))
+        assertTrue(activity.contains("getInputManager"))
+        assertTrue(activity.contains("setIgnoreConfigChanges"))
+        assertTrue(activity.contains("WebHost.requestReattachment()"))
     }
 
     @Test fun projectionUsesExistingPlayerMediaAndSafeShutdown() {
@@ -60,8 +63,9 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("WebHost.showOnCar(true, \"legacy-projection\")"))
         assertTrue(activity.contains("WebHost.showOnCar(false, \"legacy-projection\")"))
         assertTrue(activity.contains("WebHost.requestReattachment()"))
-        assertTrue(activity.contains("MediaController.releaseFuture(it)"))
-        assertTrue(activity.contains("future.get().sendCustomCommand(Commands.HELLO, Bundle.EMPTY)"))
+        assertTrue(activity.contains("mediaController?.disconnect()"))
+        assertTrue(activity.contains("CompatMediaConnection(this)"))
+        assertTrue(activity.contains("it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)"))
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("private val carOwners = mutableSetOf<String>()"))
         assertTrue(web.contains("carShown = carOwners.isNotEmpty()"))
