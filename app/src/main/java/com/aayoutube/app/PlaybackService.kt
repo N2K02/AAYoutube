@@ -71,8 +71,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
             // Drain only the commands present at connection time. A failed send can
             // requeue its command; never spin indefinitely on a dead binder.
             val toDrain = pending.size
-            repeat(toDrain) {
-                if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) return@repeat
+            for (index in 0 until toDrain) {
+                if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) break
                 val (command, data) = pending.removeFirst()
                 send(command, data)
             }
@@ -149,7 +149,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
             .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.title)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
-            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
+            .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, s.art.takeIf { it.startsWith("https://") }.orEmpty())
             .build())
         if (s.id.isNotBlank()) {
             if (s.playing && lastRecentId != s.id) {
@@ -227,7 +228,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         }
                     }
                 }
-                override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos) })
+                override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos.coerceAtLeast(0L)) })
+                override fun onFastForward() = onSeekTo((snapshot.posMs + 30_000L).coerceAtMost(snapshot.durMs.takeIf { it > 0 } ?: Long.MAX_VALUE))
+                override fun onRewind() = onSeekTo((snapshot.posMs - 10_000L).coerceAtLeast(0L))
                 override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
                     when {
                         mediaId?.startsWith("v:") == true ->
@@ -287,7 +290,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     private fun playable(item: Library.Item) = MediaBrowserCompat.MediaItem(
         MediaDescriptionCompat.Builder().setMediaId("v:" + item.id)
-            .setTitle(item.title).setSubtitle(item.artist).build(),
+            .setTitle(item.title).setSubtitle(item.artist)
+            .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg")).build(),
         MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
     )
 
@@ -336,7 +340,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private companion object {
         const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_FAST_FORWARD or
+            PlaybackStateCompat.ACTION_REWIND or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO or
             PlaybackStateCompat.ACTION_STOP or PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or
             PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
