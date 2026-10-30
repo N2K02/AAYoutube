@@ -9,7 +9,9 @@ import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,6 +29,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
@@ -88,26 +96,15 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val version by WebHost.webVersion.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
-        Column(Modifier.fillMaxSize().background(Color.Black)) {
-            // This is inside AABrowser's projected CarActivity, not Android Auto's
-            // host-owned navigation template. The buttons can therefore be centered.
-            Row(
-                modifier = Modifier.fillMaxWidth().height(64.dp)
-                    .background(Color(0xFF252525)).padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                CarControl("‹ Back") { WebHost.goBack() }
-                Spacer(Modifier.width(8.dp))
-                CarControl("⌂ Home") { WebHost.openUrl("https://m.youtube.com/") }
-                Spacer(Modifier.width(8.dp))
-                CarControl(if (playing.playing) "Ⅱ Pause" else "▶ Play") {
-                    WebHost.cmd(if (playing.playing) "pause" else "play")
-                }
-                Spacer(Modifier.width(8.dp))
-                CarControl("⏭ Next") { WebHost.cmd("next") }
+        var controlsVisible by remember { mutableStateOf(true) }
+        var controlsVersion by remember { mutableIntStateOf(0) }
+        LaunchedEffect(controlsVisible, controlsVersion) {
+            if (controlsVisible) {
+                delay(3_000)
+                controlsVisible = false
             }
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+        }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
             key(version) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -141,6 +138,36 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { it.removeAllViews() },
                 )
             }
+            }
+            if (!controlsVisible) {
+                Box(
+                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(28.dp)
+                        .clickable { controlsVisible = true; controlsVersion++ }
+                )
+            }
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(64.dp)
+                        .background(Color(0xCC252525)).padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CarControl("‹ Back") { WebHost.goBack(); controlsVersion++ }
+                    Spacer(Modifier.width(8.dp))
+                    CarControl("⌂ Home") { WebHost.openUrl("https://m.youtube.com/"); controlsVersion++ }
+                    Spacer(Modifier.width(8.dp))
+                    CarControl(if (playing.playing) "Ⅱ Pause" else "▶ Play") {
+                        WebHost.cmd(if (playing.playing) "pause" else "play")
+                        controlsVersion++
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    CarControl("⏭ Next") { WebHost.cmd("next"); controlsVersion++ }
+                }
             }
         }
     }
