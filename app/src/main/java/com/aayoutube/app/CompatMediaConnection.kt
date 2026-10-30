@@ -66,12 +66,10 @@ class CompatMediaConnection(
         val previous = browser
         browser = null
         previous?.let { runCatching { it.disconnect() } }
-        if (retries >= 5) {
-            AppLog.add("MEDIA", "Media browser connection retries exhausted")
-            return
-        }
+        // Keep trying while a phone/car client is alive, but cap the delay.
         handler.removeCallbacks(retry)
-        handler.postDelayed(retry, 1_000L shl retries++)
+        handler.postDelayed(retry, MediaRetryPolicy.delayMs(retries))
+        retries = (retries + 1).coerceAtMost(6)
     }
 
     fun command(action: String) {
@@ -89,9 +87,7 @@ class CompatMediaConnection(
             queuedActions.addLast(action)
         }
         if (active != null) reconnect() else {
-            // Do not bypass an already scheduled backoff. Explicit user actions
-            // can restart a connection after the retry budget has been exhausted.
-            if (browser == null && retries >= 5) retries = 0
+            // Queued actions flush when the scheduled reconnect succeeds.
             if (browser == null && retries == 0) connect()
         }
     }

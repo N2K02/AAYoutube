@@ -41,7 +41,7 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(kotlin.contains("recovery.onMissingPlayer()"))
         assertTrue(kotlin.contains("command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT"))
         assertTrue(kotlin.contains("pending.addFirst(Msg.OPEN"))
-        assertTrue(kotlin.contains("retries >= 4"))
+        assertTrue(kotlin.contains("MediaRetryPolicy.shouldRetry(retries, hasWork)"))
         assertTrue(kotlin.contains("handler.removeCallbacks(retry)"))
     }
 }

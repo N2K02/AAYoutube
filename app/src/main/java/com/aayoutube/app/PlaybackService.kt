@@ -172,9 +172,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private fun scheduleRetry() {
-        if (shuttingDown || quitRequested || retries >= 4) return
+        val hasWork = recovery.active || pending.isNotEmpty() || snapshot.playing
+        if (shuttingDown || quitRequested || !MediaRetryPolicy.shouldRetry(retries, hasWork)) return
         handler.removeCallbacks(retry)
-        handler.postDelayed(retry, 1_000L shl retries++)
+        handler.postDelayed(retry, MediaRetryPolicy.delayMs(retries))
+        retries = (retries + 1).coerceAtMost(6)
     }
     private fun lost() {
         handler.removeCallbacks(registrationTimeout)

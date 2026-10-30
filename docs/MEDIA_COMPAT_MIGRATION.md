@@ -65,3 +65,10 @@ reconnect, background playback and Quit. CI does not substitute for device tests
 
 The instrumentation/device matrix remains required; static contracts and JVM
 logic tests cannot prove Android Auto host and decoder behavior.
+
+- An idle media service stops automatic reconnect attempts after four failures;
+  playback recovery and open phone/car clients retry with capped exponential
+  backoff and terminate on explicit disconnect or Quit.
+- Artwork loads asynchronously only from trusted YouTube/Google image hosts;
+  stale downloads cannot overwrite subsequent media entries. Worker tasks are
+  shut down with the MediaCompat service.
