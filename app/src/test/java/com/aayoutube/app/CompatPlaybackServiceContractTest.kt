@@ -68,7 +68,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("retries >= 4"))
         assertTrue(source.contains("Msg.REGISTER_ACK"))
         assertTrue(source.contains("registrationEpoch++"))
-        assertTrue(source.contains("message.data.getInt(\\"epoch\\", -1) == registrationEpoch".replace("\\\"", "\\"")))
+        assertTrue(source.contains("message.data.getInt(\"epoch\", -1) == registrationEpoch"))
         assertTrue(source.contains("recoveringPlayback = true"))
         assertTrue(source.contains("} else if (recoveringPlayback) {"))
         assertTrue(source.contains("handler.removeCallbacks(idleStop)"))
