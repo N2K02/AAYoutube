@@ -7,8 +7,8 @@ import org.junit.Test
 class CompatPlaybackActionsContractTest {
     private val source by lazy {
         sequenceOf(
-            File("app/src/main/java/com/aayoutube/app/CompatPlaybackService.kt"),
-            File("../app/src/main/java/com/aayoutube/app/CompatPlaybackService.kt")
+            File("app/src/main/java/com/aayoutube/app/PlaybackService.kt"),
+            File("../app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         ).first { it.isFile }.readText()
     }
 
