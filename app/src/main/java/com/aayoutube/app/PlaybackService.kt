@@ -73,6 +73,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (bound) runCatching { unbindService(connection) }
         bound = false
         if (snapshot.playing && snapshot.id.isNotBlank()) {
+            pending.clear()
             pending.addFirst(Msg.OPEN to Bundle().apply {
                 putString("id", snapshot.id)
                 putLong("sec", snapshot.posMs.coerceAtLeast(0L) / 1000L)
@@ -97,7 +98,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 this.data = data
                 this.replyTo = replyTo
             })
-        }.onFailure { AppLog.add("MEDIA", "Compat command failed: " + it.javaClass.simpleName) }
+        }.onFailure {
+            AppLog.add("MEDIA", "Compat command failed: " + it.javaClass.simpleName)
+            if (command != Msg.REGISTER && command != Msg.QUIT) {
+                if (pending.size >= maxPendingCommands) pending.removeFirst()
+                pending.addLast(command to data)
+            }
+            lost()
+        }
     }
     private fun publish(s: Snap) {
         val state = when {
