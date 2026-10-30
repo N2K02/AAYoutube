@@ -4,7 +4,10 @@ import android.content.ComponentName
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Window
 import android.view.ViewGroup
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -88,6 +91,28 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             setContent { AAYoutubeTheme { LegacyProjectionScreen() } }
         }
         setContentView(compose)
+        // Legacy CarActivity owns a separate window; configure its actual decor tree.
+        carWindow()?.decorView?.let { decor ->
+            decor.setViewTreeLifecycleOwner(this)
+            decor.setViewTreeViewModelStoreOwner(this)
+            decor.setViewTreeSavedStateRegistryOwner(this)
+        }
+        updateCarWindow()
+    }
+
+    /** Match AABrowser's legacy CarActivity window handling, not the phone window. */
+    private fun carWindow(): Window? = runCatching {
+        javaClass.getMethod("c").invoke(this) as? Window
+    }.getOrNull()
+
+    private fun updateCarWindow() {
+        runCatching {
+            val window = carWindow() ?: return
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                hide(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }.onFailure { AppLog.add("CAR", "Car window insets unavailable: " + it.javaClass.simpleName) }
     }
 
     /** One shared player, matching AABrowser's projected Compose screen technique. */
@@ -197,6 +222,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         super.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         WebHost.setHold(false)
+        updateCarWindow()
         attachIfNeeded()
     }
 

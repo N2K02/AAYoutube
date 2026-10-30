@@ -38,6 +38,9 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("store.clear()"))
         assertTrue(activity.contains("handler.removeCallbacksAndMessages(null)"))
         assertFalse(activity.contains("runOnUiThread"))
+        assertTrue(activity.contains("WindowInsetsControllerCompat"))
+        assertTrue(activity.contains("setViewTreeLifecycleOwner(this)"))
+        assertTrue(activity.contains("updateCarWindow()"))
     }
 
     @Test fun projectionUsesExistingPlayerMediaAndSafeShutdown() {
