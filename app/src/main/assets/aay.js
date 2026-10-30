@@ -182,8 +182,8 @@
       try { if (p && p.unMute) p.unMute(); } catch (e) {}
       try { if (p && p.setVolume && p.getVolume && p.getVolume() === 0) p.setVolume(100); } catch (e) {}
       v.muted = false;
-      var b = document.querySelector('.ytp-unmute, .ytmUnmuteButton, ytm-unmute-button button, button[class*="unmute" i]');
-      if (b && b.offsetParent !== null) { try { b.click(); } catch (e) {} }
+      // The temporary muted-autoplay overlay is hidden by CSS. Never click it
+      // programmatically: a second click could mute the playing video again.
       console.log('[aay] unmuted the video (YouTube started it muted)');
     };
     ['volumechange', 'play', 'playing', 'loadedmetadata'].forEach(function (type) {
@@ -396,24 +396,40 @@
     'ytm-mobile-topbar-renderer a[href*="market://"],' +
     'ytm-mobile-topbar-renderer a[aria-label="Open App"],' +
     'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}';
+  // A real 16:9 WebView viewport, not a scaled graphics layer, shows the
+  // small and PiP video. Do NOT hide every ancestor with visibility:hidden:
+  // Chromium's accelerated video surface may disappear even if <video> is visible.
   var CSS_PIP =
-    'html.aay-pip,html.aay-pip body{background:#000!important;overflow:hidden!important;width:100%!important;height:100%!important;margin:0!important;padding:0!important}' +
-    'html.aay-pip body *{visibility:hidden!important}' +
-    'html.aay-pip .html5-video-player,html.aay-pip .html5-video-player *{visibility:visible!important}' +
-    'html.aay-pip .html5-video-player{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483647!important;margin:0!important}' +
-    'html.aay-pip .html5-video-container,html.aay-pip .html5-video-player .html5-video-container{' +
-    'position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483646!important}' +
-    'html.aay-pip video{visibility:visible!important;position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
-    'height:100vh!important;min-width:100vw!important;min-height:100vh!important;' +
+    'html.aay-video-only,html.aay-video-only body{background:#000!important;overflow:hidden!important;' +
+    'width:100%!important;height:100%!important;margin:0!important;padding:0!important}' +
+    'html.aay-video-only #player-container-id,html.aay-video-only .player-container,' +
+    'html.aay-video-only #player-container,html.aay-video-only ytm-watch-player,' +
+    'html.aay-video-only ytm-player,html.aay-video-only ytm-player-component,' +
+    'html.aay-video-only ytm-player-container,html.aay-video-only .player-size{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;min-height:0!important;' +
+    'margin:0!important;padding:0!important;transform:none!important;' +
+    'background:#000!important;z-index:2147483000!important}' +
+    'html.aay-video-only #player,html.aay-video-only #movie_player,' +
+    'html.aay-video-only .html5-video-player,html.aay-video-only .html5-video-container{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;transform:none!important;' +
+    'margin:0!important;padding:0!important;z-index:2147483001!important}' +
+    'html.aay-video-only video.html5-main-video{' +
+    'position:absolute!important;inset:0!important;width:100%!important;height:100%!important;' +
     'max-width:none!important;max-height:none!important;object-fit:contain!important;' +
-    'transform:none!important;z-index:2147483647!important}' +
-    'html.aay-pip .ytp-chrome-top,html.aay-pip .ytp-chrome-bottom,html.aay-pip .ytp-gradient-top,' +
-    'html.aay-pip .ytp-gradient-bottom,html.aay-pip .ytp-pause-overlay,html.aay-pip .ytp-ce-element,' +
-    'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}' +
-    'html.aay-fit:not(.aay-pip) video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
-    'height:100%!important;object-fit:contain!important}';
+    'transform:none!important;visibility:visible!important;z-index:2147483002!important}' +
+    'html.aay-video-only .ytp-chrome-top,html.aay-video-only .ytp-chrome-bottom,' +
+    'html.aay-video-only .ytp-gradient-top,html.aay-video-only .ytp-gradient-bottom,' +
+    'html.aay-video-only .ytp-pause-overlay,html.aay-video-only .ytp-ce-element,' +
+    'html.aay-video-only .ytp-cards-teaser,html.aay-video-only .ytp-endscreen-content{' +
+    'display:none!important}' +
+    'html.aay-fit:not(.aay-video-only) video.html5-main-video{left:0!important;top:0!important;' +
+    'width:100%!important;height:100%!important;object-fit:contain!important}';
+  // Suppress only the muted-autoplay prompt, not normal player volume controls.
+  var CSS_UNMUTE =
+    '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
+    '[class*="tap-to-unmute" i],[class*="unmute-overlay" i]{display:none!important}';
   // Car screen (wide and short): the player, with YouTube's own controls, fills the whole screen,
   // like the YouTube app held sideways. The rest of the page is under it (back = mini player).
   var CSS_CAR =
@@ -449,7 +465,7 @@
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR;
+    var css = CSS_PIP + CSS_CAR + CSS_UNMUTE;
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
@@ -1040,16 +1056,26 @@
   function smallLayout() {
     var on = !!(A.inPip || A.isMini);
     liftAncestors(getVideo(), on);
-    document.documentElement.classList.toggle('aay-pip', on);
+    document.documentElement.classList.toggle('aay-video-only', on);
+    document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
+    document.documentElement.classList.toggle('aay-pip', !!A.inPip);
     // Clear YouTube's cached video dimensions when Android resizes into PiP.
-    if (on) document.documentElement.classList.remove('aay-fit');
-    if (!on) fixLayout();
+    if (on) {
+      document.documentElement.classList.remove('aay-fit');
+      // Recalculate YouTube's internal player size after native WebView resizes.
+      [0, 150, 450].forEach(function (ms) { later(function () {
+        var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+        window.dispatchEvent(new Event('resize'));
+      }, ms); });
+    } else fixLayout();
   }
 
   A.mini = function (on) {
     A.isMini = !!on;
     smallLayout();
     carLayout();
+    A.setBg(A.isBg);
     window.dispatchEvent(new Event('resize'));
   };
 
@@ -1064,6 +1090,7 @@
       pipTimer = setInterval(pipCheck, 2000);
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
+    A.setBg(A.isBg);
     window.dispatchEvent(new Event('resize'));
   };
 
@@ -1074,11 +1101,11 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p || !p.setPlaybackQualityRange) return;
     try {
-      if (on && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
+      if (on && !A.inPip && !A.isMini && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
         lowered = true;
         console.log('[aay] background: lowest video quality');
         p.setPlaybackQualityRange('tiny', 'tiny');
-      } else if ((!on || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
+      } else if ((!on || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
         // Only undo our own change; a quality the user picked in the player is left alone.
         lowered = false;
         console.log('[aay] foreground: video quality back to automatic');
