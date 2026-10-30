@@ -89,4 +89,22 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("if (foreground && lastNotification == key) return"))
         assertTrue(source.contains("if (!shuttingDown) updateNotification(snapshot)"))
     }
+    @Test fun acknowledgedHandshakeAndDirectExitFallback() {
+        val web = listOf(File("app/src/main/java/com/aayoutube/app/WebHost.kt"),
+            File("../app/src/main/java/com/aayoutube/app/WebHost.kt"))
+            .first { it.isFile }.readText()
+        val activity = listOf(File("app/src/main/java/com/aayoutube/app/MainActivity.kt"),
+            File("../app/src/main/java/com/aayoutube/app/MainActivity.kt"))
+            .first { it.isFile }.readText()
+        val protocol = listOf(File("app/src/main/java/com/aayoutube/app/Protocol.kt"),
+            File("../app/src/main/java/com/aayoutube/app/Protocol.kt"))
+            .first { it.isFile }.readText()
+        assertTrue(protocol.contains("const val REGISTER_ACK = 103"))
+        assertTrue(web.contains("send(Msg.REGISTER_ACK"))
+        assertTrue(web.contains("d.getInt(\"epoch\", -1)"))
+        assertTrue(source.contains("message.data.getInt(\"epoch\", -1) == registrationEpoch"))
+        assertTrue(source.contains("if (intent?.action == ACTION_QUIT) requestQuit()"))
+        assertTrue(activity.contains("setAction(PlaybackService.ACTION_QUIT)"))
+    }
+
 }
