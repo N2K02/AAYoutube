@@ -56,6 +56,10 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("val toDrain = pending.size"))
         assertTrue(source.contains("if (outgoing == null) return"))
         assertTrue(source.contains("val wasBound = bound"))
+        assertTrue(source.contains("private fun newConnection(): ServiceConnection"))
+        assertTrue(source.contains("if (connection !== this || shuttingDown) return"))
+        assertTrue(source.contains("if (connection === this) lost()"))
+        assertTrue(source.contains("if (wasBound && previous != null)"))
         assertTrue(source.contains("if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty())"))
     }
     @Test fun commandQueueAndQuitContract() {
