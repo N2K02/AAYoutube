@@ -36,6 +36,8 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("setViewTreeSavedStateRegistryOwner("))
         assertTrue(activity.contains("lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)"))
         assertTrue(activity.contains("store.clear()"))
+        assertTrue(activity.contains("handler.removeCallbacksAndMessages(null)"))
+        assertFalse(activity.contains("runOnUiThread"))
     }
 
     @Test fun projectionUsesExistingPlayerMediaAndSafeShutdown() {

@@ -304,9 +304,11 @@ object WebHost {
         js("window.__aay&&window.__aay.setBg(${!shown})")
     }
 
-    /** Rebind an already-created phone AndroidView after a car window relinquishes it. */
+    /** Rebind an already-created phone AndroidView after a car window relinquishes it.
+     * Even a stopped Activity needs the version bump so its retained Compose tree will
+     * reclaim the WebView when it resumes. Never steal from a second active car host. */
     fun requestReattachment() {
-        if (activityVisible) webVersion.update { it + 1 }
+        if (!carShown) webVersion.update { it + 1 }
     }
 
     /** The screen is leaving the foreground (or came back): page pauses are ignored until it returns. */

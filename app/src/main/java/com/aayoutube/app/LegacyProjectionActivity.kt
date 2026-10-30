@@ -2,6 +2,8 @@ package com.aayoutube.app
 
 import android.content.ComponentName
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
@@ -47,7 +49,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     private var mediaController: ListenableFuture<MediaController>? = null
     private var playerContainer: FrameLayout? = null
-    private val relink: () -> Unit = { runOnUiThread { connectMedia() } }
+    private val handler = Handler(Looper.getMainLooper())
+    private val relink: () -> Unit = { handler.post { connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
         super.onCreate(bundle)
@@ -91,13 +94,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     },
                 )
             }
-            if (full != null) {
+            val fullscreenView = full
+            if (fullscreenView != null) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
                         FrameLayout(context).also { frame ->
-                            (full.parent as? ViewGroup)?.removeView(full)
-                            frame.addView(full, FrameLayout.LayoutParams(-1, -1))
+                            (fullscreenView.parent as? ViewGroup)?.removeView(fullscreenView)
+                            frame.addView(fullscreenView, FrameLayout.LayoutParams(-1, -1))
                         }
                     },
                     onRelease = { it.removeAllViews() },
@@ -170,6 +174,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         playerContainer?.let { WebHost.detach(it) }
