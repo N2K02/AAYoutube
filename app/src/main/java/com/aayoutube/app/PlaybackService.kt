@@ -28,6 +28,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
     private val notificationId = 101
+    private var lastRecentId = ""
     private val channelId = "aay_media"
     private var shuttingDown = false
     private var retries = 0
@@ -117,10 +118,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs)
             .build())
         if (s.id.isNotBlank()) {
-            if (s.playing) Library.noteStarted(s)
+            if (s.playing && lastRecentId != s.id) {
+                Library.noteStarted(s)
+                lastRecentId = s.id
+                notifyChildrenChanged("recent")
+            }
             Library.saveLast(s)
         }
-        notifyChildrenChanged("recent")
         updateNotification(s)
     }
 
@@ -155,6 +159,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         "com.aayoutube.app.EXIT" -> {
                             pending.clear()
                             send(Msg.QUIT)
+                            snapshot = snapshot.copy(playing = false)
+                            publish(snapshot)
                             stopSelf()
                         }
                     }
