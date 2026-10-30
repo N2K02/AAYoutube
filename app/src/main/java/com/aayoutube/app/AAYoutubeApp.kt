@@ -12,6 +12,7 @@ class AAYoutubeApp : Application() {
         if (isWebProcess()) {
             AppLog.init(this)
             Features.init(this)
+            LyricsPrefs.init(this)
             WebHost.init(this)
             BrowseHost.init(this)
         } else {

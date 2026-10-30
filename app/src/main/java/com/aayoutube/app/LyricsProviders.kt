@@ -34,6 +34,7 @@ internal object LyricsProviders {
         if (from < 0 || from + direction !in order.indices) return
         java.util.Collections.swap(order, from, from + direction)
         prefs.edit().putString("providers", order.joinToString(",") { it.name }).apply()
+        LyricsPrefs.providersChanged()
     }
     /** Prefer a timed match from any enabled source; plain text is the fallback only. */
     suspend fun fetch(context: Context, snap: Snap): Pair<List<LyricLine>, String?> =

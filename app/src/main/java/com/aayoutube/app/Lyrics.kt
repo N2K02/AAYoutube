@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.offset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
@@ -24,12 +23,25 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
 internal data class LyricLine(val atMs: Long, val text: String)
+
+/** The latest resolved lyrics belong to a specific video and title/artist combination. */
+internal data class LyricsContent(
+    val key: String = "",
+    val lines: List<LyricLine> = emptyList(),
+    val plain: String? = null,
+) {
+    fun foundFor(currentKey: String): Boolean =
+        key == currentKey && (lines.isNotEmpty() || !plain.isNullOrBlank())
+}
+
 
 internal object LyricsParser {
     private val stamp = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?]""")
@@ -48,6 +60,7 @@ internal object LyricsCache {
     private val values = mutableMapOf<String, Pair<List<LyricLine>, String?>>()
     fun key(snap: Snap) = listOf(snap.id, snap.title.trim().lowercase(), snap.artist.trim().lowercase()).joinToString("|")
     @Synchronized fun get(key: String) = values[key]
+    @Synchronized fun clear() { values.clear() }
     @Synchronized fun put(key: String, value: Pair<List<LyricLine>, String?>) {
         if (value.first.isNotEmpty() || !value.second.isNullOrBlank()) {
             if (values.size >= 40) values.remove(values.keys.first())
@@ -65,12 +78,33 @@ internal object LyricsSync {
 
 internal object LyricsPrefs {
     private const val FILE = "lyrics"
+    private val _enabled = MutableStateFlow(true)
+    private val _shown = MutableStateFlow(true)
+    private val _providersVersion = MutableStateFlow(0)
+    val enabledState: StateFlow<Boolean> = _enabled
+    val shownState: StateFlow<Boolean> = _shown
+    val providersVersion: StateFlow<Int> = _providersVersion
+
+    /** Initialize once in the web process, before composing any screen. */
+    fun init(context: Context) {
+        _enabled.value = enabled(context)
+        _shown.value = show(context)
+    }
     fun enabled(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("enabled", true)
     fun show(context: Context) = context.getSharedPreferences(FILE, 0).getBoolean("show", true)
     fun position(context: Context, key: String, fallback: Float) = context.getSharedPreferences(FILE, 0).getFloat(key, fallback)
     fun setPosition(context: Context, key: String, value: Float) = context.getSharedPreferences(FILE, 0).edit().putFloat(key, value).apply()
-    fun set(context: Context, key: String, value: Boolean) =
+    fun set(context: Context, key: String, value: Boolean) {
         context.getSharedPreferences(FILE, 0).edit().putBoolean(key, value).apply()
+        when (key) {
+            "enabled" -> _enabled.value = value
+            "show" -> _shown.value = value
+        }
+    }
+    fun providersChanged() {
+        LyricsCache.clear()
+        _providersVersion.value++
+    }
 }
 
 internal object LyricsLookup {
@@ -107,16 +141,16 @@ internal object LyricsLookup {
 @Composable
 internal fun LyricsSettingsPage() {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var enabled by remember { mutableStateOf(LyricsPrefs.enabled(context)) }
-    var shown by remember { mutableStateOf(LyricsPrefs.show(context)) }
+    val enabled by LyricsPrefs.enabledState.collectAsState()
+    val shown by LyricsPrefs.shownState.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Text("Lyrics", style = MaterialTheme.typography.headlineSmall)
         ListItem(headlineContent = { Text("Enable lyrics") },
             supportingContent = { Text("Search for lyrics when a video plays.") },
-            trailingContent = { Switch(enabled, onCheckedChange = { enabled = it; LyricsPrefs.set(context, "enabled", it) }) })
+            trailingContent = { Switch(enabled, onCheckedChange = { LyricsPrefs.set(context, "enabled", it) }) })
         ListItem(headlineContent = { Text("Show lyrics overlay") },
-            supportingContent = { Text("Show lyrics over the video. You can also toggle them from the player.") },
-            trailingContent = { Switch(shown, onCheckedChange = { shown = it; LyricsPrefs.set(context, "show", it) }) })
+            supportingContent = { Text("Show lyrics when found. Use the music icon before Settings in the top header to show or hide them.") },
+            trailingContent = { Switch(shown, onCheckedChange = { LyricsPrefs.set(context, "show", it) }) })
         Text("Free lyrics providers (priority order)", style = MaterialTheme.typography.titleMedium)
         var revision by remember { mutableIntStateOf(0) }
         val prefs = context.getSharedPreferences("lyrics", 0)
@@ -140,6 +174,7 @@ internal fun LyricsSettingsPage() {
                     Switch(checked, onCheckedChange = {
                         checked = it
                         prefs.edit().putBoolean("provider_" + provider.name, it).apply()
+                        LyricsPrefs.providersChanged()
                         revision++
                     })
                 },
@@ -150,25 +185,13 @@ internal fun LyricsSettingsPage() {
 }
 
 @Composable
-internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
+internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val enabled = LyricsPrefs.enabled(context)
+    val lines = content.lines
+    val plain = content.plain
     var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
-    var lines by remember { mutableStateOf(emptyList<LyricLine>()) }
-    var plain by remember { mutableStateOf<String?>(null) }
-    var loaded by remember { mutableStateOf(false) }
     var now by remember { mutableLongStateOf(0L) }
     var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
-    LaunchedEffect(snap.id, snap.title, snap.artist, enabled, visible) {
-        val key = LyricsCache.key(snap)
-        val cached = LyricsCache.get(key)
-        lines = cached?.first ?: emptyList(); plain = cached?.second; loaded = cached != null
-        if (enabled && visible && snap.id.isNotBlank() && cached == null) {
-            val result = LyricsProviders.fetch(context, snap)
-            LyricsCache.put(key, result)
-            lines = result.first; plain = result.second; loaded = true
-        }
-    }
     LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.buffering, snap.rate, offsetMs) {
         val start = SystemClock.elapsedRealtime()
         while (true) {
@@ -177,7 +200,7 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
             delay(200)
         }
     }
-    if (!visible || !enabled || snap.id.isBlank()) return
+    if (!content.foundFor(LyricsCache.key(snap))) return
     Column(
         Modifier.fillMaxWidth().offset { IntOffset(0, verticalOffset.roundToInt()) }
             .padding(horizontal = 24.dp, vertical = 16.dp)
@@ -223,35 +246,8 @@ internal fun LyricsOverlay(snap: Snap, visible: Boolean, onToggle: () -> Unit) {
                         textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 5.dp))
                 }
             }
-            plain != null -> Text(plain!!.take(1500), color = Color.White, textAlign = TextAlign.Center)
-            !loaded -> Text("Finding lyrics…", color = Color.White)
-            else -> Text("Lyrics not found", color = Color.White)
+            !plain.isNullOrBlank() -> Text(plain.take(1500), color = Color.White, textAlign = TextAlign.Center)
         }
     }
 }
 
-/** Draggable control; only a real tap toggles the overlay. */
-@Composable
-internal fun LyricsFloatingButton(shown: Boolean, onToggle: () -> Unit) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val density = LocalDensity.current
-    var dx by remember { mutableFloatStateOf(LyricsPrefs.position(ctx, "button_x", 0f)) }
-    var dy by remember { mutableFloatStateOf(LyricsPrefs.position(ctx, "button_y", 0f)) }
-    Box(
-        Modifier.offset { IntOffset(dx.roundToInt(), dy.roundToInt()) }
-            .pointerInput(Unit) {
-                detectDragGestures(onDragEnd = {
-                    LyricsPrefs.setPosition(ctx, "button_x", dx)
-                    LyricsPrefs.setPosition(ctx, "button_y", dy)
-                }) { change, drag ->
-                    change.consume()
-                    dx = (dx + drag.x).coerceIn(-size.width * 5f, 0f)
-                    dy = (dy + drag.y).coerceIn(-size.height * 10f, size.height * 2f)
-                }
-            },
-    ) {
-        FilledTonalIconButton(onClick = onToggle) {
-            Text(if (shown) "♪" else "L", style = MaterialTheme.typography.titleMedium)
-        }
-    }
-}

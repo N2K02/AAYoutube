@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
@@ -145,7 +146,13 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
 @Composable
-private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
+private fun AAYoutubePageHeader(
+    tab: Tab,
+    lyricsAvailable: Boolean,
+    lyricsShown: Boolean,
+    onLyrics: () -> Unit,
+    onSettings: () -> Unit,
+) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
@@ -177,6 +184,24 @@ private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                if (tab == Tab.Watch) {
+                    IconButton(
+                        onClick = onLyrics,
+                        enabled = lyricsAvailable,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.MusicNote,
+                            contentDescription = if (lyricsAvailable) {
+                                if (lyricsShown) "Hide lyrics" else "Show lyrics"
+                            } else "Lyrics unavailable",
+                            tint = if (lyricsAvailable && lyricsShown) MaterialTheme.colorScheme.primary
+                                else if (lyricsAvailable) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
                 // Keep the entire "New" label inside a reserved header area. A badge
                 // attached directly to a compact icon can be clipped by the IconButton.
                 Box(modifier = Modifier.size(width = 56.dp, height = 48.dp)) {
@@ -209,14 +234,36 @@ private fun AAYoutubePageHeader(tab: Tab, onSettings: () -> Unit) {
 @Composable
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
+    val context = LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
+    val lyricsShown by LyricsPrefs.shownState.collectAsState()
+    val providerVersion by LyricsPrefs.providersVersion.collectAsState()
     val fullscreen by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val snap by WebHost.snapshot.collectAsState()
-    val htmlMenuTap by WebHost.htmlMenuTap.collectAsState()
-    // The page-side shortcut opens Settings directly, not another navigation menu.
-    LaunchedEffect(htmlMenuTap) { if (htmlMenuTap > 0L) tab = Tab.Settings.ordinal }
+    val playerMode by WebHost.mode.collectAsState()
+    val lyricsKey = LyricsCache.key(snap)
+    var foundLyrics by remember { mutableStateOf(LyricsContent()) }
+
+    // Lookup begins for the current video regardless of overlay visibility. A hidden
+    // overlay must never leave the top Lyrics button permanently disabled.
+    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live) {
+        foundLyrics = LyricsContent()
+        if (!lyricsEnabled || snap.id.isBlank() || snap.title.isBlank() || snap.live || snap.ad)
+            return@LaunchedEffect
+        val cached = LyricsCache.get(lyricsKey)
+        val result = cached ?: LyricsProviders.fetch(context, snap).also {
+            LyricsCache.put(lyricsKey, it)
+        }
+        foundLyrics = LyricsContent(lyricsKey, result.first, result.second)
+    }
+    val lyricsAvailable = lyricsEnabled && !snap.live && !snap.ad &&
+        snap.id.isNotBlank() && foundLyrics.foundFor(lyricsKey)
+    val lyricsOnScreen = lyricsAvailable && lyricsShown &&
+        tab == Tab.Watch.ordinal && !inPip && fullscreen == null &&
+        playerMode == WebHost.PlayerMode.FULL
 
     LaunchedEffect(snap.playing) { activity.updatePip() }
     // Picture in picture always shows the video: go back to the YouTube tab.
@@ -275,6 +322,11 @@ fun AppRoot(activity: MainActivity) {
                 if (showAAYoutubeHeader(tab == Tab.Watch.ordinal, onCar, inPip, fullscreen != null)) {
                     AAYoutubePageHeader(
                         Tab.entries[tab],
+                        lyricsAvailable = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL,
+                        lyricsShown = lyricsShown,
+                        onLyrics = {
+                            if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
+                        },
                         onSettings = {
                             tab = if (tab == Tab.Settings.ordinal) Tab.Watch.ordinal else Tab.Settings.ordinal
                         },
@@ -315,19 +367,11 @@ fun AppRoot(activity: MainActivity) {
                 }
             }
         }
-        if (tab == Tab.Watch.ordinal && !inPip && fullscreen == null && snap.id.isNotBlank() && WebHost.mode.value == WebHost.PlayerMode.FULL) {
-            val ctx = LocalContext.current
-            var lyricsShown by remember { mutableStateOf(LyricsPrefs.show(ctx)) }
-            Box(Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 90.dp)) {
-                LyricsFloatingButton(lyricsShown) {
-                    lyricsShown = !lyricsShown
-                    LyricsPrefs.set(ctx, "show", lyricsShown)
-                }
-            }
-            Box(Modifier.align(Alignment.TopCenter)) {
-                LyricsOverlay(snap, lyricsShown) {
-                    lyricsShown = false
-                    LyricsPrefs.set(ctx, "show", false)
+        if (lyricsOnScreen) {
+            // Keep the draggable lyrics panel below the single top app header.
+            Box(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 76.dp)) {
+                LyricsOverlay(snap, foundLyrics) {
+                    LyricsPrefs.set(context, "show", false)
                 }
             }
         }
