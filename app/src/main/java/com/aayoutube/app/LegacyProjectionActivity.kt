@@ -75,7 +75,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var mediaController: ListenableFuture<MediaController>? = null
     private var playerContainer: FrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val relink: () -> Unit = { handler.post { connectMedia() } }
+    private var carStarted = false
+    private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
         super.onCreate(bundle)
@@ -212,6 +213,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     override fun onStart() {
         super.onStart()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        carStarted = true
         WebHost.showOnCar(true, "legacy-projection")
         WebHost.requestLink = relink
         connectMedia()
@@ -236,7 +238,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     /** The native media process remains the sole owner of Android Auto media commands. */
     private fun connectMedia() {
-        if (mediaController != null) return
+        if (!carStarted || mediaController != null) return
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(applicationContext, token).buildAsync()
         mediaController = future
@@ -263,6 +265,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onStop() {
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        carStarted = false
+        handler.removeCallbacksAndMessages(null)
         playerContainer?.let { WebHost.detach(it) }
         WebHost.showOnCar(false, "legacy-projection")
         if (WebHost.requestLink === relink) WebHost.requestLink = null
@@ -274,6 +278,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     override fun onDestroy() {
+        carStarted = false
+        if (WebHost.requestLink === relink) WebHost.requestLink = null
+        WebHost.showOnCar(false, "legacy-projection")
         handler.removeCallbacksAndMessages(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
