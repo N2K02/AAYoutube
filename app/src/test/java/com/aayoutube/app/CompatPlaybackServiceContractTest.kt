@@ -27,6 +27,16 @@ class CompatPlaybackServiceContractTest {
         assertTrue(manager.contains("setShowActionsInCompactView(0, 1, 2)"))
         assertTrue(manager.contains("fun placeholder()"))
     }
+    @Test fun browserRecoveryAndBoundedIpcDrain() {
+        val connection = listOf(File("app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt"),
+            File("../app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt"))
+            .first { it.isFile }.readText()
+        assertTrue(connection.contains("override fun onConnectionFailed() { reconnect() }"))
+        assertTrue(connection.contains("override fun onConnectionSuspended() { reconnect() }"))
+        assertTrue(connection.contains("handler.removeCallbacks(retry)"))
+        assertTrue(source.contains("val toDrain = pending.size"))
+        assertTrue(source.contains("if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty())"))
+    }
     @Test fun commandQueueAndQuitContract() {
         assertTrue(source.contains("pending.clear()"))
         assertTrue(source.contains("Msg.QUIT_ACK"))
