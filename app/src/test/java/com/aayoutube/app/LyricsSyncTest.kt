@@ -37,9 +37,10 @@ class LyricsSyncTest {
         assertEquals(80_250L, seeked.positionFor("video", 30_250, 0))
         assertNull(seeked.positionFor("previous", 30_250, 0))
         val paused = LyricsClock("video", 85_000, false, false, 1f, 30_000)
-        assertEquals(85_000L, paused.positionFor("video", 45_000, 0))
+        assertEquals(85_000L, paused.positionFor("video", 31_000, 0))
         val buffering = LyricsClock("video", 85_000, true, true, 1f, 30_000)
-        assertEquals(85_000L, buffering.positionFor("video", 45_000, 0))
+        assertEquals(85_000L, buffering.positionFor("video", 31_000, 0))
+        assertNull(paused.positionFor("video", 45_000, 0))
         assertNull(LyricsClock().positionFor("video", 30_000, 0))
         assertNull(seeked.positionFor("video", 35_000, 0))
     }

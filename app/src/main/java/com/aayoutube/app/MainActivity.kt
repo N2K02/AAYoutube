@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         resumed -= this
-        if (resumed.isEmpty()) WebHost.setHold(true)
+        if (resumed.isEmpty() && !WebHost.carShown) WebHost.setHold(true)
     }
 
     override fun onResume() {

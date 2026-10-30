@@ -98,6 +98,8 @@ object WebHost {
 
     /** The video is being shown on the car screen (see CarVideoService). */
     @Volatile var carShown = false
+        private set
+    private val carOwners = mutableSetOf<String>()
 
     /** The app screen is on the car display (Android 15+): videos fill the screen there. */
     val carScreen = MutableStateFlow(false)
@@ -286,18 +288,25 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
-    fun showOnCar(on: Boolean) {
-        carShown = on
-        // The legacy surface service is not a car-display Activity; keep the page's
-        // car-mode layout and touch-to-seek enabled there as well.
+    fun showOnCar(on: Boolean, owner: String = "template") {
+        // AABrowser exposes classic projection and the wide template independently.
+        // Closing one must not mark the shared WebView invisible if the other is active.
+        if (on) carOwners.add(owner) else carOwners.remove(owner)
+        carShown = carOwners.isNotEmpty()
+        AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
-        if (on) {
+        if (carShown) {
             main.removeCallbacks(freezeSoon)
             unfreeze()
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
         js("window.__aay&&window.__aay.setBg(${!shown})")
+    }
+
+    /** Rebind an already-created phone AndroidView after a car window relinquishes it. */
+    fun requestReattachment() {
+        if (activityVisible) webVersion.update { it + 1 }
     }
 
     /** The screen is leaving the foreground (or came back): page pauses are ignored until it returns. */
@@ -510,6 +519,8 @@ object WebHost {
         wrapper = null
         frozen = false
         snapshot.value = Snap()
+        carOwners.clear()
+        carShown = false
         lyricsTracking = false
         lyricsClock.value = LyricsClock()
         youtubeAccount.value = YouTubeAccountState.CHECKING

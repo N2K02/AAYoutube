@@ -270,6 +270,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         if (frame != null) {
             WebHost.detach(frame)
             WebHost.showOnCar(false)
+            WebHost.requestReattachment()
         }
         runCatching { presentation?.dismiss() }
         presentation = null
