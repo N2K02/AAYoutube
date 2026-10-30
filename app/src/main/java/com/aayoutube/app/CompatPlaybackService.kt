@@ -25,6 +25,10 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     private var outgoing: Messenger? = null
     private var bound = false
     private val pending = ArrayDeque<Pair<Int, Bundle>>()
+    private val handler = Handler(Looper.getMainLooper())
+    private var shuttingDown = false
+    private var retries = 0
+    private val retry = Runnable { if (!shuttingDown && !bound) ensureWeb() }
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == Msg.STATE) {
@@ -36,18 +40,43 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             outgoing = Messenger(binder)
+            retries = 0
+            handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
             while (pending.isNotEmpty()) {
                 val (command, data) = pending.removeFirst()
                 send(command, data)
             }
         }
-        override fun onServiceDisconnected(name: ComponentName) { outgoing = null }
-        override fun onBindingDied(name: ComponentName) { outgoing = null }
-        override fun onNullBinding(name: ComponentName) { outgoing = null }
+        override fun onServiceDisconnected(name: ComponentName) = lost()
+        override fun onBindingDied(name: ComponentName) = lost()
+        override fun onNullBinding(name: ComponentName) = lost()
     }
     private fun ensureWeb() {
-        if (!bound) bound = bindService(Intent(this, WebHostService::class.java), connection, BIND_AUTO_CREATE)
+        if (bound || shuttingDown) return
+        bound = runCatching {
+            bindService(Intent(this, WebHostService::class.java), connection, BIND_AUTO_CREATE)
+        }.getOrDefault(false)
+        if (!bound) scheduleRetry()
+    }
+    private fun scheduleRetry() {
+        if (shuttingDown || retries >= 4) return
+        handler.removeCallbacks(retry)
+        handler.postDelayed(retry, 1_000L shl retries++)
+    }
+    private fun lost() {
+        outgoing = null
+        if (bound) runCatching { unbindService(connection) }
+        bound = false
+        if (snapshot.playing && snapshot.id.isNotBlank()) {
+            pending.addFirst(Msg.OPEN to Bundle().apply {
+                putString("id", snapshot.id)
+                putLong("sec", snapshot.posMs.coerceAtLeast(0L) / 1000L)
+            })
+            snapshot = snapshot.copy(playing = false, buffering = true)
+            publish(snapshot)
+            scheduleRetry()
+        }
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         ensureWeb()
@@ -168,6 +197,8 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        shuttingDown = true
+        handler.removeCallbacksAndMessages(null)
         if (bound) runCatching { unbindService(connection) }
         bound = false
         outgoing = null
