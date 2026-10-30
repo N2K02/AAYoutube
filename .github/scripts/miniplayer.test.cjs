@@ -127,6 +127,7 @@ function playerPage(options = {}) {
       requests.push(url);
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     },
+    innerWidth: 320, innerHeight: 180,
     getComputedStyle() { return { visibility: 'visible', direction: 'ltr' }; },
     Event: class { constructor(type) { this.type = type; } },
     setTimeout(fn) { timers.push(fn); return timers.length; },
