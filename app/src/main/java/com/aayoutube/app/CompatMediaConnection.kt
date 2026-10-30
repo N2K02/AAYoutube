@@ -88,9 +88,10 @@ class CompatMediaConnection(
             queuedActions.addLast(action)
         }
         if (active != null) reconnect() else {
-            // A fresh explicit request can recover after the previous retry budget ran out.
+            // Do not bypass an already scheduled backoff. Explicit user actions
+            // can restart a connection after the retry budget has been exhausted.
             if (browser == null && retries >= 5) retries = 0
-            connect()
+            if (browser == null && retries == 0) connect()
         }
     }
 
