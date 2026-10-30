@@ -19,9 +19,12 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("override fun onSeekTo"))
     }
     @Test fun reconnectionAndShutdown() {
-        assertTrue(source.contains("if (snapshot.playing && snapshot.id.isNotBlank())"))
+        assertTrue(source.contains("if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank())"))
         assertTrue(source.contains("retries >= 4"))
         assertTrue(source.contains("shuttingDown = true"))
         assertTrue(source.contains("handler.removeCallbacksAndMessages(null)"))
+        assertTrue(source.contains("Msg.QUIT_ACK"))
+        assertTrue(source.contains("override fun onStartCommand"))
+        assertTrue(source.contains("placeholderNotification()"))
     }
 }
