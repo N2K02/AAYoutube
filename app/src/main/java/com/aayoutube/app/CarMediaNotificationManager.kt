@@ -41,23 +41,38 @@ internal class CarMediaNotificationManager(
     private fun action(action: Long): PendingIntent =
         MediaButtonReceiver.buildMediaButtonPendingIntent(service, action)
 
-    fun playback(snapshot: Snap, token: MediaSessionCompat.Token): Notification =
-        NotificationCompat.Builder(service, CHANNEL_ID)
+    fun playback(snapshot: Snap, token: MediaSessionCompat.Token): Notification {
+        val builder = NotificationCompat.Builder(service, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(snapshot.title.ifBlank { "AAYoutube" })
             .setContentText(snapshot.artist)
             .setContentIntent(launchIntent())
             .setOnlyAlertOnce(true)
-            .addAction(android.R.drawable.ic_media_previous, "Previous",
-                action(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
-            .addAction(if (snapshot.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                if (snapshot.playing) "Pause" else "Play",
-                action(if (snapshot.playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY))
-            .addAction(android.R.drawable.ic_media_next, "Next",
-                action(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
             .setOngoing(snapshot.playing)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setMediaSession(token).setShowActionsInCompactView(0, 1, 2))
-            .build()
+
+        val compact = mutableListOf<Int>()
+        var actionIndex = 0
+        if (snapshot.canPrev) {
+            builder.addAction(android.R.drawable.ic_media_previous, "Previous",
+                action(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
+            compact.add(actionIndex++)
+        }
+        builder.addAction(
+            if (snapshot.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+            if (snapshot.playing) "Pause" else "Play",
+            action(if (snapshot.playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY)
+        )
+        compact.add(actionIndex++)
+        if (snapshot.canNext) {
+            builder.addAction(android.R.drawable.ic_media_next, "Next",
+                action(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
+            compact.add(actionIndex)
+        }
+        return builder.setStyle(
+            androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(token)
+                .setShowActionsInCompactView(*compact.toIntArray())
+        ).build()
+    }
 }
