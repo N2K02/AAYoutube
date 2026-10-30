@@ -177,15 +177,41 @@ test('horizontal swipe and gestures outside the video do not minimize', () => {
 test('mini layout exposes the video surface and preserves play until explicitly paused', () => {
   const p = playerPage();
   p.window.__aay.mini(true);
-  assert.ok(p.classNames.has('aay-pip'));
+  assert.ok(p.classNames.has('aay-video-only'));
+  assert.ok(p.classNames.has('aay-mini'));
+  assert.equal(p.classNames.has('aay-pip'), false);
   assert.ok(p.styleElements.some(e => e.textContent &&
-    e.textContent.includes('html.aay-pip video{visibility:visible!important;')));
+    e.textContent.includes('html.aay-video-only video.html5-main-video')));
   p.video.pause();
   assert.equal(p.video.paused, false, 'YouTube resize pauses must be ignored in mini mode');
   p.window.__aay.cmd('pause');
   assert.equal(p.video.paused, true, 'explicit pause must still work');
   p.window.__aay.mini(false);
+  assert.equal(p.classNames.has('aay-video-only'), false);
+  assert.equal(p.classNames.has('aay-mini'), false);
+});
+
+test('system PiP changes only its own mode, preserves video-only view until exit', () => {
+  const p = playerPage();
+  p.window.__aay.mini(true);
+  p.window.__aay.pip(true);
+  assert.equal(p.classNames.has('aay-mini'), false);
+  assert.equal(p.classNames.has('aay-pip'), true);
+  assert.equal(p.classNames.has('aay-video-only'), true);
+  p.window.__aay.pip(false);
+  assert.equal(p.classNames.has('aay-mini'), true);
   assert.equal(p.classNames.has('aay-pip'), false);
+  assert.equal(p.classNames.has('aay-video-only'), true);
+  p.window.__aay.mini(false);
+  assert.equal(p.classNames.has('aay-video-only'), false);
+});
+
+test('unmute overlay is hidden but video itself is not suppressed', () => {
+  const p = playerPage();
+  const css = p.styleElements.map(e => e.textContent).join('');
+  assert.ok(css.includes('ytm-unmute-button'));
+  assert.ok(css.includes('video.html5-main-video'));
+  assert.ok(!css.includes('body *{visibility:hidden'));
 });
 
 test('video state reaches the media process after initialization', () => {

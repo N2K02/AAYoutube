@@ -8,6 +8,28 @@ class FeaturesPageContractTest {
     private fun source(path: String): String = listOf(File(path), File("../$path"))
         .firstOrNull { it.isFile }?.readText() ?: error("Missing $path")
 
+    @Test fun playbackDisplaySwitchesAreStoredAndReachThePage() {
+        val features = source("app/src/main/java/com/aayoutube/app/Features.kt")
+        val screen = source("app/src/main/java/com/aayoutube/app/Screens.kt")
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val js = source("app/src/main/assets/aay.js")
+        for (flag in listOf("blockAds", "hideShorts", "hidePromos", "backgroundPlay",
+            "lowQuality", "autoContinue", "sponsorBlock", "sbExtra", "returnDislike")) {
+            assertTrue("Missing persisted flag $flag", features.contains("putBoolean(\"$flag\""))
+            assertTrue("Missing script option $flag", features.contains(".put(\"$flag\""))
+        }
+        assertTrue(features.contains("putBoolean(\"autoPip\""))
+        assertTrue(screen.contains("LaunchedEffect(snap.playing, flags.autoPip, playerMode, tab, inPip)"))
+        assertTrue(web.contains("w.settings.textZoom = f.pageZoom"))
+        assertTrue(web.contains("if (desktopChanged)"))
+        assertTrue(screen.contains("Features.update { it.copy(pageZoom = z) }"))
+        assertTrue(js.contains("A.config = function (c)"))
+        assertTrue(js.contains("if (CFG.hidePromos) css += CSS_PROMO"))
+        assertTrue(js.contains("if (CFG.hideShorts) css += CSS_SHORTS"))
+        assertTrue(js.contains("if (CFG.blockAds) css += CSS_ADS"))
+        assertTrue(js.contains("if (CFG.autoContinue === false) continue"))
+    }
+
     @Test fun signOutOnlyAppearsWhenYouTubeConfirmedLogin() {
         val ui = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         val features = ui.substringAfter("fun FeaturesPage()").substringBefore("// ---------------------------------------------------------------------------- update")

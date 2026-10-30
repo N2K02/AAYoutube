@@ -72,3 +72,33 @@ logic tests cannot prove Android Auto host and decoder behavior.
 - Artwork loads asynchronously only from trusted YouTube/Google image hosts;
   stale downloads cannot overwrite subsequent media entries. Worker tasks are
   shut down with the MediaCompat service.
+
+
+## Mobile mini-player, Android PiP and Settings audit (2026-10-31)
+
+- The in-app 16:9 mini player now measures the actual Android WebView to
+  mini width/height. The former fullscreen WebView + Compose graphicsLayer
+  scale could leave Chromium's separate video surface unscaled, letterboxed
+  or grey on some devices. The Compose controls remain independently draggable.
+- In system PiP, the player WebView occupies the whole activity; the browse
+  WebView is hidden and paused. PiP params use the visible native rectangle,
+  landscape ratio and non-seamless resize (video textures are not generally
+  safe for seamless scale animations). PiP entry failures restore normal CSS.
+  The OS, not the app, determines the resulting floating window size.
+- CSS now targets video-only elements without globally hiding accelerated
+  ancestors; mini and system PiP have separate mode classes. YouTube's
+  redundant 'Tap to unmute' overlay is suppressed, without fake clicks.
+- Background quality reduction is only used when truly backgrounded, not
+  during visible mini or system PiP playback; it is restored on reentry.
+- Feature audit: video options are persisted by Features, applied to both
+  primary and browse WebViews, and the page script receives live updates.
+  Android auto-PiP eligibility now responds to Settings switches and tab
+  changes. Prior SponsorBlock, dislikes, lyric-provider and updater behavior
+  remains unchanged unless independently tested.
+- Regression tests cover the DOM video-only classes, the mini surface layout,
+  autoplay prompt removal, native PiP configuration, and Settings wiring.
+
+Pending physical verification: YouTube can change its DOM and system PiP
+window size is chosen by Android; Android Auto, multiple WebView versions,
+PiP transitions, subtitle visibility and real video decoding require
+device testing beyond CI compilation and JavaScript unit tests.

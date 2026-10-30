@@ -96,7 +96,10 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumed += this
-        if (!isInPictureInPictureMode) WebHost.setHold(false)
+        if (!isInPictureInPictureMode) {
+            WebHost.setHold(false)
+            WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
+        }
         LiveUpdater.onResume(this)
         updatePip()
     }
@@ -197,13 +200,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onUserLeaveHint() {
-        if (Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
-            WebHost.isOnWatchPage() && onPhoneScreen()) WebHost.pip(true)
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && WebHost.isOnWatchPage() && onPhoneScreen()) {
-            runCatching {
-                enterPictureInPictureMode(pipParams())
-            }
+        // Android 12+ auto-enter is driven by PiP params; do NOT switch CSS
+        // into PiP early if the launcher ultimately declines the transition.
+        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip &&
+            watchTabVisible && WebHost.snapshot.value.playing &&
+            WebHost.isOnWatchPage() && onPhoneScreen()) {
+            WebHost.pip(true)
+            val entered = runCatching { enterPictureInPictureMode(pipParams()) }.getOrDefault(false)
+            if (!entered) WebHost.pip(false)
         }
     }
 
