@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Keep the Car App navigation surface available on Android 15+, too: a launcher Activity alone does not supply Android Auto's video surface. -->
-    <bool name="legacy_car_screen">true</bool>
-</resources>

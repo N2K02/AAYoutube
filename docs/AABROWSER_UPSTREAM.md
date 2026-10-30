@@ -6,7 +6,7 @@ The user chose this source as the canonical reference for future **AAYouTube And
 
 ## Scope to track
 - Classic Android Auto projection (`CarActivityService` / `CarActivity`, upstream `browser/libs/v4/aauto.aar`).
-- Widescreen navigation template, SurfaceCallback, virtual display reattachment, host visible/stable areas and touch input.
+- Legacy CarActivity window lifecycle, display sizing, touch input, WebView reattachment and centered auto-hiding projection controls.
 - Media browser entry, metadata/media actions/voice searches, WebView background-play integration, reconnection and audio-focus handling.
 - YouTube-specific browsing, playback, seeking and video rendering.
 - Reverse-gear-related audio interruptions **only as substantiated in upstream code**; AABrowser README advertises this, but the inspected `CarMediaService` registers a no-op audio focus listener and no separate gear-event sensor was found. Do not claim a special reverse gear API without inspecting and citing implementation.
@@ -30,7 +30,7 @@ AAYouTube now registers `LegacyProjectionService : CarActivityService` for the e
 `MainCarActivity.kt`. The car activity provides Compose lifecycle, ViewModel
 and saved-state owners as upstream does, attaches **AAYouTube's existing WebView**,
 and connects to its current Media3 service instead of AABrowser's media service.
-The virtual-display navigation-template backup remains independent.
+The legacy CarActivity projection is the only car video entry. The former AndroidX NavigationTemplate / virtual-display fallback has been removed.
 
 The projection activity must not be inserted as a regular Android manifest activity:
 it is instantiated by the SDK service. The pinned `aauto.aar` is already fetched
@@ -44,3 +44,16 @@ Media3 handoff, teardown/reattachment, SDK pin and no unrelated AABrowser apps.
 rendering on a specific vehicle, or permission to redistribute Google's bundled
 proprietary SDK. Keep the upstream artifact in an experimental build and validate
 on a stationary device/test head unit first.
+
+## Single legacy car-video entry
+
+Only `LegacyProjectionService : CarActivityService` exposes the car video screen.
+`CarVideoService`, its virtual-display `CarViewport`, AndroidX navigation templates,
+related car-template permissions, and version-dependent enablement resources are removed.
+The independent Media3 `PlaybackService` remains for audio, Bluetooth, notifications,
+voice search, and command transport; it is not a competing video renderer.
+The phone's `MainActivity` and shared `WebHost` remain unchanged by this cutover.
+
+The projected WebView fills the legacy car window. A centered control overlay hides
+three seconds after interaction; its top-edge reveal target is independent of the
+WebView, and video uses `object-fit: contain` to avoid cropping.

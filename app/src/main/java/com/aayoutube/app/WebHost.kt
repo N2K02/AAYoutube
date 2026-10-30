@@ -96,7 +96,7 @@ object WebHost {
     @Volatile var activityVisible = false
         private set
 
-    /** The video is being shown on the car screen (see CarVideoService). */
+    /** The video is being shown on the car screen (see LegacyProjectionActivity). */
     @Volatile var carShown = false
         private set
     private val carOwners = mutableSetOf<String>()
@@ -288,7 +288,7 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
-    fun showOnCar(on: Boolean, owner: String = "template") {
+    fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
         // AABrowser exposes classic projection and the wide template independently.
         // Closing one must not mark the shared WebView invisible if the other is active.
         if (on) carOwners.add(owner) else carOwners.remove(owner)

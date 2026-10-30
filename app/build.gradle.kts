@@ -17,7 +17,6 @@ val v = mapOf(
     "material3" to "1.5.0-beta01",
     "media3" to "1.8.0",
     "webkit" to "1.14.0",
-    "carApp" to "1.7.0",
     "activityCompose" to "1.11.0",
     "coroutines" to "1.10.2",
 )
@@ -111,7 +110,6 @@ dependencies {
 
     // WebView extras: script injection at document start, header control
     implementation("androidx.webkit:webkit:${v["webkit"]}")
-    implementation("androidx.car.app:app:${v["carApp"]}")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${v["coroutines"]}")
     testImplementation("junit:junit:4.13.2")

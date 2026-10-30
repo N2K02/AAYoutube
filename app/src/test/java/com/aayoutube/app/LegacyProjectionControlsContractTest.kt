@@ -24,8 +24,10 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("WebHost.cmd(if (playing.playing) \"pause\" else \"play\")"))
     }
 
-    @Test fun nativeAndroidAutoTemplateRemainsUntouched() {
-        val code = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
-        assertTrue(code.contains("NavigationTemplate.Builder().setActionStrip(strip).build()"))
+    @Test fun carControlsLiveOnlyInLegacyProjection() {
+        val code = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        assertTrue(code.contains("CarControl("))
+        val manifest = source("app/src/main/AndroidManifest.xml")
+        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
     }
 }

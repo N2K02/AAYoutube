@@ -22,11 +22,4 @@ class CarPlayerLayoutContractTest {
         assertFalse(js.contains("html.aay-car video.html5-main-video{object-fit:cover"))
     }
 
-    @Test fun carViewportIsBasedOnHostVisibleAreaRatherThanFullSurface() {
-        val viewport = source("app/src/main/java/com/aayoutube/app/CarViewport.kt")
-        assertTrue(viewport.contains("visible?.clipped(w, h) ?: stable?.clipped(w, h)"))
-        val service = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
-        assertTrue(service.contains("onVisibleAreaChanged"))
-        assertTrue(service.contains("frame.layoutParams = FrameLayout.LayoutParams(area.width, area.height)"))
-    }
 }

@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Before Android 15 the car screen uses the drawing-surface fallback (CarVideoService). -->
-    <bool name="legacy_car_screen">true</bool>
-</resources>

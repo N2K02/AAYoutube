@@ -18,9 +18,6 @@
         - ":web" process: the WebView and the app screens
         A WebView crash or freeze therefore can never take Android Auto down with it.
     -->
-    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <!-- To show the Android Auto app version on the Info page. -->
     <queries>
@@ -106,10 +103,6 @@
         </activity>
 
         <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
-
         <!-- Exact AABrowser legacy CarActivityService entry, backed by the pinned aauto.aar.
              CarActivity is instantiated by the projection SDK; it is NOT a manifest Activity. -->
         <service
@@ -121,18 +114,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION" />
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM" />
-            </intent-filter>
-        </service>
-
-        <!-- Shows the YouTube page on the car screen. Lives in the web process, next to the WebView. -->
-        <service
-            android:name=".CarVideoService"
-            android:enabled="@bool/legacy_car_screen"
-            android:process=":web"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
             </intent-filter>
         </service>
 
