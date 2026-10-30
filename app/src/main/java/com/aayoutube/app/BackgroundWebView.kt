@@ -5,35 +5,25 @@ import android.view.View
 import android.webkit.WebView
 
 /**
- * AABrowser's projection WebView keeps its renderer alive through transient
- * host onPause/window-hide callbacks. The page's explicit pause command still
- * pauses video: this intercepts only Android's automatic WebView lifecycle.
- * When idle and not projected, the ordinary lifecycle remains available for
- * WebHost.freeze() and its battery-saving timer shutdown.
+ * Match AABrowser's primary WebView behavior: Android Auto and phone/launcher
+ * lifecycle transitions must not pause the Chromium renderer or hide its
+ * window. Playback controls still pause the actual HTML video on user request.
+ *
+ * WebHost may explicitly freeze an idle page via pauseForIdle(), and destroys
+ * the entire WebView during Quit. These are different from Android calling
+ * onPause() as the projected window changes focus.
  */
 class BackgroundWebView(context: Context) : WebView(context) {
-    private fun preservePlayback(): Boolean = WebPlaybackPolicy.preserveRenderer(
-        projectionVisible = WebHost.carShown || WebHost.carDisplay,
-        inPip = WebHost.inPip.value,
-        playing = WebHost.snapshot.value.playing,
-        backgroundPlay = Features.current.backgroundPlay,
-    )
-
     override fun onPause() {
-        if (preservePlayback()) {
-            AppLog.add("VIEW", "Ignored automatic WebView pause while video is active on car/PiP")
-            return
-        }
-        super.onPause()
+        // AABrowser's deliberate no-op, independent of projection/playing flags.
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (visibility != View.VISIBLE && preservePlayback()) {
-            AppLog.add("VIEW", "Window hidden ($visibility): preserving projected video renderer")
-            super.onWindowVisibilityChanged(View.VISIBLE)
-        } else {
-            super.onWindowVisibilityChanged(visibility)
-            if (visibility == View.VISIBLE) invalidate()
-        }
+        // AABrowser always tells Chromium its primary WebView remains visible.
+        super.onWindowVisibilityChanged(View.VISIBLE)
+        if (visibility == View.VISIBLE) invalidate()
     }
+
+    /** Explicit idle cleanup is the only caller allowed to pause this WebView. */
+    fun pauseForIdle() = super.onPause()
 }

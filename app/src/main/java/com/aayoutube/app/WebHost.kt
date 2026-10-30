@@ -522,7 +522,7 @@ object WebHost {
         if (frozen) return
         frozen = true
         AppLog.add("POWER", "Page frozen")
-        w.onPause()
+        (w as? BackgroundWebView)?.pauseForIdle()
         w.pauseTimers()
     }
 

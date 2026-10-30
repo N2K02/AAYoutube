@@ -129,3 +129,19 @@ device testing beyond CI compilation and JavaScript unit tests.
   This patch does not attempt to defeat vehicle/host driver-distraction policy.
 - Device test: on a parked vehicle, select and play a video, switch phone ↔ car,
   interrupt/reconnect Android Auto, pause/resume, and verify frames with audio.
+
+
+## AABrowser exact primary-WebView lifecycle parity
+
+Following device playback feedback, the previously conditional playback-preservation
+policy was removed. The primary `BackgroundWebView` now mirrors upstream
+`BrowserScreen.kt`: Android lifecycle `onPause()` is a no-op and
+`onWindowVisibilityChanged()` always reports `View.VISIBLE` to Chromium,
+irrespective of the active car/phone screen, playing state or Background play
+preference. A normal user Pause still targets YouTube's HTML player directly.
+To avoid losing idle cleanup, `WebHost.freeze()` calls a separate
+`pauseForIdle()` which invokes `super.onPause()` only after the existing
+45-second idle check. Quit destroys the WebView.
+
+The app already has the AABrowser legacy projection service registration and
+foreground media permissions; none were added or changed for this patch.
