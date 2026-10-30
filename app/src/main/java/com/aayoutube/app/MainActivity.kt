@@ -12,10 +12,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 
 /**
  * The screen. Runs in the ":web" process, next to the WebView. It also tells the media service
@@ -30,7 +26,7 @@ class MainActivity : ComponentActivity() {
         private val resumed = mutableSetOf<MainActivity>()
     }
 
-    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var compatConnection: CompatMediaConnection? = null
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -120,35 +116,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sayHello() {
-        if (controllerFuture != null) return
-        val token = SessionToken(this, CarMode.serviceComponent(this))
-        val future = MediaController.Builder(this, token).buildAsync()
-        controllerFuture = future
-        future.addListener({
-            runCatching {
-                val controller = future.get()
-                controller.sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
-            }
-            // Kept until the screen stops: if it were released now, the service would shut down
-            // again straight away and take the link to the web process with it.
-        }, MoreExecutors.directExecutor())
+        if (compatConnection != null) return
+        compatConnection = CompatMediaConnection(this) {
+            it.transportControls.sendCustomAction("com.aayoutube.app.HELLO", Bundle.EMPTY)
+        }.also { it.connect() }
     }
 
-    /** Quit (menu): stop playback and the media service, then close the screen and the page. */
     fun quit() {
         AppLog.add("UI", "Quit")
-        val future = controllerFuture
-        if (future != null && future.isDone) {
-            runCatching { future.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
-        } else {
-            // Not connected yet: connect just to send Exit.
-            val token = SessionToken(this, CarMode.serviceComponent(this))
-            val f = MediaController.Builder(applicationContext, token).buildAsync()
-            f.addListener({
-                runCatching { f.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
-                MediaController.releaseFuture(f)
-            }, MoreExecutors.directExecutor())
-        }
+        compatConnection?.command("com.aayoutube.app.EXIT")
         closeEverything()
     }
 
@@ -156,7 +132,6 @@ class MainActivity : ComponentActivity() {
         WebHost.onQuit = null
         WebHost.cmd("pause")
         finishAndRemoveTask()
-        // Give Exit a moment to reach the media service, then end this process (the WebView with it).
         android.os.Handler(mainLooper).postDelayed({
             WebHost.release()
             android.os.Process.killProcess(android.os.Process.myPid())
@@ -164,10 +139,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun releaseController() {
-        controllerFuture?.let { MediaController.releaseFuture(it) }
-        controllerFuture = null
+        compatConnection?.disconnect()
+        compatConnection = null
     }
-
     // ---------------------------------------------------------------- picture in picture
 
     /** False when Android Auto is showing this screen on the car display (no picture in picture there). */

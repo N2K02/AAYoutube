@@ -61,11 +61,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
 import com.google.android.apps.auto.sdk.CarActivity
-import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 
 /**
  * AABrowser-style CarActivity with Compose view-tree owners, adapted to AAYouTube's
@@ -80,7 +76,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     override val viewModelStore: ViewModelStore get() = store
     override val savedStateRegistry: SavedStateRegistry get() = savedController.savedStateRegistry
 
-    private var mediaController: ListenableFuture<MediaController>? = null
+    private var mediaController: CompatMediaConnection? = null
     private var playerContainer: FrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
@@ -290,24 +286,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     /** The native media process remains the sole owner of Android Auto media commands. */
     private fun connectMedia() {
         if (!carStarted || mediaController != null) return
-        val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
-        val future = MediaController.Builder(applicationContext, token).buildAsync()
-        mediaController = future
-        future.addListener({
-            runCatching {
-                if (mediaController === future) {
-                    future.get().sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
-                }
-            }.onFailure {
-                AppLog.add("CAR", "Legacy media connection failed: " + it.javaClass.simpleName)
-                if (mediaController === future) {
-                    mediaController = null
-                    MediaController.releaseFuture(future)
-                }
-            }
-        }, MoreExecutors.directExecutor())
+        mediaController = CompatMediaConnection(this) {
+            it.transportControls.sendCustomAction("com.aayoutube.app.HELLO", Bundle.EMPTY)
+        }.also { it.connect() }
     }
-
     override fun onPause() {
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         // Do not pause YouTube: a temporary car window focus loss must preserve audio.
@@ -323,7 +305,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         playerContainer?.let { WebHost.detach(it) }
         WebHost.showOnCar(false, "legacy-projection")
         if (WebHost.requestLink === relink) WebHost.requestLink = null
-        mediaController?.let { MediaController.releaseFuture(it) }
+        mediaController?.disconnect()
         mediaController = null
         // A still-running phone Compose window can reclaim the existing WebView.
         WebHost.requestReattachment()
@@ -341,7 +323,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carInput = null
         playerContainer?.let { WebHost.detach(it) }
         playerContainer = null
-        mediaController?.let { MediaController.releaseFuture(it) }
+        mediaController?.disconnect()
         mediaController = null
         super.onDestroy()
     }
