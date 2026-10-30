@@ -16,6 +16,7 @@ val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt()
 val v = mapOf(
     "material3" to "1.5.0-beta01",
     "mediaCompat" to "1.7.1",
+    "carApp" to "1.7.0",
     "webkit" to "1.14.0",
     "activityCompose" to "1.11.0",
     "coroutines" to "1.10.2",
@@ -108,6 +109,7 @@ dependencies {
     // Media session for the notification, lock screen, Bluetooth and Android Auto
     // AABrowser-compatible MediaBrowserServiceCompat migration dependency.
     implementation("androidx.media:media:${v["mediaCompat"]}")
+    implementation("androidx.car.app:app:${v["carApp"]}")
 
     // WebView extras: script injection at document start, header control
     implementation("androidx.webkit:webkit:${v["webkit"]}")

@@ -4,7 +4,7 @@ import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Only AABrowser legacy projection provides the car video entry. */
+/** AABrowser's three Android Auto launch paths and video lifecycle. */
 class AndroidAutoIntegrationContractTest {
     private fun source(path: String): String =
         listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
@@ -16,14 +16,14 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
         assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM"))
         assertTrue(xml.contains("android:name=\".PlaybackService\""))
-        assertFalse(xml.contains("android.media.browse.MediaBrowserService"))
+        assertTrue(xml.contains("android.media.browse.MediaBrowserService"))
         assertTrue(xml.contains("MEDIA_PLAY_FROM_SEARCH"))
-        assertFalse(xml.contains("android:name=\".CarVideoService\""))
-        assertFalse(xml.contains("androidx.car.app.CarAppService"))
-        assertFalse(xml.contains("androidx.car.app.minCarApiLevel"))
-        assertFalse(xml.contains("androidx.car.app.NAVIGATION_TEMPLATES"))
+        assertTrue(xml.contains("android:name=\".CarVideoService\""))
+        assertTrue(xml.contains("androidx.car.app.CarAppService"))
+        assertTrue(xml.contains("androidx.car.app.minCarApiLevel"))
+        assertTrue(xml.contains("androidx.car.app.NAVIGATION_TEMPLATES"))
         val gradle = source("app/build.gradle.kts")
-        assertFalse(gradle.contains("androidx.car.app:app:"))
+        assertTrue(gradle.contains("androidx.car.app:app:"))
     }
 
     @Test fun carPageKeepsMediaSessionFallbackAndTouchSeeking() {
@@ -45,24 +45,37 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(kotlin.contains("MediaRetryPolicy.shouldRetry(retries, hasWork)"))
         assertTrue(kotlin.contains("handler.removeCallbacks(retry)"))
     }
-    @Test fun androidAutoLaunchesVideoInsteadOfMediaTemplate() {
-        val xml = source("app/src/main/AndroidManifest.xml")
-        val mainFilter = xml.substringAfter("android:name=\".MainActivity\"")
-            .substringAfter("<intent-filter>").substringBefore("</intent-filter>")
-        assertTrue(mainFilter.contains("android.intent.category.CAR_LAUNCHER"))
-        assertTrue(mainFilter.contains("androidx.car.app.category.NAVIGATION"))
-        assertTrue(mainFilter.contains("android.intent.category.APP_MAPS"))
-        val mediaEntry = xml.substringAfter("android:name=\".PlaybackService\"")
-            .substringBefore("/>")
-        assertTrue(mediaEntry.contains("android:exported=\"false\""))
-        assertFalse(mediaEntry.contains("<intent-filter>"))
-        val phone = source("app/src/main/java/com/aayoutube/app/MainActivity.kt")
-        assertTrue(phone.contains("intent?.hasCategory(\"android.intent.category.CAR_LAUNCHER\") == true"))
-        val service = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
-        assertTrue(service.contains("MediaBrowserServiceCompat()"))
-        assertTrue(service.contains("MediaSessionCompat(this"))
-        val client = source("app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt")
-        assertTrue(client.contains("ComponentName(context, PlaybackService::class.java)"))
+    @Test fun carVideoAndAudioHaveSeparateEntries() {
+        val manifest = source("app/src/main/AndroidManifest.xml")
+        val wide = manifest.substringAfter("android:name=\".CarVideoService\"").substringBefore("</service>")
+        val media = manifest.substringAfter("android:name=\".PlaybackService\"").substringBefore("</service>")
+        assertTrue(wide.contains("androidx.car.app.category.NAVIGATION"))
+        assertTrue(wide.contains("AAYouTube Video"))
+        assertTrue(media.contains("android.media.browse.MediaBrowserService"))
+        assertTrue(media.contains("AAYouTube Audio"))
+        assertFalse(manifest.substringAfter("android:name=\".MainActivity\"")
+            .substringBefore("</activity>").contains("CAR_LAUNCHER"))
+        for (type in listOf("xml", "xml-v35")) {
+            val desc = source("app/src/main/res/" + type + "/automotive_app_desc.xml")
+            listOf("service", "projection", "media", "template").forEach {
+                assertTrue(desc.contains("name=\"$it\""))
+            }
+        }
     }
 
+    @Test fun widePreservesVideoThroughSurfaceChangesAndShutdown() {
+        val src = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
+        listOf("HostValidator.Builder(applicationContext)", "old.surface = surface",
+            "old.resize(rawWidth, rawHeight, rawDpi)", "onVisibleAreaChanged",
+            "onStableAreaChanged", "CarSurfacePolicy.viewport", "WebHost.requestReattachment()",
+            "WebHost.showOnCar(true, carOwner)", "WebHost.showOnCar(false, carOwner)",
+            "mediaController?.disconnect()", "scope.cancel()").forEach {
+            assertTrue("Missing " + it, src.contains(it))
+        }
+        val frame = source("app/src/main/java/com/aayoutube/app/CarFrameLayout.kt")
+        assertTrue(frame.contains("dispatchWindowVisibilityChanged"))
+        val modes = source("app/src/main/java/com/aayoutube/app/CarMode.kt")
+        assertTrue(modes.contains("ComponentName(c, LegacyProjectionService::class.java)"))
+        assertTrue(modes.contains("ComponentName(c, CarVideoService::class.java)"))
+    }
 }

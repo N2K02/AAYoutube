@@ -139,9 +139,17 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }
         // Some SDK revisions expose a named public getter rather than a typed
         // no-argument method in the superclass.
-        return runCatching {
+        val named = runCatching {
             javaClass.getMethod("getInputManager").invoke(this) as? InputManager
         }.getOrNull()
+        if (named != null) return named
+        return CarActivity::class.java.declaredMethods.firstNotNullOfOrNull { method ->
+            if (method.parameterCount != 0 || !method.name.contains("Input", ignoreCase = true)) null
+            else runCatching {
+                method.isAccessible = true
+                method.invoke(this)
+            }.getOrNull()?.takeIf { it.javaClass.name.contains("InputManager") }
+        }
     }
 
     private fun configureLegacyCarInput() {
@@ -189,7 +197,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
-                        FrameLayout(context).also { frame ->
+                        CarFrameLayout(context).also { frame ->
                             playerContainer = frame
                             val web = WebHost.attach(context)
                             frame.addView(web, FrameLayout.LayoutParams(-1, -1))
@@ -214,7 +222,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
-                        FrameLayout(context).also { frame ->
+                        CarFrameLayout(context).also { frame ->
                             (fullscreenView.parent as? ViewGroup)?.removeView(fullscreenView)
                             frame.addView(fullscreenView, FrameLayout.LayoutParams(-1, -1))
                         }
@@ -383,8 +391,17 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
 
     override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
         val web = target ?: return null
-        val connection = web.onCreateInputConnection(editorInfo)
-        editorInfo?.let { it.imeOptions = it.imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI }
+        web.onCheckIsTextEditor()
+        var connection = web.onCreateInputConnection(editorInfo)
+        if (connection == null) {
+            web.requestFocus()
+            connection = web.onCreateInputConnection(editorInfo)
+        }
+        editorInfo?.apply {
+            if (inputType == EditorInfo.TYPE_NULL) inputType =
+                EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_NORMAL
+            imeOptions = imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_DONE
+        }
         return connection ?: BaseInputConnection(web, true)
     }
 

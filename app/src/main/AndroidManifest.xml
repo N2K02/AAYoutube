@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <!-- Installs its own updates (Android asks the user first) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -31,8 +33,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="AAYoutube"
         android:theme="@style/Theme.AAYoutube"
-        android:usesCleartextTraffic="false"
-        android:appCategory="game">
+        android:usesCleartextTraffic="false">
         <provider android:name="com.aayoutube.app.CrashJournalProvider" android:authorities="${applicationId}.crashjournal" android:exported="false" android:initOrder="100" />
         <provider android:name="com.aayoutube.app.CrashJournalProvider" android:authorities="${applicationId}.crashjournal.web" android:process=":web" android:exported="false" android:initOrder="100" />
 
@@ -44,7 +45,8 @@
             android:name="android.max_aspect"
             android:value="4.0" />
 
-        <!-- Tells Android Auto this is a media app -->
+        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5" />
+        <!-- AABrowser-style video and media discovery. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -62,11 +64,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <!-- AABrowser's car video launcher. Without this, Android Auto
-                     can select the audio-only media template for this package. -->
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
             <meta-data
                 android:name="android.max_aspect"
@@ -104,7 +101,8 @@
             android:name=".LegacyProjectionService"
             android:process=":web"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:label="AAYouTube Video (Legacy)">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION" />
@@ -112,19 +110,29 @@
             </intent-filter>
         </service>
 
+        <!-- Video surface fallback for Android Auto hosts that do not start legacy projection. -->
+        <service android:name=".CarVideoService" android:process=":web"
+            android:exported="true" android:label="AAYouTube Video">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+            </intent-filter>
+            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5" />
+        </service>
+
         <service
             android:name=".WebHostService"
             android:process=":web"
             android:exported="false" />
 
-        <!-- MediaCompat session and notifications remain available to our explicit
-             in-app MediaBrowserCompat clients and Bluetooth controls. Do not
-             advertise an Android Auto media-browser launcher: it opens a music
-             template instead of the YouTube video screen. -->
-        <service
-            android:name=".PlaybackService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+        <!-- Separate audio browser, never the only AAYouTube video entry. -->
+        <service android:name=".PlaybackService" android:exported="true"
+            android:label="AAYouTube Audio"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
 
         <!-- MediaCompat media-button delivery -->
         <receiver

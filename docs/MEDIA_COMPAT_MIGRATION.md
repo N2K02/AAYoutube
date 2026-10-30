@@ -145,3 +145,24 @@ To avoid losing idle cleanup, `WebHost.freeze()` calls a separate
 
 The app already has the AABrowser legacy projection service registration and
 foreground media permissions; none were added or changed for this patch.
+
+## AABrowser three-path Android Auto parity (2026-10-31)
+
+- Corrected the previous media-only routing change: car *services* (not a
+  CAR_LAUNCHER activity category) announce video entry points. The archived
+  legacy projection, AndroidX CarApp wide-surface fallback, and MediaCompat
+  browser coexist as in AABrowser. They are distinctly labelled Video vs Audio.
+- The old car Wide implementation has been restored with host allowlist in
+  release builds and temporary DHU/debug openness. Surface replacement now
+  rebinds/resizes the same VirtualDisplay without recreating the WebView.
+- Visible/stable host insets determine actual video bounds and input hit region,
+  with pure policy tests for resizing and split-screen sidebars.
+- The projected frame ignores transient invisibility, matching AABrowser's
+  CarFrameLayout. Legacy IME handles null input connections and SDK method
+  variations. Stale disabled service components are re-enabled together.
+- A five-second grace on surface loss preserves the decoder across brief
+  reconnects. Final teardown releases the display, media controller, coroutines,
+  and WebView owner, and lets the phone reclaim the player.
+- Distinct from AABrowser: AAYouTube intentionally retains one playing YouTube
+  WebView instead of independent website tabs and local/Spotify/weather engines.
+  Do not assume in-motion video is permitted or device video proven by CI.
