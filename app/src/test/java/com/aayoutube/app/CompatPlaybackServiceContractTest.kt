@@ -34,7 +34,9 @@ class CompatPlaybackServiceContractTest {
             .first { it.isFile }.readText()
         assertTrue(source.contains("notifications.playback(s, session.sessionToken)"))
         assertTrue(manager.contains("MediaButtonReceiver.buildMediaButtonPendingIntent"))
-        assertTrue(manager.contains("setShowActionsInCompactView(0, 1, 2)"))
+        assertTrue(manager.contains("setShowActionsInCompactView(*compact.toIntArray())"))
+        assertTrue(manager.contains("if (snapshot.canPrev)"))
+        assertTrue(manager.contains("if (snapshot.canNext)"))
         assertTrue(manager.contains("fun placeholder()"))
     }
     @Test fun browserRecoveryAndBoundedIpcDrain() {
@@ -87,6 +89,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("override fun onStartCommand"))
         assertTrue(source.contains("notifications.placeholder()"))
         assertTrue(source.contains("if (foreground && lastNotification == key) return"))
+        assertTrue(source.contains("NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev)"))
         assertTrue(source.contains("if (!shuttingDown) updateNotification(snapshot)"))
     }
     @Test fun acknowledgedHandshakeAndDirectExitFallback() {
