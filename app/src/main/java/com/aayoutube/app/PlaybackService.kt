@@ -290,10 +290,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
             .setContentText(s.artist)
             .setContentIntent(launch)
             .setOnlyAlertOnce(true)
-            .addAction(android.R.drawable.ic_media_previous, "Previous", mediaButton(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+            .addAction(android.R.drawable.ic_media_previous, "Previous", mediaButton(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
             .addAction(if (s.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                if (s.playing) "Pause" else "Play", mediaButton(if (s.playing) android.view.KeyEvent.KEYCODE_MEDIA_PAUSE else android.view.KeyEvent.KEYCODE_MEDIA_PLAY))
-            .addAction(android.R.drawable.ic_media_next, "Next", mediaButton(android.view.KeyEvent.KEYCODE_MEDIA_NEXT))
+                if (s.playing) "Pause" else "Play", mediaButton(if (s.playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY))
+            .addAction(android.R.drawable.ic_media_next, "Next", mediaButton(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
             .setOngoing(s.playing)
             .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
             .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
