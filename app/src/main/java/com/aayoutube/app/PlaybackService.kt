@@ -30,11 +30,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val notificationId = 101
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
+    private var lastSavedId = ""
+    private var idleSince = 0L
     private val channelId = "aay_media"
     private var shuttingDown = false
     private var retries = 0
     private val retry = Runnable { if (!shuttingDown && !bound) ensureWeb() }
-    private val freeze = Runnable { if (!snapshot.playing) send(Msg.FREEZE) }
+    private val freeze = Runnable { if (!snapshot.playing && outgoing != null) send(Msg.FREEZE) }
     private val idleStop = Runnable { if (!snapshot.playing) stopSelf() }
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
@@ -75,7 +77,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         outgoing = null
         if (bound) runCatching { unbindService(connection) }
         bound = false
-        if (snapshot.playing && snapshot.id.isNotBlank()) {
+        if (!shuttingDown && snapshot.playing && snapshot.id.isNotBlank()) {
             pending.clear()
             pending.addFirst(Msg.OPEN to Bundle().apply {
                 putString("id", snapshot.id)
@@ -87,9 +89,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
-        ensureWeb()
+        if (shuttingDown) return
+        if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
         val target = outgoing ?: run {
-            if (command != Msg.REGISTER) {
+            if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
                 if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
                 if (pending.size >= maxPendingCommands) pending.removeFirst()
                 pending.addLast(command to data)
@@ -134,14 +137,18 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastRecentId = s.id
                 notifyChildrenChanged("recent")
             }
-            if (lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || !s.playing) {
+            if (lastSavedId != s.id || lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || (!s.playing && lastSavedPosition != s.posMs)) {
                 Library.saveLast(s)
                 lastSavedPosition = s.posMs
+                lastSavedId = s.id
             }
         }
-        handler.removeCallbacks(freeze)
-        handler.removeCallbacks(idleStop)
-        if (!s.playing) {
+        if (s.playing) {
+            idleSince = 0L
+            handler.removeCallbacks(freeze)
+            handler.removeCallbacks(idleStop)
+        } else if (idleSince == 0L) {
+            idleSince = android.os.SystemClock.elapsedRealtime()
             handler.postDelayed(freeze, 120_000L)
             handler.postDelayed(idleStop, 900_000L)
         }
@@ -175,12 +182,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onCustomAction(action: String?, extras: Bundle?) {
                     when (action) {
-                        "com.aayoutube.app.HELLO" -> ensureWeb()
-                        "com.aayoutube.app.FAVOURITE" -> {
+                        Commands.HELLO -> ensureWeb()
+                        Commands.FAVOURITE -> {
                             Library.toggleFavourite(snapshot)
                             notifyChildrenChanged("favourites")
                         }
-                        "com.aayoutube.app.EXIT" -> {
+                        Commands.EXIT -> {
                             pending.clear()
                             send(Msg.QUIT)
                             snapshot = snapshot.copy(playing = false)
