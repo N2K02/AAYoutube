@@ -57,3 +57,12 @@ The phone's `MainActivity` and shared `WebHost` remain unchanged by this cutover
 The projected WebView fills the legacy car window. A centered control overlay hides
 three seconds after interaction; its top-edge reveal target is independent of the
 WebView, and video uses `object-fit: contain` to avoid cropping.
+
+## Legacy input-manager compatibility
+
+The car activity now probes the archived SDK for its legacy car input manager
+using the same return-type discovery approach as upstream. The manager is logged
+for diagnostics; touch remains handled by the existing WebView. A full native
+input/rotary/voice adapter is **not** claimed until verified on the head unit.
+The existing Media3 and two-process playback implementation intentionally
+remains distinct from upstream's MediaBrowserServiceCompat single-process design.

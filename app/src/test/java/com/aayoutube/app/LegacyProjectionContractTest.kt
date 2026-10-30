@@ -44,6 +44,9 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("WindowInsetsControllerCompat"))
         assertTrue(activity.contains("setViewTreeLifecycleOwner(this)"))
         assertTrue(activity.contains("updateCarWindow()"))
+        assertTrue(activity.contains("findCarInputManager()"))
+        assertTrue(activity.contains("configureLegacyCarInput()"))
+        assertTrue(activity.contains("method.returnType.name.endsWith(\".input.InputManager\")"))
     }
 
     @Test fun projectionUsesExistingPlayerMediaAndSafeShutdown() {

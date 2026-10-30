@@ -99,6 +99,40 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             decor.setViewTreeSavedStateRegistryOwner(this)
         }
         updateCarWindow()
+        configureLegacyCarInput()
+    }
+
+    /**
+     * AABrowser's legacy SDK exposes its car input manager under different method
+     * names in different archived builds. Resolve it without binding to an
+     * unstable obfuscated API; native WebView touch remains the fallback.
+     */
+    private fun findCarInputManager(): Any? {
+        var type: Class<*>? = javaClass
+        while (type != null && type != Any::class.java) {
+            val found = type.declaredMethods.firstOrNull { method ->
+                method.parameterCount == 0 &&
+                    method.returnType.name.endsWith(".input.InputManager")
+            }
+            if (found != null) {
+                val value = runCatching {
+                    found.isAccessible = true
+                    found.invoke(this)
+                }.getOrNull()
+                if (value != null) return value
+            }
+            type = type.superclass
+        }
+        return null
+    }
+
+    private fun configureLegacyCarInput() {
+        val input = findCarInputManager()
+        AppLog.add("CAR", if (input == null) {
+            "Legacy input manager unavailable; retaining WebView touch input"
+        } else {
+            "Legacy car input manager detected: " + input.javaClass.simpleName
+        })
     }
 
     /** Match AABrowser's legacy CarActivity window handling, not the phone window. */
@@ -214,6 +248,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         super.onStart()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
+        configureLegacyCarInput()
         WebHost.showOnCar(true, "legacy-projection")
         WebHost.requestLink = relink
         connectMedia()
