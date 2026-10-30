@@ -67,7 +67,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 return
             }
             retries = 0
-            recoveringPlayback = false
             handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
             // Drain only the commands present at connection time. A failed send can
@@ -108,6 +107,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
             })
             snapshot = snapshot.copy(playing = false, buffering = true)
             publish(snapshot)
+            scheduleRetry()
+        } else if (!shuttingDown && !quitRequested && pending.isNotEmpty()) {
+            // A binder can die before the first playback snapshot arrives.
             scheduleRetry()
         }
     }
