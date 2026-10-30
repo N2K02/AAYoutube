@@ -18,6 +18,15 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("override fun onPlayFromSearch"))
         assertTrue(source.contains("override fun onSeekTo"))
     }
+    @Test fun notificationManagerIsSeparated() {
+        val manager = listOf(File("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"),
+            File("../app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt"))
+            .first { it.isFile }.readText()
+        assertTrue(source.contains("notifications.playback(s, session.sessionToken)"))
+        assertTrue(manager.contains("MediaButtonReceiver.buildMediaButtonPendingIntent"))
+        assertTrue(manager.contains("setShowActionsInCompactView(0, 1, 2)"))
+        assertTrue(manager.contains("fun placeholder()"))
+    }
     @Test fun reconnectionAndShutdown() {
         assertTrue(source.contains("if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank())"))
         assertTrue(source.contains("retries >= 4"))
@@ -25,6 +34,6 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("handler.removeCallbacksAndMessages(null)"))
         assertTrue(source.contains("Msg.QUIT_ACK"))
         assertTrue(source.contains("override fun onStartCommand"))
-        assertTrue(source.contains("placeholderNotification()"))
+        assertTrue(source.contains("notifications.placeholder()"))
     }
 }
