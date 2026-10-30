@@ -6,6 +6,21 @@ import org.junit.Test
 
 /** Protect the mRadio-inspired Settings grouping while retaining app-specific pages. */
 class SettingsConsistencyContractTest {
+    @Test fun diagnosticsIncludeMediaProcessLogsAndRespectOptIn() {
+        val app = listOf(File("app/src/main/java/com/aayoutube/app/AAYoutubeApp.kt"),
+            File("../app/src/main/java/com/aayoutube/app/AAYoutubeApp.kt")).first { it.isFile }.readText()
+        val logs = listOf(File("app/src/main/java/com/aayoutube/app/AppLog.kt"),
+            File("../app/src/main/java/com/aayoutube/app/AppLog.kt")).first { it.isFile }.readText()
+        val ui = listOf(File("app/src/main/java/com/aayoutube/app/Screens.kt"),
+            File("../app/src/main/java/com/aayoutube/app/Screens.kt")).first { it.isFile }.readText()
+        assertTrue(app.contains("AppLog.init(this) // Media-service events"))
+        assertTrue(logs.contains("marker(it).isFile"))
+        assertTrue(logs.contains("suspend fun refreshFromDisk()"))
+        assertTrue(logs.contains("withContext(Dispatchers.IO)"))
+        assertTrue(logs.contains("if (on) marker(it).createNewFile() else marker(it).delete()"))
+        assertTrue(ui.contains("AppLog.refreshFromDisk()"))
+    }
+
     @Test fun settingsRowsAndUpdatesFollowConsistentOrder() {
         val relative = "app/src/main/java/com/aayoutube/app/Screens.kt"
         val source = listOf(File(relative), File("../$relative"))

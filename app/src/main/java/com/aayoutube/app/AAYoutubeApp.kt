@@ -16,6 +16,7 @@ class AAYoutubeApp : Application() {
             WebHost.init(this)
             BrowseHost.init(this)
         } else {
+            AppLog.init(this) // Media-service events also appear in the Settings Logs page.
             Library.init(this)
         }
     }

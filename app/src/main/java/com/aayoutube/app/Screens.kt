@@ -849,6 +849,12 @@ private fun wrapRows(entries: List<String>, cols: Int): List<String> {
 fun LogsPage() {
     val context = LocalContext.current
     val enabled by AppLog.enabled.collectAsState()
+    LaunchedEffect(Unit) {
+        while (true) {
+            AppLog.refreshFromDisk()
+            delay(3_000L)
+        }
+    }
     val version by AppLog.version.collectAsState()
     var page by rememberSaveable { mutableIntStateOf(0) }
     var follow by rememberSaveable { mutableStateOf(true) }

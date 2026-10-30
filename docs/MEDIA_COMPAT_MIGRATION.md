@@ -102,3 +102,8 @@ Pending physical verification: YouTube can change its DOM and system PiP
 window size is chosen by Android; Android Auto, multiple WebView versions,
 PiP transitions, subtitle visibility and real video decoding require
 device testing beyond CI compilation and JavaScript unit tests.
+
+- Settings > Logs now combines shared diagnostic files from both processes.
+  The media-service process initializes logging as well; a file marker keeps
+  opt-in logging enabled/disabled across processes without cached preference
+  divergence. The Logs screen refreshes disk data off the main thread.

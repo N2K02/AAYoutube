@@ -9,6 +9,8 @@ import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Optional daily private logs; fatal crashes use a separate always-on journal. */
 object AppLog {
@@ -17,6 +19,9 @@ object AppLog {
     private const val DAY_BYTES = 256 * 1024L
     private const val TOTAL_BYTES = 2 * 1024 * 1024L
     private val lock = Any()
+    private const val ENABLED_MARKER = "logging-enabled"
+    private fun marker(app: Context): File =
+        File(File(app.filesDir, "diagnostics"), ENABLED_MARKER)
     private val lines = ArrayDeque<String>()
     private val io = Executors.newSingleThreadExecutor { task ->
         Thread(task, "aayoutube-log-writer").apply { isDaemon = true }
@@ -43,22 +48,34 @@ object AppLog {
                 File(app.filesDir, name).takeIf { it.exists() }
                     ?.forEachLine { appendMemory("[CRASH] " + it) }
             }
-            _enabled.value = app.getSharedPreferences("diagnostic_settings", Context.MODE_PRIVATE)
+            val prefEnabled = app.getSharedPreferences("diagnostic_settings", Context.MODE_PRIVATE)
                 .getBoolean("enabled", false)
+            _enabled.value = prefEnabled || marker(app).isFile
+            if (_enabled.value && !marker(app).isFile) runCatching {
+                marker(app).parentFile?.mkdirs()
+                marker(app).createNewFile()
+            }
             _version.value++
         }
     }
 
     fun setEnabled(on: Boolean) {
+        val app = context
+        // A file marker is visible to :web and the media process immediately.
+        // SharedPreferences caches are not coherent across Android processes.
+        app?.let { runCatching {
+            marker(it).parentFile?.mkdirs()
+            if (on) marker(it).createNewFile() else marker(it).delete()
+        } }
         _enabled.value = on
-        context?.getSharedPreferences("diagnostic_settings", Context.MODE_PRIVATE)
+        app?.getSharedPreferences("diagnostic_settings", Context.MODE_PRIVATE)
             ?.edit()?.putBoolean("enabled", on)?.apply()
         if (on) add("LOG", "Logging enabled") else _version.value++
     }
 
     /** Never pass secrets or request bodies here: redaction is a defense in depth. */
     fun add(tag: String, message: String) {
-        if (!_enabled.value) return
+        if (context?.let { marker(it).isFile } != true) return
         val now = Date()
         val row: String
         val fileName: String
@@ -108,6 +125,38 @@ object AppLog {
             if (total > TOTAL_BYTES && it.exists()) {
                 total -= it.length()
                 it.delete()
+            }
+        }
+    }
+
+    /** Refresh the Logs screen from both processes' append-only diagnostic file.
+     * Run disk access off the UI thread; no IPC or service binding is needed.
+     * Pending in-memory lines are retained until their async write is flushed. */
+    suspend fun refreshFromDisk() {
+        val app = context ?: return
+        val diskLines = withContext(Dispatchers.IO) {
+            val dir = File(app.filesDir, "diagnostics")
+            val recent = dir.listFiles()?.filter {
+                it.name.matches(Regex("log-\\d{4}-\\d{2}-\\d{2}\\.txt"))
+            }?.sortedBy { it.name }.orEmpty()
+            val items = recent.flatMap { runCatching { it.readLines() }.getOrDefault(emptyList()) }
+                .takeLast(MAX).toMutableList()
+            listOf("crash-journal.log", "crash-journal-web.log").forEach { name ->
+                File(app.filesDir, name).takeIf { it.isFile }?.let { file ->
+                    runCatching { file.forEachLine { items.add("[CRASH] " + it) } }
+                }
+            }
+            items.takeLast(MAX)
+        }
+        synchronized(lock) {
+            // A media process can add log rows while this page is open.
+            // Pending appends should not disappear from the UI during flush.
+            val merged = diskLines.toMutableList()
+            for (entry in lines) if (entry !in merged && merged.size < MAX) merged.add(entry)
+            if (merged != lines.toList()) {
+                lines.clear()
+                merged.takeLast(MAX).forEach { lines.addLast(it) }
+                _version.value++
             }
         }
     }
