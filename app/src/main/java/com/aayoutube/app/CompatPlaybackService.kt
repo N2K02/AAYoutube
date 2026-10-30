@@ -24,6 +24,7 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     private lateinit var session: MediaSessionCompat
     private var outgoing: Messenger? = null
     private var bound = false
+    private val pending = ArrayDeque<Pair<Int, Bundle>>()
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == Msg.STATE) {
@@ -36,6 +37,10 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             outgoing = Messenger(binder)
             send(Msg.REGISTER, replyTo = incoming)
+            while (pending.isNotEmpty()) {
+                val (command, data) = pending.removeFirst()
+                send(command, data)
+            }
         }
         override fun onServiceDisconnected(name: ComponentName) { outgoing = null }
         override fun onBindingDied(name: ComponentName) { outgoing = null }
@@ -46,7 +51,10 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         ensureWeb()
-        val target = outgoing ?: return
+        val target = outgoing ?: run {
+            if (command != Msg.REGISTER) pending.addLast(command to data)
+            return
+        }
         runCatching {
             target.send(Message.obtain(null, command).apply {
                 this.data = data
@@ -163,6 +171,7 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
         if (bound) runCatching { unbindService(connection) }
         bound = false
         outgoing = null
+        pending.clear()
         session.isActive = false
         session.release()
         super.onDestroy()
