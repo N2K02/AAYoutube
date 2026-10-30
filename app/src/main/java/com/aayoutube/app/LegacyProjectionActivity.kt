@@ -7,6 +7,20 @@ import android.os.Looper
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -73,7 +87,27 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private fun LegacyProjectionScreen() {
         val version by WebHost.webVersion.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        val playing by WebHost.snapshot.collectAsState()
+        Column(Modifier.fillMaxSize().background(Color.Black)) {
+            // This is inside AABrowser's projected CarActivity, not Android Auto's
+            // host-owned navigation template. The buttons can therefore be centered.
+            Row(
+                modifier = Modifier.fillMaxWidth().height(64.dp)
+                    .background(Color(0xFF252525)).padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CarControl("‹ Back") { WebHost.goBack() }
+                Spacer(Modifier.width(8.dp))
+                CarControl("⌂ Home") { WebHost.openUrl("https://m.youtube.com/") }
+                Spacer(Modifier.width(8.dp))
+                CarControl(if (playing.playing) "Ⅱ Pause" else "▶ Play") {
+                    WebHost.cmd(if (playing.playing) "pause" else "play")
+                }
+                Spacer(Modifier.width(8.dp))
+                CarControl("⏭ Next") { WebHost.cmd("next") }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
             key(version) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -107,6 +141,19 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { it.removeAllViews() },
                 )
             }
+            }
+        }
+    }
+
+    @Composable
+    private fun CarControl(label: String, action: () -> Unit) {
+        Box(
+            modifier = Modifier.background(Color(0xFF383838), RoundedCornerShape(24.dp))
+                .clickable(onClick = action)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(label, color = Color.White, fontWeight = FontWeight.Medium)
         }
     }
 
