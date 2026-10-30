@@ -32,6 +32,20 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var lastSavedPosition = -1L
     private var lastSavedId = ""
     private var idleSince = 0L
+    private var lastPlaying = false
+    private var audioManager: android.media.AudioManager? = null
+    private var focusRequest: android.media.AudioFocusRequest? = null
+    private var focusHeld = false
+    private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                send(Msg.PAUSE)
+                snapshot = snapshot.copy(playing = false)
+                publish(snapshot)
+            }
+        }
+    }
     private val channelId = "aay_media"
     private var shuttingDown = false
     private var retries = 0
@@ -114,6 +128,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private fun publish(s: Snap) {
+        if (s.playing != lastPlaying) {
+            lastPlaying = s.playing
+            if (s.playing) requestFocus() else releaseFocus()
+        }
         val state = when {
             s.buffering -> PlaybackStateCompat.STATE_BUFFERING
             s.playing -> PlaybackStateCompat.STATE_PLAYING
@@ -159,6 +177,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         super.onCreate()
         createNotificationChannel()
         Library.init(this)
+        audioManager = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
         session = MediaSessionCompat(this, "AAYoutube").apply {
             setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
@@ -264,6 +283,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         shuttingDown = true
+        releaseFocus()
         handler.removeCallbacksAndMessages(null)
         if (bound) runCatching { unbindService(connection) }
         bound = false
@@ -273,6 +293,28 @@ class PlaybackService : MediaBrowserServiceCompat() {
         session.isActive = false
         session.release()
         super.onDestroy()
+    }
+
+    private fun requestFocus() {
+        if (focusHeld) return
+        val manager = audioManager ?: return
+        val request = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            .setOnAudioFocusChangeListener(focusListener, handler)
+            .build()
+        if (manager.requestAudioFocus(request) == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            focusRequest = request
+            focusHeld = true
+        }
+    }
+
+    private fun releaseFocus() {
+        val manager = audioManager ?: return
+        focusRequest?.let { manager.abandonAudioFocusRequest(it) }
+        focusRequest = null
+        focusHeld = false
     }
 
     private fun mediaButton(keyCode: Int): android.app.PendingIntent =
