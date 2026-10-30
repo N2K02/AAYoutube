@@ -72,8 +72,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         true
     })
-    private val connection = object : ServiceConnection {
+    private var connection: ServiceConnection? = null
+
+    private fun newConnection(): ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            if (connection !== this || shuttingDown) return
             outgoing = Messenger(binder)
             if (quitRequested) {
                 send(Msg.QUIT, replyTo = incoming)
@@ -95,18 +98,29 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 send(command, data)
             }
         }
-        override fun onServiceDisconnected(name: ComponentName) = lost()
-        override fun onBindingDied(name: ComponentName) = lost()
-        override fun onNullBinding(name: ComponentName) = lost()
+        override fun onServiceDisconnected(name: ComponentName) {
+            if (connection === this) lost()
+        }
+        override fun onBindingDied(name: ComponentName) {
+            if (connection === this) lost()
+        }
+        override fun onNullBinding(name: ComponentName) {
+            if (connection === this) lost()
+        }
     }
     private fun ensureWeb() {
         if (bound || shuttingDown) return
         // Mark binding before invoking the framework: a synchronous failure must not
         // leave the service believing it still has a live connection.
+        val attempt = newConnection()
+        connection = attempt
         bound = runCatching {
-            bindService(Intent(this, WebHostService::class.java), connection, BIND_AUTO_CREATE)
+            bindService(Intent(this, WebHostService::class.java), attempt, BIND_AUTO_CREATE)
         }.getOrDefault(false)
-        if (!bound) scheduleRetry()
+        if (!bound) {
+            if (connection === attempt) connection = null
+            scheduleRetry()
+        }
     }
     private fun scheduleRetry() {
         if (shuttingDown || quitRequested || retries >= 4) return
@@ -116,8 +130,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun lost() {
         outgoing = null
         val wasBound = bound
+        val previous = connection
+        connection = null
         bound = false
-        if (wasBound) runCatching { unbindService(connection) }
+        if (wasBound && previous != null) runCatching { unbindService(previous) }
         if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank()) {
             recoveringPlayback = true
             idleSince = 0L
@@ -371,7 +387,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     override fun onDestroy() {
         shuttingDown = true
         handler.removeCallbacksAndMessages(null)
-        if (bound) runCatching { unbindService(connection) }
+        val activeConnection = connection
+        connection = null
+        if (bound && activeConnection != null) runCatching { unbindService(activeConnection) }
         bound = false
         outgoing = null
         pending.clear()
