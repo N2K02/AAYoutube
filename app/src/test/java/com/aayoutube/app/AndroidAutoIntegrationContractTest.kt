@@ -35,10 +35,10 @@ class AndroidAutoIntegrationContractTest {
     }
 
     @Test fun serviceDisconnectNeverRestartsUserPausedVideo() {
-        val kotlin = source("app/src/main/java/com/aayoutube/app/HostLink.kt")
-        assertTrue(kotlin.contains("val active = player.playingNow()"))
-        assertTrue(kotlin.contains("if (active && before.id.isNotBlank()"))
-        assertTrue(kotlin.contains("reconnectAttempts < 4"))
-        assertTrue(kotlin.contains("main.removeCallbacks(reconnect)"))
+        val kotlin = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        assertTrue(kotlin.contains("if (snapshot.playing && snapshot.id.isNotBlank())"))
+        assertTrue(kotlin.contains("pending.addFirst(Msg.OPEN"))
+        assertTrue(kotlin.contains("retries >= 4"))
+        assertTrue(kotlin.contains("handler.removeCallbacks(retry)"))
     }
 }
