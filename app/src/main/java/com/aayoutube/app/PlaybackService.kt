@@ -257,20 +257,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                             Library.toggleFavourite(snapshot)
                             notifyChildrenChanged("favourites")
                         }
-                        Commands.EXIT -> {
-                            if (quitRequested) return
-                            quitRequested = true
-                            pending.clear()
-                            handler.removeCallbacks(retry)
-                            handler.removeCallbacks(freeze)
-                            handler.removeCallbacks(idleStop)
-                            snapshot = snapshot.copy(playing = false, buffering = false)
-                            publish(snapshot)
-                            if (outgoing == null) ensureWeb()
-                            send(Msg.QUIT, replyTo = incoming)
-                            handler.removeCallbacks(finishQuit)
-                            handler.postDelayed(finishQuit, 1_500L)
-                        }
+                        Commands.EXIT -> requestQuit()
                     }
                 }
                 override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos.coerceAtLeast(0L)) })
@@ -298,6 +285,22 @@ class PlaybackService : MediaBrowserServiceCompat() {
         sessionToken = session.sessionToken
     }
 
+    private fun requestQuit() {
+        if (quitRequested || shuttingDown) return
+        quitRequested = true
+        pending.clear()
+        recoveringPlayback = false
+        handler.removeCallbacks(retry)
+        handler.removeCallbacks(freeze)
+        handler.removeCallbacks(idleStop)
+        snapshot = snapshot.copy(playing = false, buffering = false)
+        publish(snapshot)
+        if (outgoing == null) ensureWeb()
+        send(Msg.QUIT, replyTo = incoming)
+        handler.removeCallbacks(finishQuit)
+        handler.postDelayed(finishQuit, 1_500L)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // A startForegroundService caller must be promoted before WebView IPC responds.
         if (!foreground) {
@@ -307,6 +310,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastNotification = null
             }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
         }
+        if (intent?.action == ACTION_QUIT) requestQuit()
         // The placeholder is only a startup requirement, not an idle media card.
         handler.post { if (!shuttingDown) updateNotification(snapshot) }
         return super.onStartCommand(intent, flags, startId)
@@ -403,8 +407,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
         return actions
     }
 
-    private companion object {
-        const val ROOT = "root"
+    companion object {
+        const val ACTION_QUIT = "com.aayoutube.app.action.QUIT"
+        private const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
             PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
