@@ -63,6 +63,7 @@ object WebHost {
 
     private var wrapper: MutableContextWrapper? = null
     private var web: WebView? = null
+    private var webGeneration = 0
     private var scriptHandler: ScriptHandler? = null
     private var link: Messenger? = null
     private var linkEpoch = -1
@@ -132,6 +133,7 @@ object WebHost {
         val context = MutableContextWrapper(app)
         wrapper = context
         val w = BackgroundWebView(context)
+        webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
         web = w
@@ -197,7 +199,7 @@ object WebHost {
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(w, true)
 
-        w.addJavascriptInterface(WebBridge(), "AAYNative")
+        w.addJavascriptInterface(WebBridge(webGeneration), "AAYNative")
         w.webViewClient = client
         w.webChromeClient = chrome
     }
@@ -350,6 +352,10 @@ object WebHost {
         }
 
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
+    fun requestMiniFromBridge(generation: Int) {
+        main.post { if (generation == webGeneration) enterMini() }
+    }
+
     fun enterMini() {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
         AppLog.add("VIEW", "Mini player on (playing=${snapshot.value.playing})")
@@ -431,12 +437,13 @@ object WebHost {
     }
 
     /** Invoked from the WebView's JavaScript bridge thread, never by another app. */
-    fun onJsLyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+    fun onJsLyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
         if (!seconds.isFinite() || seconds < 0 || seconds > 86_400 ||
             !rate.isFinite() || rate <= 0 || rate > 8.0) return
         main.post {
             // Reject a sample from a previous video or a disposed lyrics panel.
-            if (!lyricsTracking || id.isBlank() || id != snapshot.value.id) return@post
+            if (generation != webGeneration || !lyricsTracking || id.isBlank() || id != snapshot.value.id) return@post
             lyricsClock.value = LyricsClock(
                 videoId = id,
                 posMs = (seconds * 1000).toLong(),
@@ -468,9 +475,10 @@ object WebHost {
     }
 
     /** Called by the injected script, using YouTube's own LOGGED_IN flag. */
-    fun reportAccountStatus(value: String) {
+    fun reportAccountStatus(value: String, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
         val state = YouTubeAccountState.fromScript(value) ?: return
-        main.post { youtubeAccount.value = state }
+        main.post { if (generation == webGeneration) youtubeAccount.value = state }
     }
 
     fun exitFullscreen() {
@@ -515,14 +523,15 @@ object WebHost {
         AppLog.add("POWER", "WebView released")
         main.removeCallbacks(freezeSoon)
         exitFullscreen()
-        val w = web ?: return
+        val w = web
         web = null
+        webGeneration++ // Ignore already-queued bridge reports from the disposed renderer.
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
-        (w.parent as? ViewGroup)?.removeView(w)
-        w.stopLoading()
-        w.pauseTimers()
-        w.destroy()
+        (w?.parent as? ViewGroup)?.removeView(w)
+        w?.stopLoading()
+        w?.pauseTimers()
+        w?.destroy()
         wrapper = null
         frozen = false
         snapshot.value = Snap()
@@ -650,7 +659,8 @@ object WebHost {
     }
 
     /** Called on a WebView thread by [WebBridge]. */
-    fun onJsState(json: String) {
+    fun onJsState(json: String, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
         val s = runCatching {
             val o = JSONObject(json)
             Snap(
@@ -675,7 +685,7 @@ object WebHost {
                 }.orEmpty(),
             )
         }.getOrNull() ?: return
-        main.post { publish(s) }
+        main.post { if (generation == webGeneration) publish(s) }
     }
 
     private var lastLogged = ""
@@ -783,6 +793,7 @@ object WebHost {
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            if (view !== web) return
             AppLog.add("PAGE", "Started $url")
             lyricsClock.value = LyricsClock()
             youtubeAccount.value = YouTubeAccountState.CHECKING
@@ -793,6 +804,7 @@ object WebHost {
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
+            if (view !== web) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
@@ -806,6 +818,7 @@ object WebHost {
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+            if (view !== web) return
             canGoBack.value = view.canGoBack()
             onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
                 .let { it.startsWith("/watch") || it.startsWith("/live/") }
@@ -895,26 +908,26 @@ object WebHost {
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
-class WebBridge {
+class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun state(json: String) {
-        WebHost.onJsState(json)
+        WebHost.onJsState(json, generation)
     }
 
     @JavascriptInterface
     fun account(status: String) {
-        WebHost.reportAccountStatus(status)
+        WebHost.reportAccountStatus(status, generation)
     }
 
     /** Real HTMLVideoElement position, sampled only while timed lyrics are displayed. */
     @JavascriptInterface
     fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
-        WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate)
+        WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
     }
 
     /** Swipe down on the playing video. */
     @JavascriptInterface
     fun mini() {
-        android.os.Handler(android.os.Looper.getMainLooper()).post { WebHost.enterMini() }
+        WebHost.requestMiniFromBridge(generation)
     }
 }

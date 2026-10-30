@@ -43,3 +43,25 @@ Compile, run unit tests and JS tests, then test a **parked** physical Android Au
 head unit: car/phone WebView handoff, rotation/configuration changes, media
 browse/search, steering-wheel keys, buffering, seek, screen off, process death,
 reconnect, background playback and Quit. CI does not substitute for device tests.
+
+
+## Lifecycle hardening (2026-10-31)
+
+- A Messenger disconnect does not automatically navigate to the last video.
+  Once registration is acknowledged, the media service requests a player snapshot;
+  only a confirmed missing player can be reopened from the last playing position.
+  PAUSE, STOP, OPEN, SEARCH and Quit cancel recovery intent.
+- The primary WebView preserves car ownership through a renderer crash, restores
+  the previous playing or paused video from its last known position, and stops
+  automatic restarts after repeated crashes. Old JS bridge reports are rejected
+  using WebView generation checks.
+- A crash of the independent mini-browser WebView replaces that browser without
+  resetting the player. Its media is always muted, protecting the primary audio.
+- Car input is rebound to a surviving WebView after the input-manager wrapper is
+  recreated. Phone/car media-link callbacks use explicit owner checks.
+- Lyrics cache entries are qualified by title/artist metadata so a weak early
+  result cannot mask a later timed match. Provider connections are disconnected
+  on coroutine cancellation and response reads are bounded.
+
+The instrumentation/device matrix remains required; static contracts and JVM
+logic tests cannot prove Android Auto host and decoder behavior.

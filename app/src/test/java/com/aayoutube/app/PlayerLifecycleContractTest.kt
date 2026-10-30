@@ -13,6 +13,8 @@ class PlayerLifecycleContractTest {
         val web = source("WebHost.kt")
         assertTrue(web.contains("car(\${carDisplay || carShown})"))
         assertTrue(web.contains("release(preserveCarOwners = true)"))
+        assertTrue(web.contains("webGeneration++"))
+        assertTrue(web.contains("generation == webGeneration"))
         assertTrue(web.contains("rendererCrashCount <= 2"))
         val car = source("LegacyProjectionActivity.kt")
         assertTrue(car.contains("(frame.getChildAt(0) as? WebView)?.let { carInput?.bind(it) }"))

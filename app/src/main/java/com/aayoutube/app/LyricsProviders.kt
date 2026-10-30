@@ -3,6 +3,9 @@ package com.aayoutube.app
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import org.json.JSONObject
 import org.json.JSONArray
 import org.xmlpull.v1.XmlPullParser
@@ -86,14 +89,36 @@ internal object LyricsProviders {
         return emptyList<LyricLine>() to plainFallback
     }
 
-    private fun request(url: String): String? {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 4500
-        conn.readTimeout = 4500
+    /** Cancellation disconnects blocking network I/O, instead of waiting for all
+     * provider timeouts after navigating to another video or pressing Quit. */
+    private suspend fun request(url: String): String? = suspendCancellableCoroutine { task ->
+        val conn = try { URL(url).openConnection() as HttpURLConnection } catch (error: Exception) {
+            task.resumeWithException(error)
+            return@suspendCancellableCoroutine
+        }
+        conn.connectTimeout = 4_500
+        conn.readTimeout = 4_500
         conn.setRequestProperty("User-Agent", "AAYoutube/lyrics")
-        return try {
-            if (conn.responseCode in 200..299) conn.inputStream.bufferedReader().use { it.readText() } else null
-        } finally { conn.disconnect() }
+        task.invokeOnCancellation { conn.disconnect() }
+        try {
+            val result = if (conn.responseCode in 200..299) {
+                conn.inputStream.bufferedReader().use { reader ->
+                    val buffer = CharArray(4_096)
+                    val content = StringBuilder()
+                    while (content.length < 512_000) {
+                        val n = reader.read(buffer, 0, minOf(buffer.size, 512_000 - content.length))
+                        if (n < 0) break
+                        content.append(buffer, 0, n)
+                    }
+                    content.toString()
+                }
+            } else null
+            if (task.isActive) task.resume(result)
+        } catch (error: Exception) {
+            if (task.isActive) task.resumeWithException(error)
+        } finally {
+            conn.disconnect()
+        }
     }
     private fun ttml(xml: String): Pair<List<LyricLine>, String?>? {
         val parser = Xml.newPullParser()
@@ -129,7 +154,7 @@ internal object LyricsProviders {
         val hours = if (parts.size == 3) parts[0].toLongOrNull() ?: return null else 0L
         return ((hours * 3600 + minutes * 60 + seconds) * 1000).toLong()
     }
-    private fun blyrics(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun blyrics(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (snap.artist.isBlank()) return null
         val title = URLEncoder.encode(snap.title, "UTF-8")
         val artist = URLEncoder.encode(snap.artist, "UTF-8")
@@ -138,7 +163,7 @@ internal object LyricsProviders {
         val xml = JSONObject(request(url) ?: return null).optString("ttml")
         return if (xml.isBlank()) null else ttml(xml)
     }
-    private fun binimum(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun binimum(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (snap.artist.isBlank()) return null
         val title = URLEncoder.encode(snap.title, "UTF-8")
         val artist = URLEncoder.encode(snap.artist, "UTF-8")
@@ -149,7 +174,7 @@ internal object LyricsProviders {
         if (!lyricsUrl.startsWith("https://")) return null
         return ttml(request(lyricsUrl) ?: return null)
     }
-    private fun rmm(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun rmm(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (snap.title.isBlank()) return null
         val query = URLEncoder.encode((snap.title + " " + snap.artist).trim(), "UTF-8")
         val results = JSONObject(request("https://itunes.apple.com/search?term=$query&entity=song&limit=5") ?: return null)
@@ -167,7 +192,7 @@ internal object LyricsProviders {
         }
         return null
     }
-    private fun simpMusic(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun simpMusic(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (!snap.id.matches(Regex("[A-Za-z0-9_-]{11}"))) return null
         val root = JSONObject(request("https://api-lyrics.simpmusic.org/v1/" + snap.id) ?: return null)
         if (!root.optBoolean("success")) return null
@@ -184,7 +209,7 @@ internal object LyricsProviders {
         }
         return if (plainFallback == null) null else emptyList<LyricLine>() to plainFallback
     }
-    private fun netease(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun netease(snap: Snap): Pair<List<LyricLine>, String?>? {
         val q = URLEncoder.encode((snap.title + " " + snap.artist).trim(), "UTF-8")
         val songs = JSONObject(request("https://music.163.com/api/search/get/web?type=1&limit=5&s=$q") ?: return null)
             .optJSONObject("result")?.optJSONArray("songs") ?: return null
@@ -201,7 +226,7 @@ internal object LyricsProviders {
         }
         return null
     }
-    private fun lyricsOvh(snap: Snap): Pair<List<LyricLine>, String?>? {
+    private suspend fun lyricsOvh(snap: Snap): Pair<List<LyricLine>, String?>? {
         if (snap.artist.isBlank()) return null
         val artist = URLEncoder.encode(snap.artist, "UTF-8")
         val title = URLEncoder.encode(snap.title, "UTF-8")
