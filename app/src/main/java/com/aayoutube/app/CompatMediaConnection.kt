@@ -13,6 +13,7 @@ class CompatMediaConnection(
 ) {
     private var browser: MediaBrowserCompat? = null
     private var controller: MediaControllerCompat? = null
+    private val queuedActions = ArrayDeque<String>()
 
     fun connect() {
         if (browser != null) return
@@ -22,7 +23,12 @@ class CompatMediaConnection(
                 override fun onConnected() {
                     val connected = browser ?: return
                     controller = MediaControllerCompat(context, connected.sessionToken)
-                    controller?.let(onConnected)
+                    controller?.let { connectedController ->
+                        onConnected(connectedController)
+                        while (queuedActions.isNotEmpty()) {
+                            connectedController.transportControls.sendCustomAction(queuedActions.removeFirst(), Bundle.EMPTY)
+                        }
+                    }
                 }
                 override fun onConnectionFailed() { disconnect() }
                 override fun onConnectionSuspended() { controller = null }
@@ -32,11 +38,14 @@ class CompatMediaConnection(
     }
 
     fun command(action: String) {
-        controller?.transportControls?.sendCustomAction(action, Bundle.EMPTY)
+        val active = controller
+        if (active != null) active.transportControls.sendCustomAction(action, Bundle.EMPTY)
+        else if (queuedActions.size < 8) queuedActions.addLast(action)
     }
 
     fun disconnect() {
         controller = null
+        queuedActions.clear()
         browser?.disconnect()
         browser = null
     }
