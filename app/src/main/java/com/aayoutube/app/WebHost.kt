@@ -81,7 +81,7 @@ object WebHost {
     val onWatchPage = MutableStateFlow(false)
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
-    val lyricsClock = MutableStateFlow(LyricsClock())
+    internal val lyricsClock = MutableStateFlow(LyricsClock())
     private var lyricsTracking = false
     val youtubeAccount = MutableStateFlow(YouTubeAccountState.CHECKING)
     val webVersion = MutableStateFlow(0)
@@ -411,6 +411,7 @@ object WebHost {
     fun setLyricsTracking(active: Boolean) {
         if (lyricsTracking == active) return
         lyricsTracking = active
+        AppLog.add("LYRICS", "Video clock tracking=" + active)
         if (!active) lyricsClock.value = LyricsClock()
         js("window.__aay&&window.__aay.lyricsSync($active)")
     }

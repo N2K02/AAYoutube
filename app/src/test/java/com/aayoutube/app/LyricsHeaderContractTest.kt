@@ -35,7 +35,9 @@ class LyricsHeaderContractTest {
         assertFalse(overlay.contains("internal fun LyricsFloatingButton("))
         assertTrue(root.contains("WebHost.setLyricsTracking(lyricsOnScreen && foundLyrics.lines.isNotEmpty())"))
         assertTrue(root.contains("onDispose { WebHost.setLyricsTracking(false) }"))
-        assertTrue(overlay.contains("liveClock.positionFor(snap.id, tickAt, offsetMs)"))
+        assertTrue(overlay.contains("latestClock.positionFor(snap.id, tickAt, offsetMs)"))
+        assertTrue(overlay.contains("LaunchedEffect(snap.id, offsetMs)"))
+        assertTrue(overlay.contains("Crossfade(targetState = index"))
     }
 
     @Test fun browserDoesNotInjectAnotherSettingsOrMenuEntry() {

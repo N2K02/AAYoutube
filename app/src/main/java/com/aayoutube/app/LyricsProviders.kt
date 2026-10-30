@@ -11,6 +11,20 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
+/** Normalize video titles before querying song-lyric services, without changing the playback metadata.
+ * Official-video suffixes and redundant "Artist - Track" prefixes often return unrelated versions. */
+internal object LyricsQuery {
+    private val videoSuffix = Regex("""\s*[\[(](?:official\s+)?(?:music\s+)?(?:video|audio|lyrics?|visualizer|4k|hd)(?:\s+(?:video|audio))?[\])]\s*""", RegexOption.IGNORE_CASE)
+    fun title(title: String, artist: String): String {
+        var result = title.replace(videoSuffix, " ").trim()
+        val prefix = artist.trim()
+        if (prefix.isNotBlank() && result.startsWith("$prefix - ", ignoreCase = true))
+            result = result.substring(prefix.length + 3)
+        return result.trim().ifBlank { title.trim() }
+    }
+    fun cleaned(snap: Snap): Snap = snap.copy(title = title(snap.title, snap.artist))
+}
+
 /** Independent public lyric endpoints. A failure never prevents the next provider being tried. */
 internal enum class LyricsProvider(val title: String) {
     RMM("RMM Revival"), LRCLIB("LRCLIB"), NETEASE("NetEase"), SIMPMUSIC("SimpMusic"), BLYRICS("bLyrics"), BINIMUM("BiniLyrics"), LYRICS_OVH("Lyrics.ovh")
@@ -39,16 +53,17 @@ internal object LyricsProviders {
     /** Prefer a timed match from any enabled source; plain text is the fallback only. */
     suspend fun fetch(context: Context, snap: Snap): Pair<List<LyricLine>, String?> =
         withContext(Dispatchers.IO) {
+            val lyricSnap = LyricsQuery.cleaned(snap)
             preferTimed(ordered(context)) { source ->
                 try {
                     when (source) {
-                        LyricsProvider.LRCLIB -> LyricsLookup.fetch(snap)
-                        LyricsProvider.RMM -> rmm(snap)
-                        LyricsProvider.NETEASE -> netease(snap)
-                        LyricsProvider.SIMPMUSIC -> simpMusic(snap)
-                        LyricsProvider.BLYRICS -> blyrics(snap)
-                        LyricsProvider.BINIMUM -> binimum(snap)
-                        LyricsProvider.LYRICS_OVH -> lyricsOvh(snap)
+                        LyricsProvider.LRCLIB -> LyricsLookup.fetch(lyricSnap)
+                        LyricsProvider.RMM -> rmm(lyricSnap)
+                        LyricsProvider.NETEASE -> netease(lyricSnap)
+                        LyricsProvider.SIMPMUSIC -> simpMusic(lyricSnap)
+                        LyricsProvider.BLYRICS -> blyrics(lyricSnap)
+                        LyricsProvider.BINIMUM -> binimum(lyricSnap)
+                        LyricsProvider.LYRICS_OVH -> lyricsOvh(lyricSnap)
                     }
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled

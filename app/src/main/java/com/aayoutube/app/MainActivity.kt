@@ -181,7 +181,10 @@ class MainActivity : ComponentActivity() {
         val playing = WebHost.snapshot.value.playing
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
         // Request a stable landscape PiP window; Android ultimately controls its size.
-        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
+            builder.setSeamlessResizeEnabled(true)
+        }
         runCatching { setPictureInPictureParams(builder.build()) }
     }
 

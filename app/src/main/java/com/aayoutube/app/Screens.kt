@@ -86,6 +86,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -481,8 +484,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         var mx by remember { mutableStateOf(prefs.getFloat("miniX", 1f)) }
         var my by remember { mutableStateOf(prefs.getFloat("miniY", 1f)) }
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val miniW = 224.dp
-            val miniH = 126.dp
+            val miniW = minOf(224.dp, maxWidth * 0.72f)
+            val miniH = miniW * (9f / 16f)
             val edge = with(density) { 12.dp.toPx() }
             val ytMenu = with(density) { 64.dp.toPx() } // YouTube's bottom menu (Home, Subscriptions, You)
             val wPx = with(density) { miniW.toPx() }
@@ -495,13 +498,29 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             val py = minY + (maxY - minY) * my
             val miniMod = Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH)
 
-            val playerMod = when {
-                small -> miniMod.clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                hidden -> Modifier.size(1.dp).graphicsLayer { alpha = 0f }
-                // Car screen: swipe down on the video shrinks it into the mini player, as on the phone.
-                // Detected here rather than in the page, whatever kind of touch Android Auto sends.
-                else -> Modifier.fillMaxSize().then(carSwipeDown)
-            }
+            // Animate the already-rendered WebView layer instead of changing its layout size
+            // on every frame. Repeated WebView resizes reconfigure the video decoder and
+            // make the mini/full and PiP transitions visibly stutter or briefly go black.
+            val miniProgress by animateFloatAsState(
+                targetValue = if (small) 1f else 0f,
+                animationSpec = tween(durationMillis = 260),
+                label = "mini-player-transition",
+            )
+            val miniScaleX = wPx / constraints.maxWidth.coerceAtLeast(1)
+            val miniScaleY = hPx / constraints.maxHeight.coerceAtLeast(1)
+            val playerMod = Modifier.fillMaxSize()
+                .graphicsLayer {
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    translationX = px * miniProgress
+                    translationY = py * miniProgress
+                    scaleX = 1f + (miniScaleX - 1f) * miniProgress
+                    scaleY = 1f + (miniScaleY - 1f) * miniProgress
+                    alpha = if (hidden) 0f else 1f
+                    clip = miniProgress > 0f
+                    shape = RoundedCornerShape(if (miniProgress > 0f) 16.dp else 0.dp)
+                }
+                // Car screen swipes are active only in the expanded player.
+                .then(if (!small && onCar) carSwipeDown else Modifier)
             key(version) {
                 AndroidView(
                     modifier = playerMod,

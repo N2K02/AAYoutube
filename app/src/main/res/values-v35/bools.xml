@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Android 15+: Android Auto shows the real app screen (MainActivity) on the car display. -->
-    <bool name="legacy_car_screen">false</bool>
+    <!-- Keep the Car App navigation surface available on Android 15+, too: a launcher Activity alone does not supply Android Auto's video surface. -->
+    <bool name="legacy_car_screen">true</bool>
 </resources>

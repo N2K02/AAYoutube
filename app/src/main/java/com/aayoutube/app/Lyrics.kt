@@ -10,6 +10,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.offset
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -86,9 +88,11 @@ internal data class LyricsClock(
     val rate: Float = 1f,
     val sampledAtMs: Long = 0L,
 ) {
-    fun positionFor(id: String, nowMs: Long, offsetMs: Long): Long? =
-        if (id.isBlank() || videoId != id) null
-        else LyricsSync.position(posMs, playing, buffering, rate, nowMs - sampledAtMs, offsetMs)
+    fun positionFor(id: String, nowMs: Long, offsetMs: Long): Long? {
+        val age = nowMs - sampledAtMs
+        return if (id.isBlank() || videoId != id || age !in 0..1_500L) null
+        else LyricsSync.position(posMs, playing, buffering, rate, age, offsetMs)
+    }
 }
 
 internal object LyricsPrefs {
@@ -138,8 +142,15 @@ internal object LyricsLookup {
                 var plainFallback: String? = null
                 for (i in 0 until arr.length().coerceAtMost(20)) {
                     val item = arr.getJSONObject(i)
-                    val name = item.optString("trackName").lowercase()
-                    if (name != normalized && !normalized.contains(name) && !name.contains(normalized)) continue
+                    val name = item.optString("trackName").lowercase().trim()
+                    if (name != normalized) continue
+                    val candidateDuration = item.optDouble("duration", 0.0)
+                    if (snap.durMs > 0L && candidateDuration > 0 &&
+                        kotlin.math.abs(candidateDuration * 1000.0 - snap.durMs) > 12_000) continue
+                    val candidateArtist = item.optString("artistName").trim()
+                    if (snap.artist.isNotBlank() && candidateArtist.isNotBlank() &&
+                        !candidateArtist.contains(snap.artist, true) &&
+                        !snap.artist.contains(candidateArtist, true)) continue
                     val synced = item.optString("syncedLyrics")
                     if (synced.isNotBlank() && synced != "null") {
                         val lines = LyricsParser.parse(synced)
@@ -206,18 +217,23 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
     val lines = content.lines
     val plain = content.plain
     val liveClock by WebHost.lyricsClock.collectAsState()
+    // Keep one clock loop alive while samples arrive; restarting it for every sample
+    // caused flickering and sometimes prevented a line transition from completing.
+    val latestClock by rememberUpdatedState(liveClock)
+    val snapshotAnchor = remember(snap) { snap to SystemClock.elapsedRealtime() }
+    val latestSnapshot by rememberUpdatedState(snapshotAnchor)
     var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
     var now by remember { mutableLongStateOf(0L) }
     var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
     // The direct WebView clock is authoritative. Media3's snapshot is only a
     // fallback before the first sample arrives or after WebView replacement.
-    LaunchedEffect(snap.id, snap.posMs, snap.playing, snap.buffering, snap.rate, liveClock, offsetMs) {
-        val snapshotAt = SystemClock.elapsedRealtime()
+    LaunchedEffect(snap.id, offsetMs) {
         while (true) {
             val tickAt = SystemClock.elapsedRealtime()
-            now = liveClock.positionFor(snap.id, tickAt, offsetMs)
-                ?: LyricsSync.position(snap.posMs, snap.playing, snap.buffering, snap.rate,
-                    tickAt - snapshotAt, offsetMs)
+            val (fallback, sampleAt) = latestSnapshot
+            now = latestClock.positionFor(snap.id, tickAt, offsetMs)
+                ?: LyricsSync.position(fallback.posMs, fallback.playing, fallback.buffering,
+                    fallback.rate, tickAt - sampleAt, offsetMs)
             delay(100)
         }
     }
@@ -262,17 +278,26 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
         val index = LyricsParser.current(lines, now)
         when {
             lines.isNotEmpty() -> {
-                for (i in (index - 1).coerceAtLeast(0)..(index + 2).coerceAtMost(lines.lastIndex)) {
-                    Text(lines[i].text, color = if (i == index) Color.White else Color.LightGray,
-                        style = if (i == index) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 5.dp))
+                // Animate only when the lyric index changes, not every clock sample.
+                // Crossfade is cheap for a small number of text lines.
+                Crossfade(targetState = index, animationSpec = tween(170), label = "lyric-line") { active ->
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val first = (active - 1).coerceAtLeast(0)
+                        val last = (active + 2).coerceAtMost(lines.lastIndex)
+                        for (i in first..last) {
+                            Text(lines[i].text, color = if (i == active) Color.White else Color.LightGray,
+                                style = if (i == active) MaterialTheme.typography.titleLarge else MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 5.dp))
+                        }
+                    }
                 }
             }
             !plain.isNullOrBlank() -> {
                 Text("Lyrics without timestamps — cannot follow the song",
                     color = Color.LightGray, style = MaterialTheme.typography.labelSmall)
                 Spacer(Modifier.height(8.dp))
-                Text(plain.take(1500), color = Color.White, textAlign = TextAlign.Center)
+                Text(plain.take(1500), color = Color.White, textAlign = TextAlign.Center,
+                    modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
             }
         }
     }

@@ -21,7 +21,8 @@ class AndroidAutoIntegrationContractTest {
         val legacy = source("app/src/main/res/values/bools.xml")
         val modern = source("app/src/main/res/values-v35/bools.xml")
         assertTrue(legacy.contains(">true</bool>"))
-        assertTrue(modern.contains(">false</bool>"))
+        assertTrue(modern.contains(">true</bool>"))
+        assertTrue(source("app/src/main/res/xml-v35/automotive_app_desc.xml").contains("<uses name=\"template\" />"))
     }
 
     @Test fun carScreenKeepsSurfaceAndRestrictsUntrustedHosts() {

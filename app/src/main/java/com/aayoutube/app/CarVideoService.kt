@@ -98,7 +98,7 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         // Do not destroy or detach the WebView when the AA host replaces its Surface.
         // AABrowser keeps its virtual display alive for this exact reason.
         override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
-            if (activeSurface === surfaceContainer.surface) {
+            if (activeSurface === surfaceContainer.surface || activeSurface == surfaceContainer.surface) {
                 runCatching { display?.surface = null }
                 activeSurface = null
                 AppLog.add("CAR", "Surface detached; player preserved")
@@ -148,7 +148,10 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
             runCatching {
                 if (mediaController === future)
                     future.get().sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
-            }.onFailure { AppLog.add("CAR", "Media controller connection failed") }
+            }.onFailure {
+                AppLog.add("CAR", "Media controller connection failed: ${it.javaClass.simpleName}")
+                mediaController = null
+            }
         }, MoreExecutors.directExecutor())
     }
 
@@ -208,10 +211,16 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
         surfaceDpi = dpi
         activeSurface = surface
         val manager = carContext.getSystemService(DisplayManager::class.java)
-        val vd = manager.createVirtualDisplay(
-            "aay-car", width, height, dpi, surface,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
-        ) ?: return
+        val vd = runCatching {
+            manager.createVirtualDisplay(
+                "aay-car", width, height, dpi, surface,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
+            )
+        }.onFailure { AppLog.add("CAR", "Virtual display failed: ${it.javaClass.simpleName}") }.getOrNull()
+        if (vd == null) {
+            AppLog.add("CAR", "Android Auto video surface unavailable")
+            return
+        }
         display = vd
         val p = Presentation(carContext, vd.display)
         val outer = FrameLayout(p.context)

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 15+: same as AABrowser. The car screen is the CAR_LAUNCHER activity; the drawing-surface
-     car service (template) is only used on Android 14 and older. -->
+<!-- Offer both the media library and template video surface to the Android Auto host
+     on Android 15+; CAR_LAUNCHER on its own does not publish the drawing surface. -->
 <automotiveApp>
     <uses name="media" />
+    <uses name="template" />
 </automotiveApp>
