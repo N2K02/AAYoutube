@@ -140,6 +140,20 @@ class CompatPlaybackService : MediaBrowserServiceCompat() {
                 override fun onSkipToNext() = send(Msg.NEXT)
                 override fun onSkipToPrevious() = send(Msg.PREV)
                 override fun onStop() = send(Msg.STOP)
+                override fun onCustomAction(action: String?, extras: Bundle?) {
+                    when (action) {
+                        "com.aayoutube.app.HELLO" -> ensureWeb()
+                        "com.aayoutube.app.FAVOURITE" -> {
+                            Library.toggleFavourite(snapshot)
+                            notifyChildrenChanged("favourites")
+                        }
+                        "com.aayoutube.app.EXIT" -> {
+                            pending.clear()
+                            send(Msg.QUIT)
+                            stopSelf()
+                        }
+                    }
+                }
                 override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos) })
                 override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
                     when {
