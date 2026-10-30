@@ -69,6 +69,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             retries = 0
             handler.removeCallbacks(retry)
             send(Msg.REGISTER, replyTo = incoming)
+            if (outgoing == null) return
             // Drain only the commands present at connection time. A failed send can
             // requeue its command; never spin indefinitely on a dead binder.
             val toDrain = pending.size
@@ -98,8 +99,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private fun lost() {
         outgoing = null
-        if (bound) runCatching { unbindService(connection) }
+        val wasBound = bound
         bound = false
+        if (wasBound) runCatching { unbindService(connection) }
         if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank()) {
             recoveringPlayback = true
             idleSince = 0L
