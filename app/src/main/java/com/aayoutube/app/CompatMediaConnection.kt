@@ -23,15 +23,16 @@ class CompatMediaConnection(
 
     fun connect() {
         if (browser != null || closed) return
+        var generationBrowser: MediaBrowserCompat? = null
         val next = MediaBrowserCompat(context,
             ComponentName(context, PlaybackService::class.java),
             object : MediaBrowserCompat.ConnectionCallback() {
                 override fun onConnected() {
-                    if (closed || browser == null) return
+                    if (closed || browser !== generationBrowser) return
                     retries = 0
                     handler.removeCallbacks(retry)
                     val active = runCatching {
-                        MediaControllerCompat(context, browser!!.sessionToken)
+                        MediaControllerCompat(context, generationBrowser!!.sessionToken)
                     }.getOrElse {
                         reconnect()
                         return
@@ -49,9 +50,10 @@ class CompatMediaConnection(
                         queuedActions.removeFirst()
                     }
                 }
-                override fun onConnectionFailed() { reconnect() }
-                override fun onConnectionSuspended() { reconnect() }
+                override fun onConnectionFailed() { if (browser === generationBrowser) reconnect() }
+                override fun onConnectionSuspended() { if (browser === generationBrowser) reconnect() }
             }, null)
+        generationBrowser = next
         browser = next
         runCatching { next.connect() }.onFailure { reconnect() }
     }
