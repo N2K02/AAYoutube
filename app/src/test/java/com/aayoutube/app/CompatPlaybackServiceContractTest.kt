@@ -41,6 +41,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(connection.contains("queuedActions.clear()"))
         assertTrue(connection.contains("if (queuedActions.contains(Commands.EXIT)) return"))
         assertTrue(connection.contains("if (browser == null && retries >= 5) retries = 0"))
+        assertTrue(connection.contains("if (browser == null && retries == 0) connect()"))
         assertTrue(source.contains("val toDrain = pending.size"))
         assertTrue(source.contains("if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty())"))
     }
@@ -53,6 +54,8 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank())"))
         assertTrue(source.contains("retries >= 4"))
         assertTrue(source.contains("recoveringPlayback = true"))
+        assertTrue(source.contains("} else if (recoveringPlayback) {"))
+        assertTrue(source.contains("handler.removeCallbacks(idleStop)"))
         assertTrue(source.contains("pending.isNotEmpty()) {"))
         assertFalse(source.contains("retries = 0\n            recoveringPlayback = false"))
         assertTrue(source.contains("if (s.playing) recoveringPlayback = false"))
