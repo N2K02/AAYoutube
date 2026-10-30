@@ -252,7 +252,7 @@ fun AppRoot(activity: MainActivity) {
 
     // Lookup begins for the current video regardless of overlay visibility. A hidden
     // overlay must never leave the top Lyrics button permanently disabled.
-    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live) {
+    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live, snap.title.isBlank(), snap.artist.isBlank()) {
         foundLyrics = LyricsContent()
         if (!lyricsEnabled || snap.id.isBlank() || snap.title.isBlank() || snap.live || snap.ad)
             return@LaunchedEffect
@@ -508,14 +508,15 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             )
             val miniScaleX = wPx / constraints.maxWidth.coerceAtLeast(1)
             val miniScaleY = hPx / constraints.maxHeight.coerceAtLeast(1)
-            val playerMod = Modifier.fillMaxSize()
-                .graphicsLayer {
+            // Closed players must not cover the browse page with an invisible full-screen
+            // AndroidView: its touch target would swallow taps on YouTube navigation.
+            val playerMod = if (hidden) Modifier.size(1.dp).graphicsLayer { alpha = 0f }
+            else Modifier.fillMaxSize().graphicsLayer {
                     transformOrigin = TransformOrigin(0f, 0f)
                     translationX = px * miniProgress
                     translationY = py * miniProgress
                     scaleX = 1f + (miniScaleX - 1f) * miniProgress
                     scaleY = 1f + (miniScaleY - 1f) * miniProgress
-                    alpha = if (hidden) 0f else 1f
                     clip = miniProgress > 0f
                     shape = RoundedCornerShape(if (miniProgress > 0f) 16.dp else 0.dp)
                 }

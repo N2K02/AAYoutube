@@ -243,8 +243,13 @@ private class VideoScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun show(p: Presentation, frame: FrameLayout) {
-        frame.removeAllViews()
         val full = WebHost.fullscreenView.value
+        // Invalidate can run without a real change of the child. Do not detach the
+        // playing WebView merely because the template host requested a redraw.
+        if (full == null && frame.childCount == 1 &&
+            frame.getChildAt(0) is android.webkit.WebView) return
+        if (full != null && frame.childCount == 1 && frame.getChildAt(0) === full) return
+        frame.removeAllViews()
         if (full != null) {
             (full.parent as? ViewGroup)?.removeView(full)
             frame.addView(full, FrameLayout.LayoutParams(-1, -1))

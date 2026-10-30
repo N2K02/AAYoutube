@@ -767,7 +767,17 @@
     });
     v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
     v.addEventListener('loadedmetadata', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } onLoaded(v); schedReport(120); }, true);
-    v.addEventListener('timeupdate', function () { sbTick(v); }, true);
+    var lastProgressReportAt = 0;
+    v.addEventListener('timeupdate', function () {
+      sbTick(v);
+      // This also notices a new video playing in an existing element (Mix/Autoplay)
+      // without waiting for the 30-second heartbeat. Limit cross-process traffic.
+      var now = Date.now();
+      if (now - lastProgressReportAt > 1400) {
+        lastProgressReportAt = now;
+        schedReport(0);
+      }
+    }, true);
     // Ads are detected from the player's class, not by polling.
     var p = document.querySelector('.html5-video-player');
     if (p) new MutationObserver(function () { skipAd(); }).observe(p, { attributes: true, attributeFilter: ['class'] });
@@ -814,7 +824,9 @@
   setInterval(function () {
     var v = getVideo();
     if (v && !v.paused) schedReport(0);
-  }, 30000);
+  }, 10000);
+  // Route changes can replace the video without raising loadedmetadata.
+  window.addEventListener('yt-navigate-finish', function () { schedReport(0); });
 
   /* ---------- 9b. Timed lyrics: use real HTMLVideoElement.currentTime ---------- */
   // Media-session snapshots are infrequent. A dedicated clock is necessary for

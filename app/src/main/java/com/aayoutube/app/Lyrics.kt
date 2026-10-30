@@ -60,7 +60,9 @@ internal object LyricsParser {
 
 internal object LyricsCache {
     private val values = mutableMapOf<String, Pair<List<LyricLine>, String?>>()
-    fun key(snap: Snap) = listOf(snap.id, snap.title.trim().lowercase(), snap.artist.trim().lowercase()).joinToString("|")
+    // The video ID, not rapidly changing Media Session title/artist metadata, owns the lyrics.
+    // Metadata changes during playback used to invalidate the displayed lyrics every time.
+    fun key(snap: Snap) = snap.id
     @Synchronized fun get(key: String) = values[key]
     @Synchronized fun clear() { values.clear() }
     @Synchronized fun put(key: String, value: Pair<List<LyricLine>, String?>) {
