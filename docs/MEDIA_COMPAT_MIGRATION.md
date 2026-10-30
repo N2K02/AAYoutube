@@ -17,8 +17,11 @@ Reference: [fcaronte/AABrowser](https://github.com/fcaronte/AABrowser), pinned a
 - Media3, `BridgePlayer`, `MediaController`, NavigationTemplate,
   `CarVideoService`, and the experimental virtual-display renderer have been removed.
 - WebView registration is acknowledged and bounded by a five-second timeout.
+  Pending play/open/search commands are replayed only *after* acknowledgement.
   Playback snapshots carry a connection epoch: stale/disconnected messages
   cannot overwrite the current media session after a new connection.
+- The current YouTube Up next queue is exposed as a live, bounded, deduplicated
+  MediaCompat browser folder, alongside recent and favourite videos.
 - Quit is an explicit cross-process handshake with a bounded fallback.
 
 ## Deliberate differences from AABrowser

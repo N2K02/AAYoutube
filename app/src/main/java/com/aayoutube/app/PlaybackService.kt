@@ -29,6 +29,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var foreground = false
     private val notifications = CarMediaNotificationManager(this)
     private val updateGate = MediaUpdateGate()
+    private val queueGate = QueueUpdateGate()
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
         val canNext: Boolean, val canPrev: Boolean
@@ -73,6 +74,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 retries = 0
                 handler.removeCallbacks(retry)
                 handler.removeCallbacks(registrationTimeout)
+                drainPending()
             }
         } else if (message.what == Msg.STATE && !quitRequested &&
             bound && !awaitingRegistration && message.data.getInt("epoch", -1) == registrationEpoch
@@ -102,14 +104,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             send(Msg.REGISTER, Bundle().apply { putInt("epoch", registrationEpoch) }, replyTo = incoming)
             if (outgoing == null) return
             handler.postDelayed(registrationTimeout, 5_000L)
-            // Drain only the commands present at connection time. A failed send can
-            // requeue its command; never spin indefinitely on a dead binder.
-            val toDrain = pending.size
-            for (index in 0 until toDrain) {
-                if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) break
-                val (command, data) = pending.removeFirst()
-                send(command, data)
-            }
+            // Wait for REGISTER_ACK before replaying commands to the new process.
         }
         override fun onServiceDisconnected(name: ComponentName) {
             if (connection === this) lost()
@@ -121,6 +116,17 @@ class PlaybackService : MediaBrowserServiceCompat() {
             if (connection === this) lost()
         }
     }
+    /** Replay only the commands queued when registration completed; failed sends
+     * can requeue a command without making this loop spin indefinitely. */
+    private fun drainPending() {
+        val toDrain = pending.size
+        for (index in 0 until toDrain) {
+            if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) break
+            val (command, data) = pending.removeFirst()
+            send(command, data)
+        }
+    }
+
     private fun ensureWeb() {
         if (bound || shuttingDown) return
         // Mark binding before invoking the framework: a synchronous failure must not
@@ -171,7 +177,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
             pending.clear()
             recoveringPlayback = false
         }
-        val target = outgoing ?: run {
+        // Never issue queued play/open/search commands before WebHost acknowledged
+        // its new Messenger. Pause, stop and Quit must bypass this barrier.
+        val target = outgoing?.takeUnless {
+            awaitingRegistration && command != Msg.REGISTER && command != Msg.QUIT &&
+                command != Msg.PAUSE && command != Msg.STOP && command != Msg.FREEZE
+        } ?: run {
             if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
                 if (pending.size >= maxPendingCommands) pending.removeFirst()
                 pending.addLast(command to data)
@@ -226,6 +237,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
                 .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artwork)
                 .build())
+        }
+        if (queueGate.update(s.queue)) {
+            notifyChildrenChanged(ROOT)
+            notifyChildrenChanged("queue")
         }
         if (s.id.isNotBlank()) {
             if (s.playing && lastRecentId != s.id) {
@@ -369,9 +384,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
         result: Result<MutableList<MediaBrowserCompat.MediaItem>>
     ) {
         val children = when (parentId) {
-            ROOT -> listOf(folder("recent", "Recently played"), folder("favourites", "Favourites"))
+            ROOT -> listOfNotNull(
+                folder("recent", "Recently played"),
+                folder("favourites", "Favourites"),
+                folder("queue", "Up next").takeIf { queueGate.items().isNotEmpty() }
+            )
             "recent" -> Library.recents().map { playable(it) }
             "favourites" -> Library.favourites().map { playable(it) }
+            "queue" -> queueGate.items().map { playable(it.id, it.title, it.artist) }
             else -> emptyList()
         }
         result.sendResult(children.toMutableList())
@@ -383,12 +403,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
             MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
         )
 
-    private fun playable(item: Library.Item) = MediaBrowserCompat.MediaItem(
-        MediaDescriptionCompat.Builder().setMediaId("v:" + item.id)
-            .setTitle(item.title).setSubtitle(item.artist)
-            .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg")).build(),
-        MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
-    )
+    private fun playable(item: Library.Item) = playable(item.id, item.title, item.artist)
+
+    private fun playable(id: String, title: String, artist: String) =
+        MediaBrowserCompat.MediaItem(
+            MediaDescriptionCompat.Builder().setMediaId("v:" + id)
+                .setTitle(title).setSubtitle(artist)
+                .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${id}/hqdefault.jpg")).build(),
+            MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
+        )
 
     override fun onSearch(query: String, extras: Bundle?, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
         result.sendResult(mutableListOf(MediaBrowserCompat.MediaItem(

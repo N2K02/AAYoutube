@@ -109,7 +109,9 @@ data class Snap(
                     val ids = b.getStringArrayList("qid").orEmpty()
                     val ts = b.getStringArrayList("qt").orEmpty()
                     val ars = b.getStringArrayList("qa").orEmpty()
-                    ids.indices.map { i -> QItem(ids[i], ts.getOrElse(i) { "" }, ars.getOrElse(i) { "" }) }
+                    ids.indices.take(40).map { i ->
+                        QItem(ids[i], ts.getOrElse(i) { "" }, ars.getOrElse(i) { "" })
+                    }
                 },
             )
         }
