@@ -29,7 +29,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var foreground = false
     private val notifications = CarMediaNotificationManager(this)
     private val updateGate = MediaUpdateGate()
-    private data class NotificationKey(val id: String, val title: String, val artist: String)
+    private data class NotificationKey(
+        val id: String, val title: String, val artist: String,
+        val canNext: Boolean, val canPrev: Boolean
+    )
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
@@ -387,7 +390,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
             return
         }
-        val key = NotificationKey(s.id, s.title, s.artist)
+        val key = NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev)
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
