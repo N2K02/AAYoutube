@@ -27,6 +27,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    private var startedForeground = false
     private val notificationId = 101
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
@@ -261,6 +262,29 @@ class PlaybackService : MediaBrowserServiceCompat() {
         sessionToken = session.sessionToken
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A startForegroundService caller must be promoted before WebView IPC responds.
+        if (!foreground) {
+            runCatching {
+                startForeground(notificationId, placeholderNotification())
+                foreground = true
+                startedForeground = true
+            }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun placeholderNotification(): android.app.Notification =
+        androidx.core.app.NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle("AAYoutube")
+            .setContentText("Preparing playback")
+            .setOnlyAlertOnce(true)
+            .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
+                Intent(this, MainActivity::class.java),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE))
+            .build()
+
     override fun onGetRoot(
         clientPackageName: String,
         clientUid: Int,
@@ -375,9 +399,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (s.playing) {
             startForeground(notificationId, notification)
             foreground = true
+            startedForeground = false
         } else {
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
+            startedForeground = false
         }
     }
     private companion object {
