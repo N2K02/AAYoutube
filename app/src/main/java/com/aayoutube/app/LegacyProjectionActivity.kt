@@ -81,6 +81,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
     private var carInput: LegacyCarInput? = null
+    private var lastWidth = 0
+    private var lastHeight = 0
+    private val refit = Runnable { WebHost.refitCarViewport() }
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
@@ -92,6 +95,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
         WebHost.showOnCar(true, "legacy-projection")
+        WebHost.prepareForCarProjection()
 
         val compose = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@LegacyProjectionActivity)
@@ -201,6 +205,17 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     factory = { context ->
                         CarFrameLayout(context).also { frame ->
                             playerContainer = frame
+                            frame.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                                val width = right - left
+                                val height = bottom - top
+                                if (width > 0 && height > 0 && (width != lastWidth || height != lastHeight)) {
+                                    lastWidth = width
+                                    lastHeight = height
+                                    AppLog.add("CAR", "Projection viewport=" + width + "x" + height)
+                                    handler.removeCallbacks(refit)
+                                    handler.postDelayed(refit, 180L)
+                                }
+                            }
                             val web = WebHost.attach(context)
                             frame.addView(web, FrameLayout.LayoutParams(-1, -1))
                             carInput?.bind(web)
@@ -283,6 +298,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carStarted = true
         configureLegacyCarInput()
         WebHost.showOnCar(true, "legacy-projection")
+        WebHost.prepareForCarProjection()
         WebHost.setHold(false)
         WebHost.requestLink = relink
         connectMedia()
@@ -295,6 +311,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.setHold(false)
         updateCarWindow()
         attachIfNeeded()
+        handler.removeCallbacks(refit)
+        handler.postDelayed(refit, 180L)
     }
 
     private fun attachIfNeeded() {
@@ -326,6 +344,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         carStarted = false
         handler.removeCallbacksAndMessages(null)
+        lastWidth = 0
+        lastHeight = 0
         carInput?.stop()
         carInput = null
         playerContainer?.let { WebHost.detach(it) }

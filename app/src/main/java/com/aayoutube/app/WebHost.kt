@@ -385,6 +385,24 @@ object WebHost {
         BrowseHost.showFrom(home())
     }
 
+    /** Undo the phone mini-player viewport before projecting the same renderer.
+     * Never reload, seek or force play; respect the user's paused state. */
+    fun prepareForCarProjection() {
+        val wasMini = mode.value == PlayerMode.MINI
+        if (mode.value != PlayerMode.FULL) {
+            AppLog.add("CAR", "Expand video from " + mode.value)
+            noteVisibilityChange()
+            mode.value = PlayerMode.FULL
+            BrowseHost.pause()
+        }
+        if (wasMini) js("window.__aay&&window.__aay.mini(false)")
+        js("window.__aay&&window.__aay.car(true)")
+    }
+
+    fun refitCarViewport() {
+        if (carShown) js("window.__aay&&window.__aay.refitCar&&window.__aay.refitCar()")
+    }
+
     fun expandPlayer() {
         if (mode.value == PlayerMode.FULL) return
         AppLog.add("VIEW", "Mini player expanded")

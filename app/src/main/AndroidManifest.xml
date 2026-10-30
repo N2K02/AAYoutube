@@ -8,8 +8,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <!-- Installs its own updates (Android asks the user first) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -45,8 +43,7 @@
             android:name="android.max_aspect"
             android:value="4.0" />
 
-        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5" />
-        <!-- AABrowser-style video and media discovery. -->
+        <!-- Single projected video entry for Android Auto. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -110,29 +107,14 @@
             </intent-filter>
         </service>
 
-        <!-- Video surface fallback for Android Auto hosts that do not start legacy projection. -->
-        <service android:name=".CarVideoService" android:process=":web"
-            android:exported="true" android:label="AAYouTube Video">
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-            </intent-filter>
-            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="5" />
-        </service>
-
         <service
             android:name=".WebHostService"
             android:process=":web"
             android:exported="false" />
 
-        <!-- Separate audio browser, never the only AAYouTube video entry. -->
-        <service android:name=".PlaybackService" android:exported="true"
-            android:label="AAYouTube Audio"
-            android:foregroundServiceType="mediaPlayback">
-            <intent-filter>
-                <action android:name="android.media.browse.MediaBrowserService" />
-            </intent-filter>
-        </service>
+        <!-- Internal MediaCompat controls and notification, not a second AA icon. -->
+        <service android:name=".PlaybackService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <!-- MediaCompat media-button delivery -->
         <receiver

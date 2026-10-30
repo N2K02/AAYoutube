@@ -1030,6 +1030,22 @@
     }
   }
   A.car = function (on) { A.isCar = !!on; carLayout(); };
+  // Reflow against measured car dimensions after transferring a mini WebView.
+  A.refitCar = function () {
+    if (!A.isCar || BROWSE) return;
+    if (A.isMini) A.mini(false);
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+    try { if (p && p.setSize) p.setSize(); } catch (e) {}
+    var v = getVideo();
+    if (v) {
+      var r = v.getBoundingClientRect();
+      console.log('[aay] car viewport=' + window.innerWidth + 'x' + window.innerHeight +
+        ' video=' + Math.round(r.width) + 'x' + Math.round(r.height));
+    }
+  };
 
   // After the small layout ends, YouTube keeps the small video size it measured (black border
   // around a small picture). Tell it the size changed a few times while the window grows back,
