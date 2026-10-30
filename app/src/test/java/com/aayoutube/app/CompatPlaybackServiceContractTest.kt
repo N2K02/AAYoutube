@@ -23,6 +23,8 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("updateGate.playbackChanged("))
         assertTrue(source.contains("updateGate.metadataChanged("))
         assertTrue(source.contains("val actions = actionsFor(s)"))
+        assertTrue(source.contains("!s.rate.isFinite() -> 1f"))
+        assertTrue(source.contains("s.rate.coerceIn(0.1f, 4f)"))
         assertTrue(source.contains("if (s.canNext)"))
         assertTrue(source.contains("if (s.canPrev)"))
         assertTrue(source.contains("!s.live && !s.ad && s.durMs > 0L"))
