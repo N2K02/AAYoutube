@@ -29,6 +29,8 @@ internal class MediaUpdateGate {
     private var metadata: Metadata? = null
     private var playback: Playback? = null
 
+    fun invalidateMetadata() { metadata = null }
+
     fun metadataChanged(id: String, title: String, artist: String, artwork: String, durationMs: Long): Boolean {
         val next = Metadata(id, title, artist, artwork, durationMs)
         if (metadata == next) return false

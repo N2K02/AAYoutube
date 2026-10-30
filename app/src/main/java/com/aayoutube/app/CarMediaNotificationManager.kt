@@ -1,5 +1,6 @@
 package com.aayoutube.app
 
+import android.graphics.Bitmap
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -41,11 +42,12 @@ internal class CarMediaNotificationManager(
     private fun action(action: Long): PendingIntent =
         MediaButtonReceiver.buildMediaButtonPendingIntent(service, action)
 
-    fun playback(snapshot: Snap, token: MediaSessionCompat.Token): Notification {
+    fun playback(snapshot: Snap, token: MediaSessionCompat.Token, artwork: Bitmap? = null): Notification {
         val builder = NotificationCompat.Builder(service, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(snapshot.title.ifBlank { "AAYoutube" })
             .setContentText(snapshot.artist)
+            .setLargeIcon(artwork)
             .setContentIntent(launchIntent())
             .setOnlyAlertOnce(true)
             .setOngoing(snapshot.playing)

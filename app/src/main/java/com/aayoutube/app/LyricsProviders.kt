@@ -107,7 +107,7 @@ internal object LyricsProviders {
                     val content = StringBuilder()
                     while (content.length < 512_000) {
                         val n = reader.read(buffer, 0, minOf(buffer.size, 512_000 - content.length))
-                        if (n < 0) break
+                        if (n <= 0) break
                         content.append(buffer, 0, n)
                     }
                     content.toString()

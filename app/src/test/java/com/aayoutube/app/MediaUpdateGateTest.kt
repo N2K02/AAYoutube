@@ -12,6 +12,9 @@ class MediaUpdateGateTest {
         assertTrue(gate.metadataChanged("video", "New title", "Artist", "https://image", 60_000))
         assertTrue(gate.metadataChanged("video", "New title", "Artist", "https://new-image", 60_000))
         assertTrue(gate.metadataChanged("other", "New title", "Artist", "https://new-image", 60_000))
+        assertFalse(gate.metadataChanged("other", "New title", "Artist", "https://new-image", 60_000))
+        gate.invalidateMetadata()
+        assertTrue(gate.metadataChanged("other", "New title", "Artist", "https://new-image", 60_000))
     }
 
     @Test fun extrapolatedPositionsDoNotFloodMediaSession() {

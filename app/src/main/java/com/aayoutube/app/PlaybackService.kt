@@ -30,6 +30,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var foreground = false
     private val notifications = CarMediaNotificationManager(this)
     private val updateGate = MediaUpdateGate()
+    private val artworkLoader = MediaArtworkLoader {
+        if (!shuttingDown) {
+            updateGate.invalidateMetadata()
+            lastNotification = null
+            publish(snapshot)
+        }
+    }
     private val queueGate = QueueUpdateGate()
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
@@ -247,9 +254,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 .setState(state, position, speed)
                 .build())
         }
-        val artwork = s.art.takeIf { it.startsWith("https://") }.orEmpty()
+        val artwork = MediaArtworkLoader.allowedUrl(s.art)
+        artworkLoader.request(artwork)
         if (updateGate.metadataChanged(s.id, s.title, s.artist, artwork, s.durMs.coerceAtLeast(0L))) {
-            session.setMetadata(MediaMetadataCompat.Builder()
+            val metadata = MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.title)
                 .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
@@ -257,7 +265,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, s.artist)
                 .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
                 .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artwork)
-                .build())
+            artworkLoader.bitmapFor(artwork)?.let {
+                metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it)
+                metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
+            }
+            session.setMetadata(metadata.build())
         }
         if (queueGate.update(s.queue)) {
             notifyChildrenChanged(ROOT)
@@ -464,6 +476,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         outgoing = null
         pending.clear()
         recovery.cancel()
+        artworkLoader.shutdown()
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         session.isActive = false
         session.release()
@@ -483,7 +496,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
-                notifications.playback(s, session.sessionToken))
+                notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(MediaArtworkLoader.allowedUrl(s.art))))
             foreground = true
             lastNotification = key
         }.onFailure {
