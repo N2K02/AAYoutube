@@ -911,7 +911,8 @@ object WebHost {
 
     private val chrome = object : WebChromeClient() {
         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
-            AppLog.add("JS", "${m.messageLevel()} ${m.message()} (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
+            val cleaned = WebConsolePolicy.clean(m.message()) ?: return true
+            AppLog.add("JS", "${m.messageLevel()} $cleaned (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
             return true
         }
 
