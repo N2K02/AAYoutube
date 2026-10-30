@@ -47,8 +47,10 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("if (quitRequested) return"))
     }
     @Test fun reconnectionAndShutdown() {
-        assertTrue(source.contains("if (!shuttingDown && !quitRequested && snapshot.playing && snapshot.id.isNotBlank())"))
+        assertTrue(source.contains("if (!shuttingDown && !quitRequested && (snapshot.playing || recoveringPlayback) && snapshot.id.isNotBlank())"))
         assertTrue(source.contains("retries >= 4"))
+        assertTrue(source.contains("recoveringPlayback = true"))
+        assertTrue(source.contains("if (s.playing) recoveringPlayback = false"))
         assertTrue(source.contains("shuttingDown = true"))
         assertTrue(source.contains("handler.removeCallbacksAndMessages(null)"))
         assertTrue(source.contains("Msg.QUIT_ACK"))
