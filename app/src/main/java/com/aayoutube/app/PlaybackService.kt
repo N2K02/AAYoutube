@@ -187,7 +187,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
             else -> PlaybackStateCompat.STATE_NONE
         }
         val position = s.posMs.coerceAtLeast(0L)
-        val speed = if (s.playing) s.rate.coerceAtLeast(0.1f) else 0f
+        val speed = when {
+            !s.playing -> 0f
+            !s.rate.isFinite() -> 1f
+            else -> s.rate.coerceIn(0.1f, 4f)
+        }
         val actions = actionsFor(s)
         if (updateGate.playbackChanged(
                 state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
