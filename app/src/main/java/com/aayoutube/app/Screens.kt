@@ -409,7 +409,7 @@ fun AppRoot(activity: MainActivity) {
                 Box(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth()
                         .statusBarsPadding().height(28.dp)
-                        .clickable {
+                        .revealTopMenuOnSwipeDown {
                             topMenuVisible = true
                             topMenuEpoch++
                         }
@@ -765,7 +765,7 @@ fun FeaturesPage() {
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 8.dp)) {
                 Text("Top menu auto-hide", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Hide the video top menu on your phone and Android Auto. Tap the top edge to show it again.",
+                    "Hide the video top menu on your phone and Android Auto. Swipe down from the top border to show it again.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

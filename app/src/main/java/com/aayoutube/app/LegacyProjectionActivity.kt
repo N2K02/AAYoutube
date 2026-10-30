@@ -250,7 +250,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             if (!controlsVisible) {
                 Box(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth().height(28.dp)
-                        .clickable { controlsVisible = true; controlsVersion++ }
+                        .revealTopMenuOnSwipeDown { controlsVisible = true; controlsVersion++ }
                 )
             }
             AnimatedVisibility(

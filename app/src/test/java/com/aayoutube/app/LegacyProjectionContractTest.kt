@@ -19,7 +19,7 @@ class LegacyProjectionContractTest {
         assertTrue(service.contains("android:process=\":web\""))
         assertTrue(service.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
         assertTrue(service.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM"))
-        assertTrue(manifest.contains("android:name=\".CarVideoService\""))
+        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
         assertFalse("CarActivity is created by the projection SDK, not Android", manifest.contains("android:name=\".LegacyProjectionActivity\""))
     }

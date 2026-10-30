@@ -18,6 +18,7 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("delay(timeout)"))
         assertTrue(code.contains("AnimatedVisibility("))
         assertTrue(code.contains("            if (!controlsVisible) {"))
+        assertTrue(code.contains(".revealTopMenuOnSwipeDown { controlsVisible = true; controlsVersion++ }"))
         assertFalse(code.contains("            }\n            }\n            if (!controlsVisible) {"))
         assertTrue(code.contains("controlsVisible = true"))
         assertTrue(code.contains("height(28.dp)"))
@@ -27,14 +28,11 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("WebHost.cmd(if (playing.playing) \"pause\" else \"play\")"))
     }
 
-    @Test fun legacyControlsAndWideFallbackCoexist() {
-        val legacy = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertTrue(legacy.contains("CarControl("))
-        val wide = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
-        assertTrue(wide.contains("NavigationTemplate.Builder()"))
-        assertTrue(wide.contains("WebHost.cmd(\"pause\")"))
+    @Test fun videoAndMusicAreIndependentCarServices() {
         val manifest = source("app/src/main/AndroidManifest.xml")
         assertTrue(manifest.contains("android:name=\".LegacyProjectionService\""))
-        assertTrue(manifest.contains("android:name=\".CarVideoService\""))
+        assertTrue(manifest.contains("android:name=\".PlaybackService\""))
+        assertTrue(manifest.contains("android:label=\"AAYouTube Music\""))
+        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
     }
 }

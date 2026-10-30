@@ -112,9 +112,16 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- Internal MediaCompat controls and notification, not a second AA icon. -->
-        <service android:name=".PlaybackService" android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+        <!-- Independent Android Auto MUSIC entry. The native MediaBrowserServiceCompat
+             renders the host-owned playback template; it never creates or moves
+             the video WebView owned by the legacy car projection. -->
+        <service android:name=".PlaybackService" android:exported="true"
+            android:label="AAYouTube Music"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
 
         <!-- MediaCompat media-button delivery -->
         <receiver

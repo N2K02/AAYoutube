@@ -188,3 +188,19 @@ foreground media permissions; none were added or changed for this patch.
   while fullscreen/PiP hide app-owned header as before.
 - The AndroidX NavigationTemplate action strip is rendered by the Android Auto
   host, so this preference cannot force-hide system-owned controls.
+
+## Two distinct Android Auto icons and top-edge swipe (2026-10-31)
+
+The user confirmed **legacy projection video works** and requested the other
+icon to open a native music player, rather than the competing AndroidX
+navigation side-panel that stole the video WebView. Exported PlaybackService
+as a MediaBrowserServiceCompat named **AAYouTube Music**, alongside the single
+AABrowser legacy video projection. The media process creates no car WebView;
+browse and media session controls stay independent of legacy projection. Both
+automotive descriptors advertise media+projection, not navigation templates.
+On both phone and legacy car video, a hidden app-owned menu now reappears only
+after a downward drag of at least 24dp starting in the top 28dp touch region.
+Tapping or swiping upward does not reveal the menu. The existing Features
+setting still defaults to three seconds, with the Never option preserved.
+Car host chrome remains host-controlled. Verify both entries on a parked
+Android Auto unit; a working APK build does not establish host behavior.

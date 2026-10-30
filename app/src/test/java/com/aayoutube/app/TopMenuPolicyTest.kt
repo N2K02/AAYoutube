@@ -27,17 +27,20 @@ class TopMenuPolicyTest {
         assertTrue(watchHeader.contains("AnimatedVisibility("))
         assertTrue(watchHeader.contains("visible = topMenuVisible"))
         assertTrue(watchHeader.contains("statusBarsPadding().height(28.dp)"))
+        assertTrue(watchHeader.contains(".revealTopMenuOnSwipeDown {"))
         assertTrue(watchHeader.contains("topMenuEpoch++"))
         assertTrue(screen.contains("if (!watchTab && headerAllowed) {"))
         assertTrue(screen.contains("delay(timeout)"))
         assertTrue(screen.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
         assertTrue(screen.contains("WebPane(Modifier.fillMaxSize())"))
     }
-    @Test fun carAndPhoneShareFeatureAndRestoreByTopEdge() {
+    @Test fun carAndPhoneShareFeatureAndRestoreByDownwardEdgeSwipe() {
         val legacy = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         val features = read("app/src/main/java/com/aayoutube/app/Features.kt")
         assertTrue(legacy.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
         assertTrue(legacy.contains("controlsVisible = true; controlsVersion++"))
+        assertTrue(legacy.contains(".revealTopMenuOnSwipeDown {"))
+        assertFalse(legacy.contains(".clickable { controlsVisible = true"))
         assertTrue(legacy.contains("height(28.dp)"))
         assertTrue(features.contains("prefs.getInt(\"topMenuTimeoutSeconds\""))
         assertTrue(features.contains(".putInt(\"topMenuTimeoutSeconds\""))

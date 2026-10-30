@@ -4,81 +4,66 @@ import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
-/** AABrowser's three Android Auto launch paths and video lifecycle. */
+/** User-tested Android Auto video and standalone host-rendered music entry. */
 class AndroidAutoIntegrationContractTest {
-    private fun source(path: String): String =
-        listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
-            ?: error("Missing $path")
+    private fun src(path: String): String =
+        listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
-    @Test fun legacyAndWideVideoEntriesCoexistWithMediaSession() {
-        val xml = source("app/src/main/AndroidManifest.xml")
-        assertTrue(xml.contains("android:name=\".LegacyProjectionService\""))
-        assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
-        assertTrue(xml.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM"))
-        assertTrue(xml.contains("android:name=\".PlaybackService\""))
-        assertTrue(xml.contains("android.media.browse.MediaBrowserService"))
-        assertTrue(xml.contains("MEDIA_PLAY_FROM_SEARCH"))
-        assertTrue(xml.contains("android:name=\".CarVideoService\""))
-        assertTrue(xml.contains("androidx.car.app.CarAppService"))
-        assertTrue(xml.contains("androidx.car.app.minCarApiLevel"))
-        assertTrue(xml.contains("androidx.car.app.NAVIGATION_TEMPLATES"))
-        val gradle = source("app/build.gradle.kts")
-        assertTrue(gradle.contains("androidx.car.app:app:"))
-        assertTrue(gradle.contains("androidx.car.app:app-projected:"))
-    }
-
-    @Test fun carPageKeepsMediaSessionFallbackAndTouchSeeking() {
-        val js = source("app/src/main/assets/aay.js")
-        assertTrue(js.contains("Object.defineProperty(navigator, 'mediaSession'"))
-        assertTrue(js.contains("window.MediaMetadata = function"))
-        assertTrue(js.contains("AABrowser-style tap-to-seek"))
-        assertTrue(js.contains("v.currentTime = fraction * v.duration"))
-    }
-
-    @Test fun serviceDisconnectNeverRestartsUserPausedVideo() {
-        val kotlin = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
-        assertTrue(kotlin.contains("recovery.onLinkLost(snapshot)"))
-        assertTrue(kotlin.contains("send(Msg.SYNC)"))
-        assertTrue(kotlin.contains("recovery.onMissingPlayer()"))
-        assertTrue(kotlin.contains("command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT"))
-        assertFalse(kotlin.contains("pending.addFirst(Msg.OPEN"))
-        assertTrue(kotlin.contains("send(Msg.OPEN, Bundle().apply"))
-        assertTrue(kotlin.contains("MediaRetryPolicy.shouldRetry(retries, hasWork)"))
-        assertTrue(kotlin.contains("handler.removeCallbacks(retry)"))
-    }
-    @Test fun carVideoAndAudioHaveSeparateEntries() {
-        val manifest = source("app/src/main/AndroidManifest.xml")
-        val wide = manifest.substringAfter("android:name=\".CarVideoService\"").substringBefore("</service>")
-        val media = manifest.substringAfter("android:name=\".PlaybackService\"").substringBefore("</service>")
-        assertTrue(wide.contains("androidx.car.app.category.NAVIGATION"))
-        assertTrue(wide.contains("AAYouTube Video"))
-        assertTrue(media.contains("android.media.browse.MediaBrowserService"))
-        assertTrue(media.contains("AAYouTube Audio"))
-        assertFalse(manifest.substringAfter("android:name=\".MainActivity\"")
-            .substringBefore("</activity>").contains("CAR_LAUNCHER"))
-        for (type in listOf("xml", "xml-v35")) {
-            val desc = source("app/src/main/res/" + type + "/automotive_app_desc.xml")
-            listOf("service", "projection", "media", "template").forEach {
-                assertTrue(desc.contains("name=\"$it\""))
-            }
+    @Test fun videoAndMusicAreTwoDifferentCarEntries() {
+        val manifest = src("app/src/main/AndroidManifest.xml")
+        val video = manifest.substringAfter("android:name=\".LegacyProjectionService\"").substringBefore("</service>")
+        val music = manifest.substringAfter("android:name=\".PlaybackService\"").substringBefore("</service>")
+        assertTrue(video.contains("CATEGORY_PROJECTION"))
+        assertTrue(video.contains("CATEGORY_PROJECTION_OEM"))
+        assertTrue(video.contains("android:process=\":web\""))
+        assertTrue(music.contains("android:label=\"AAYouTube Music\""))
+        assertTrue(music.contains("android:exported=\"true\""))
+        assertTrue(music.contains("android.media.browse.MediaBrowserService"))
+        assertFalse(music.contains("CATEGORY_PROJECTION"))
+        // The AndroidX navigation side-panel previously froze the shared WebView.
+        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
+        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
+        assertFalse(src("app/build.gradle.kts").contains("androidx.car.app:app:"))
+        for (resource in listOf("xml", "xml-v35")) {
+            val descriptor = src("app/src/main/res/$resource/automotive_app_desc.xml")
+            assertTrue(descriptor.contains("name=\"projection\""))
+            assertTrue(descriptor.contains("name=\"media\""))
+            assertFalse(descriptor.contains("name=\"template\""))
         }
     }
 
-    @Test fun widePreservesVideoThroughSurfaceChangesAndShutdown() {
-        val src = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
-        listOf("HostValidator.Builder(applicationContext)", "old.surface = surface",
-            "old.resize(rawWidth, rawHeight, rawDpi)", "onVisibleAreaChanged",
-            "onStableAreaChanged", "CarSurfacePolicy.viewport", "WebHost.requestReattachment()",
-            "WebHost.showOnCar(true, carOwner)", "WebHost.showOnCar(false, carOwner)",
-            "mediaController?.disconnect()", "scope.cancel()",
-            "WebHost.webVersion.drop(1)", "show(p, frame, forceRefresh = true)",
-            "rendererJob?.cancel()").forEach {
-            assertTrue("Missing " + it, src.contains(it))
-        }
-        val frame = source("app/src/main/java/com/aayoutube/app/CarFrameLayout.kt")
-        assertTrue(frame.contains("dispatchWindowVisibilityChanged"))
-        val modes = source("app/src/main/java/com/aayoutube/app/CarMode.kt")
-        assertTrue(modes.contains("ComponentName(c, LegacyProjectionService::class.java)"))
-        assertTrue(modes.contains("ComponentName(c, CarVideoService::class.java)"))
+    @Test fun musicBrowsesAndControlsAudioWithoutMovingVideoSurface() {
+        val service = src("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        val link = src("app/src/main/java/com/aayoutube/app/CompatMediaConnection.kt")
+        assertTrue(service.contains("MediaBrowserServiceCompat()"))
+        assertTrue(service.contains("MediaSessionCompat(this"))
+        assertTrue(service.contains("override fun onGetRoot("))
+        assertTrue(service.contains("override fun onLoadChildren("))
+        assertTrue(service.contains("folder(\"recent\", \"Recently played\")"))
+        assertTrue(service.contains("folder(\"favourites\", \"Favourites\")"))
+        assertTrue(service.contains("override fun onPlay()"))
+        assertTrue(service.contains("override fun onPause()"))
+        assertTrue(service.contains("override fun onPlayFromMediaId("))
+        assertTrue(service.contains("recovery.onLinkLost(snapshot)"))
+        assertTrue(link.contains("ComponentName(context, PlaybackService::class.java)"))
+        assertFalse(service.contains("WebHost.attach("))
+        assertFalse(service.contains("WebHost.showOnCar("))
+    }
+
+    @Test fun videoRestoresNativeFullSizeInsteadOfPhoneMiniViewport() {
+        val web = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val js = src("app/src/main/assets/aay.js")
+        assertTrue(web.contains("fun prepareForCarProjection()"))
+        assertTrue(web.contains("mode.value = PlayerMode.FULL"))
+        assertTrue(web.contains("window.__aay&&window.__aay.mini(false)"))
+        val block = web.substringAfter("fun prepareForCarProjection()").substringBefore("fun refitCarViewport()")
+        assertFalse(block.contains("cmd(\"play\")"))
+        assertFalse(block.contains("loadUrl("))
+        assertTrue(car.contains("WebHost.prepareForCarProjection()"))
+        assertTrue(car.contains("frame.addOnLayoutChangeListener"))
+        assertTrue(car.contains("WebHost.refitCarViewport()"))
+        assertTrue(js.contains("A.refitCar = function ()"))
+        assertTrue(js.contains("object-fit:contain!important"))
     }
 }
