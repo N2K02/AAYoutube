@@ -565,6 +565,9 @@ object WebHost {
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
+                runCatching {
+                    m.replyTo?.send(Message.obtain(null, Msg.QUIT_ACK))
+                }.onFailure { AppLog.add("LINK", "Quit acknowledgement failed") }
                 cmd("pause")
                 val close = onQuit
                 if (close != null) close() else release()
@@ -580,7 +583,7 @@ object WebHost {
         load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
     }
 
-    /** Legacy Assistant / car voice search, routed to the same playback search as Media3. */
+    /** Legacy Assistant / car voice search, routed to the MediaCompat playback search. */
     fun voiceSearch(query: String) {
         if (query.isBlank()) return
         unfreeze()
