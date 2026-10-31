@@ -365,7 +365,14 @@ fun AppRoot(activity: MainActivity) {
 
     // One fixed layout for every mode (normal, fullscreen, picture in picture): the page is never
     // moved between parents, because detaching a WebView from its window pauses the video.
-    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier.fillMaxSize().then(
+            if (watchTab && headerAllowed) Modifier.revealControlsOnTouch {
+                topMenuVisible = true
+                topMenuEpoch++
+            } else Modifier
+        )
+    ) {
         Scaffold(
             topBar = {
                 // Non-video pages keep the same single header. The watch
@@ -410,30 +417,19 @@ fun AppRoot(activity: MainActivity) {
         // App-owned watch header overlays the WebView without relayout.
         // Android Auto's separate native host bars remain host-controlled.
         if (watchTab && headerAllowed) {
-            if (!topMenuVisible) {
-                Box(
-                    Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                        .statusBarsPadding().height(28.dp)
-                        .revealTopMenuOnSwipeDown {
-                            topMenuVisible = true
-                            topMenuEpoch++
-                        }
-                )
-            }
+            // Same small floating side rail as Android Auto (one shared side
+            // setting, Right by default). Any touch on the page shows it.
             AnimatedVisibility(
                 visible = topMenuVisible,
-                enter = fadeIn() + slideInVertically { -it },
-                exit = fadeOut() + slideOutVertically { -it },
-                modifier = Modifier.align(Alignment.TopCenter),
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
+                    .padding(horizontal = 8.dp),
             ) {
-                // Same floating, centred, icons-only pill as Android Auto, plus
-                // the phone's Lyrics and Settings actions (Settings pages keep
-                // the standard mRadio-style header).
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
                 FloatingVideoBar(
                     playing = snap.playing,
-                    modifier = Modifier.statusBarsPadding().padding(top = 8.dp),
                     onBack = { goBack(); topMenuEpoch++ },
                     onHome = { goYouTubeHome(); topMenuEpoch++ },
                     onPlayPause = {
@@ -445,7 +441,7 @@ fun AppRoot(activity: MainActivity) {
                     BarIcon(
                         Icons.Filled.MusicNote,
                         if (canLyrics) { if (lyricsShown) "Hide lyrics" else "Show lyrics" } else "Lyrics unavailable",
-                        48.dp, 24.dp,
+                        BarSize.Phone,
                         onClick = {
                             if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
                             topMenuEpoch++
@@ -454,7 +450,7 @@ fun AppRoot(activity: MainActivity) {
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
                     Box {
-                        BarIcon(Icons.Filled.Settings, "Settings", 48.dp, 24.dp,
+                        BarIcon(Icons.Filled.Settings, "Settings", BarSize.Phone,
                             onClick = { tab = Tab.Settings.ordinal })
                         dev.n2k02.updater.N2K02UpdateBadge(
                             updateStatus,
@@ -467,7 +463,7 @@ fun AppRoot(activity: MainActivity) {
         if (lyricsOnScreen) {
             // Reduce overlap while the menu is hidden; no second app header.
             Box(Modifier.align(Alignment.TopCenter).statusBarsPadding()
-                .padding(top = if (topMenuVisible && headerAllowed) 76.dp else 30.dp)) {
+                .padding(top = 30.dp)) {
                 LyricsOverlay(snap, foundLyrics) {
                     LyricsPrefs.set(context, "show", false)
                 }
@@ -540,6 +536,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
+    val railOnLeft = Features.state.collectAsState().value.controlsOnLeft
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
@@ -575,14 +572,17 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         var mx by remember { mutableStateOf(prefs.getFloat("miniX", 1f)) }
         var my by remember { mutableStateOf(prefs.getFloat("miniY", 1f)) }
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val miniW = minOf(224.dp, maxWidth * 0.72f)
+            val miniW = minOf(224.dp, (maxWidth - MiniPlayerBounds.RAIL_RESERVE_DP.dp) * 0.8f)
             val miniH = miniW * (9f / 16f)
             val edge = with(density) { 12.dp.toPx() }
             val ytMenu = with(density) { 64.dp.toPx() } // YouTube's bottom menu (Home, Subscriptions, You)
             val wPx = with(density) { miniW.toPx() }
             val hPx = with(density) { miniH.toPx() }
-            val minX = edge
-            val maxX = (constraints.maxWidth - wPx - edge).coerceAtLeast(minX)
+            // The floating controls rail owns a strip on its side (it can
+            // reappear on any touch): the mini player never goes under or over it.
+            val rail = with(density) { MiniPlayerBounds.RAIL_RESERVE_DP.dp.toPx() }
+            val minX = MiniPlayerBounds.minX(edge, rail, railOnLeft)
+            val maxX = MiniPlayerBounds.maxX(constraints.maxWidth.toFloat(), wPx, edge, rail, railOnLeft)
             val minY = edge
             val maxY = (constraints.maxHeight - hPx - edge - ytMenu).coerceAtLeast(minY)
             val px = minX + (maxX - minX) * mx
@@ -795,9 +795,9 @@ fun FeaturesPage() {
         Card() {
             Toggle("Resume where you left off", "Reopens your last page when starting the app; playback does not automatically resume.", f.resumeLast) { s, v -> s.copy(resumeLast = v) }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 8.dp)) {
-                Text("Top menu auto-hide", style = MaterialTheme.typography.labelLarge)
+                Text("Video controls auto-hide", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Hide the video top menu on your phone and Android Auto. Swipe down from the top border to show it again.",
+                    "Hide the floating video controls on your phone and Android Auto. Touch the screen to show them again.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -817,6 +817,25 @@ fun FeaturesPage() {
                                 Text(label)
                             }
                         }
+                    }
+                }
+            }
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 4.dp)) {
+                Text("Video controls side", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "Where the floating video controls sit, on your phone and Android Auto.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                val sides = listOf(true, false)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    sides.forEachIndexed { i, left ->
+                        SegmentedButton(
+                            selected = f.controlsOnLeft == left,
+                            onClick = { Features.update { it.copy(controlsOnLeft = left) } },
+                            shape = SegmentedButtonDefaults.itemShape(index = i, count = sides.size),
+                        ) { Text(ControlsSidePolicy.label(left)) }
                     }
                 }
             }

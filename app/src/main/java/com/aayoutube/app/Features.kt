@@ -25,6 +25,8 @@ data class FeatureFlags(
     val resumeLast: Boolean = false,
     /** App's watch-screen top header on phone and car; 0 keeps it visible. */
     val topMenuTimeoutSeconds: Int = TopMenuPolicy.DEFAULT_SECONDS,
+    /** Floating video controls rail on the left instead of the right (phone and car). */
+    val controlsOnLeft: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -66,6 +68,7 @@ object Features {
             topMenuTimeoutSeconds = TopMenuPolicy.normalize(
                 prefs.getInt("topMenuTimeoutSeconds", d.topMenuTimeoutSeconds)
             ),
+            controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
         )
     }
 
@@ -89,6 +92,7 @@ object Features {
             .putInt("pageZoom", n.pageZoom)
             .putBoolean("resumeLastPage", n.resumeLast)
             .putInt("topMenuTimeoutSeconds", n.topMenuTimeoutSeconds)
+            .putBoolean("controlsOnLeft", n.controlsOnLeft)
             .apply()
     }
 }

@@ -293,7 +293,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 controlsVisible = false
             }
         }
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black)
+                .revealControlsOnTouch { controlsVisible = true; controlsVersion++ }
+        ) {
             key(version) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -353,23 +356,19 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { it.removeAllViews() },
                 )
             }
-            if (!controlsVisible) {
-                Box(
-                    Modifier.align(Alignment.TopCenter).fillMaxWidth().height(28.dp)
-                        .revealTopMenuOnSwipeDown { controlsVisible = true; controlsVersion++ }
-                )
-            }
+            // Same small floating rail as the phone, on the configured side.
+            // Android Auto is landscape: a side rail never covers YouTube's
+            // own top or bottom menus. Any touch shows it again.
             AnimatedVisibility(
                 visible = controlsVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(Alignment.TopCenter),
+                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
+                    .padding(horizontal = 12.dp),
             ) {
-                // Floating, centred, icons-only pill (same control bar as the phone).
                 FloatingVideoBar(
                     playing = playing.playing,
-                    large = true,
-                    modifier = Modifier.padding(top = 12.dp),
+                    car = true,
                     onBack = { WebHost.goBack(); controlsVersion++ },
                     onHome = { WebHost.openUrl("https://m.youtube.com/"); controlsVersion++ },
                     onPlayPause = {

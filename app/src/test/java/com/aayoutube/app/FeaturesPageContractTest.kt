@@ -31,7 +31,7 @@ class FeaturesPageContractTest {
         }
         assertTrue(features.contains("putBoolean(\"autoPip\""))
         assertTrue(features.contains("putInt(\"topMenuTimeoutSeconds\""))
-        assertTrue(screen.contains("Top menu auto-hide"))
+        assertTrue(screen.contains("Video controls auto-hide"))
         assertTrue(screen.contains("TopMenuPolicy.options"))
         assertTrue(screen.contains("LaunchedEffect(snap.playing, flags.autoPip, playerMode, tab, inPip)"))
         assertTrue(web.contains("w.settings.textZoom = f.pageZoom"))

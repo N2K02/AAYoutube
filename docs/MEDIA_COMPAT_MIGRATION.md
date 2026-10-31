@@ -486,3 +486,21 @@ overlays the WebView, so it never resizes the video. It still follows the shared
 **Top menu auto-hide** setting (choose **Never** to keep it always visible) and
 reappears with a downward swipe from the top edge. Settings and subpages keep
 the standard single mRadio-style header.
+
+## Same small floating side rail on phone and Android Auto (user request)
+
+- One small vertical icon-only rail (`FloatingVideoBar`, vertical) on **both** the
+  phone and the Android Auto video screen: Back, YouTube home, Play/Pause, Next.
+  The phone adds Lyrics and Settings (with the update badge).
+- **Features > Video controls side**: one shared setting, **Right** by default,
+  or Left. Android Auto is always landscape, so a side rail never covers
+  YouTube's own top or bottom menus.
+- **Video controls auto-hide** (previously "Top menu auto-hide") keeps the same
+  timer: 3 s by default, or Never. Any touch on the screen shows the rail again
+  and restarts the timer. The touch is only observed, so it still reaches YouTube.
+  The top-edge swipe is removed.
+- On the phone the rail shows on the whole YouTube tab: video page, browse page
+  and mini player. The draggable mini player is limited so it can never enter the
+  64 dp strip reserved for the rail on its side (`MiniPlayerBounds`).
+- `AppLog` Logcat calls are wrapped in `runCatching`: JVM unit tests have no
+  `android.util.Log` implementation (the Logcat-only `AppLog` failed CI there).

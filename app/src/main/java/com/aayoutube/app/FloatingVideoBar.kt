@@ -2,8 +2,8 @@ package com.aayoutube.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,15 +20,25 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/** Size of the small floating video-controls rail; [car] uses bigger touch targets. */
+internal data class BarSize(val button: Dp, val icon: Dp) {
+    companion object {
+        val Phone = BarSize(button = 44.dp, icon = 22.dp)
+        val Car = BarSize(button = 52.dp, icon = 26.dp)
+        fun of(car: Boolean) = if (car) Car else Phone
+    }
+}
+
 /**
- * The video controls on the phone and on Android Auto: one floating pill,
- * centred at the top, icons only (each with a content description). It overlays
- * the WebView, so showing or hiding it never resizes the video surface.
- * [large] uses car-sized touch targets.
+ * The video controls on the phone and on Android Auto: a small floating rail,
+ * icons only (each with a content description), vertical on the left or right
+ * side (Features > Video controls side). It overlays the WebView, so showing
+ * or hiding it never resizes the video or YouTube's own menus.
  */
 @Composable
 internal fun FloatingVideoBar(
@@ -38,32 +48,41 @@ internal fun FloatingVideoBar(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
-    large: Boolean = false,
-    extra: @Composable RowScope.() -> Unit = {},
+    car: Boolean = false,
+    vertical: Boolean = true,
+    extra: @Composable () -> Unit = {},
 ) {
-    val button = if (large) 60.dp else 48.dp
-    val icon = if (large) 30.dp else 24.dp
+    val size = BarSize.of(car)
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 3.dp,
         shadowElevation = 6.dp,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(if (large) 12.dp else 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BarIcon(Icons.AutoMirrored.Filled.ArrowBack, "Back", button, icon, onBack)
-            BarIcon(Icons.Filled.Home, "YouTube home", button, icon, onHome)
+        val icons: @Composable () -> Unit = {
+            BarIcon(Icons.AutoMirrored.Filled.ArrowBack, "Back", size, onBack)
+            BarIcon(Icons.Filled.Home, "YouTube home", size, onHome)
             BarIcon(
                 if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                if (playing) "Pause" else "Play", button, icon, onPlayPause,
+                if (playing) "Pause" else "Play", size, onPlayPause,
             )
-            BarIcon(Icons.Filled.SkipNext, "Next video", button, icon, onNext)
+            BarIcon(Icons.Filled.SkipNext, "Next video", size, onNext)
             extra()
+        }
+        if (vertical) {
+            Column(
+                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) { icons() }
+        } else {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) { icons() }
         }
     }
 }
@@ -72,16 +91,15 @@ internal fun FloatingVideoBar(
 internal fun BarIcon(
     image: ImageVector,
     description: String,
-    button: Dp,
-    icon: Dp,
+    size: BarSize,
     onClick: () -> Unit,
     enabled: Boolean = true,
-    tint: androidx.compose.ui.graphics.Color? = null,
+    tint: Color? = null,
 ) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(button)) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(size.button)) {
         Box(contentAlignment = Alignment.Center) {
-            if (tint != null) Icon(image, contentDescription = description, tint = tint, modifier = Modifier.size(icon))
-            else Icon(image, contentDescription = description, modifier = Modifier.size(icon))
+            if (tint != null) Icon(image, contentDescription = description, tint = tint, modifier = Modifier.size(size.icon))
+            else Icon(image, contentDescription = description, modifier = Modifier.size(size.icon))
         }
     }
 }
