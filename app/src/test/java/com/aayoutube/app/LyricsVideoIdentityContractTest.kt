@@ -38,8 +38,14 @@ class LyricsVideoIdentityContractTest {
 
     @Test fun carHostDoesNotDetachUnchangedWebViewOnRender() {
         val projection = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertTrue(projection.contains("if (frame.childCount == 0 && WebHost.fullscreenView.value == null)"))
+        // Compose updates the projected frame repeatedly. Preserve the
+        // decoder surface when that exact WebView already belongs to it.
+        assertTrue(projection.contains("if (frame.childCount != 1 || frame.getChildAt(0) !== player)"))
+        assertTrue(projection.contains("WebHost.attach(projectionContext(frame.context, frame), frame)"))
+        assertTrue(projection.contains("if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)"))
         assertTrue(projection.contains("WebHost.detach(frame)"))
         assertTrue(projection.contains("key(version)"))
+        val host = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(host.contains("if (w.parent !== destination || destination == null)"))
     }
 }
