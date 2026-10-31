@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Window
 import android.view.View
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.BaseInputConnection
@@ -109,6 +110,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))
+            // Never grant focus to Chromium as a side effect of opening
+            // the video. WebView focus was opening Android Auto's keyboard
+            // immediately, followed by the host stopping the projection.
+            frame.isFocusableInTouchMode = true
+            frame.requestFocus()
         }
         val display = frame.display?.displayId ?: -1
         val childDisplay = player.display?.displayId ?: -1
@@ -349,6 +355,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onStart() {
         super.onStart()
+        AppLog.add("CAR", "Video projection onStart")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
         configureLegacyCarInput()
@@ -362,6 +369,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onResume() {
         super.onResume()
+        AppLog.add("CAR", "Video projection onResume")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         WebHost.setHold(false)
         updateCarWindow()
@@ -385,12 +393,15 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }.also { it.connect() }
     }
     override fun onPause() {
+        AppLog.add("CAR", "Video projection onPause")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         // Do not pause YouTube: a temporary car window focus loss must preserve audio.
         super.onPause()
     }
 
     override fun onStop() {
+        AppLog.add("CAR", "Video projection onStop; frameAttached=" +
+            (playerContainer?.isAttachedToWindow ?: false))
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         carStarted = false
         handler.removeCallbacksAndMessages(null)
@@ -412,6 +423,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     override fun onDestroy() {
+        AppLog.add("CAR", "Video projection onDestroy")
         carStarted = false
         if (WebHost.requestLink === relink) {
             WebHost.requestLink = null
@@ -432,33 +444,79 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 }
 
-/** Legacy Android Auto IME bridge, based on AABrowser's CarInputManager contract. */
+/**
+ * Android Auto input is NOT the same as WebView/window focus.
+ *
+ * On the head unit a playback-only WebView receives focus when opened.
+ * Calling InputManager.startInput on that event opens the car keyboard and
+ * causes some projection hosts to stop the video activity. AABrowser only
+ * starts car input after an explicit user selection. Do the same here:
+ * the user must TAP an actual HTML text field before starting car input.
+ */
 private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     private var target: WebView? = null
+    private var active = false
 
     fun bind(web: WebView) {
         if (target === web) return
         stop()
         target = web
-        // The car IME is requested only for a focused WebView, not for video touches.
-        web.onFocusChangeListener = View.OnFocusChangeListener { _, focused ->
-            if (focused) web.post { if (target === web) start() } else stopInputOnly()
+        // Do not listen to WebView focus changes. Video player focus is not
+        // a text-edit request. Return false to preserve swipe/playback touches.
+        web.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_UP) {
+                web.postDelayed({
+                    if (target === web && web.isAttachedToWindow) {
+                        web.evaluateJavascript(EDITABLE_FOCUS_SCRIPT) { result ->
+                            if (target !== web || !web.isAttachedToWindow) return@evaluateJavascript
+                            if (result == "true") start()
+                            else stopInputOnly()
+                        }
+                    }
+                }, 220L)
+            }
+            false
         }
-        if (web.hasFocus()) web.post { if (target === web) start() }
+        AppLog.add("CAR", "Car input bound; keyboard idle until text field tapped")
     }
 
     private fun start() {
-        runCatching { manager.startInput(this) }
+        if (active) return
+        AppLog.add("CAR", "Explicit editable tap: requesting car keyboard")
+        runCatching {
+            manager.startInput(this)
+            active = true
+        }.onFailure { AppLog.add("CAR", "Car keyboard failed: " + it.javaClass.simpleName) }
     }
 
     private fun stopInputOnly() {
+        if (!active) return
+        active = false
         runCatching { manager.stopInput() }
     }
 
     fun stop() {
         stopInputOnly()
-        target?.onFocusChangeListener = null
+        target?.setOnTouchListener(null)
         target = null
+    }
+
+    companion object {
+        // Traverse YouTube's shadow roots; autofocus on a video is excluded.
+        // This is evaluated only after ACTION_UP, never on window/view focus.
+        private val EDITABLE_FOCUS_SCRIPT = """
+            (function () {
+              var e = document.activeElement;
+              while (e && e.shadowRoot && e.shadowRoot.activeElement)
+                e = e.shadowRoot.activeElement;
+              if (!e) return false;
+              var tag = (e.tagName || '').toLowerCase();
+              if (tag === 'textarea' || e.isContentEditable) return true;
+              if (tag !== 'input') return false;
+              var type = (e.type || 'text').toLowerCase();
+              return !/^(button|submit|reset|checkbox|radio|hidden|file|range|color|image)$/.test(type);
+            })()
+        """.trimIndent()
     }
 
     override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {

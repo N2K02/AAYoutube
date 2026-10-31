@@ -323,3 +323,34 @@ native frame dimensions, page readyState and HTML video geometry/decoded
 frame count. This distinguishes 0-sized or hidden AndroidView, unloaded
 YouTube page, and hardware decoded video surface blackness. These
 changes cannot guarantee a fix on an untested Android Auto host.
+
+## Brief video, unsolicited keyboard, then black (14:05 hardware test)
+
+Uploaded Android log `31_10-14-05-26_452.log` records a real
+Android Auto projection **stop** at monotonic 1793441086.285:
+`CAR.PROJECTION.PPUIHOST ... LegacyProjectionActivity stop()`,
+followed by `Removing contentView from parent on UI stop`.
+Chromium `onDetachedFromWindow` and the Exynos VP9 codec surface releases
+occur immediately afterward. The repeated
+`InputMethodManager displayId=0 / ViewRoot displayId=578` traces
+are nonfatal diagnostics. Later `CAR.CLIENT` warns that an optional
+`CarDisplayInfoManager` class isn't present while the host reinitializes;
+that warning follows projection stop, not proven as its trigger.
+
+AABrowser asks `CarInputManager.startInput(view)` only after explicit
+keyboard choice. AAYouTube's `LegacyCarInput.bind()` previously called
+`manager.startInput(this)` when the *entire WebView* received focus
+at car activity startup, even with only video active. The user's brief
+visible video and unwanted keyboard make that a concrete lifecycle risk.
+
+**Correction:** WebView/car focus no longer starts car text input.
+`LegacyCarInput` requests car IME only after a real user ACTION_UP on an
+HTML input/textarea/contenteditable field (including shadow-root focus);
+never for video/player touches. It stops a previously activated IME on
+subsequent non-edit touches and cleans up touch listeners on shutdown.
+The projected frame takes initial focus instead of the WebView. Explicit
+`onStart/onResume/onPause/onStop/onDestroy` markers make it possible
+to distinguish host-initiated projection closure from a renderer glitch.
+No old auto-focus keyboard behavior is retained. Actual on-head-unit
+verification is still needed: the log does not prove the car host's
+reason for calling stop().
