@@ -301,3 +301,25 @@ affected by proprietary projection host graphics beyond IME context.
 - Car's AndroidView.update no longer detaches the already-parented Chromium
   WebView on every Compose recomposition. WebHost.attach accepts an optional
   destination frame and preserves its hardware Surface if parent is unchanged.
+
+## Black projected video persists — direct display context + attach-stage checks
+
+Hardware test still produced black video; logcat displayed
+`InputMethodManager displayId=0` vs `ViewRootImpl displayId=420`.
+Android's InputMethodManager source labels the mismatch as a nonfatal
+fallback/performance condition. It does not prove the black surface's cause.
+
+A further difference from working AABrowser: AAYouTube's WebView used
+`MutableContextWrapper` even after selecting a car display. It could
+also be constructed by `AndroidView.factory` *before* the car frame
+was attached to its virtual display. The car path now waits for
+`onViewAttachedToWindow`, then creates a fresh WebView using the
+projected `createDisplayContext` directly (no mutable wrapper).
+The standard phone/background lifecycle continues to use the wrapper.
+
+New non-sensitive `[CAR]` diagnostics log the attached frame display,
+WebView created display, hardware acceleration, attached/visible state,
+native frame dimensions, page readyState and HTML video geometry/decoded
+frame count. This distinguishes 0-sized or hidden AndroidView, unloaded
+YouTube page, and hardware decoded video surface blackness. These
+changes cannot guarantee a fix on an untested Android Auto host.

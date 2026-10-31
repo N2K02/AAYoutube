@@ -136,11 +136,18 @@ object WebHost {
 
     private fun ensureWeb(baseContext: Context = app): WebView {
         web?.let { return it }
-        val context = MutableContextWrapper(baseContext)
-        wrapper = context
         webDisplayId = displayId(baseContext) ?: Display.DEFAULT_DISPLAY
+        // Unlike a phone WebView that stays alive offscreen, the projected car
+        // view must use the real display context *directly*, matching AABrowser.
+        // A mutable wrapper created on display 0 can cache the wrong IMM and
+        // graphics services even after its base context is replaced.
+        val inCarDisplay = webDisplayId != Display.DEFAULT_DISPLAY
+        val context: Context = if (inCarDisplay) baseContext
+            else MutableContextWrapper(baseContext).also { wrapper = it }
+        if (inCarDisplay) wrapper = null
         val w = BackgroundWebView(context)
-        AppLog.add("VIEW", "WebView created display=" + webDisplayId)
+        AppLog.add("VIEW", "WebView created display=" + webDisplayId +
+            " directCarContext=" + inCarDisplay)
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
@@ -324,6 +331,38 @@ object WebHost {
         replacement.onResume()
         replacement.resumeTimers()
         replacement.invalidate()
+    }
+
+
+    /**
+     * Diagnose a genuinely black car page without mistaking the framework's
+     * nonfatal InputMethodManager fallback warning for a decoder failure.
+     * Logs only geometry/readyState/frame counters; never URLs or page text.
+     */
+    fun logCarRenderProbe() {
+        val w = web ?: return
+        if (!carShown && !carDisplay) return
+        AppLog.add("CAR", "WebView geometry=" + w.width + "x" + w.height +
+            " attached=" + w.isAttachedToWindow + " shown=" + w.isShown +
+            " accelerated=" + w.isHardwareAccelerated +
+            " display=" + (w.display?.displayId ?: -1))
+        w.evaluateJavascript(
+            """(function(){
+                var v=document.querySelector('video');
+                var r=v&&v.getBoundingClientRect();
+                return JSON.stringify({
+                    ready:document.readyState,
+                    viewport:[innerWidth,innerHeight],
+                    hasVideo:!!v,
+                    videoSize:v?[v.videoWidth,v.videoHeight]:null,
+                    bounds:r?[Math.round(r.width),Math.round(r.height)]:null,
+                    frames:v?(v.webkitDecodedFrameCount||0):0,
+                    paused:v?v.paused:null
+                });
+            })()""".trimIndent()
+        ) { result ->
+            AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
+        }
     }
 
     fun detach(container: ViewGroup) {

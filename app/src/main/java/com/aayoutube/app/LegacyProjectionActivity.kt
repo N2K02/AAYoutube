@@ -101,13 +101,19 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     private fun bindVideoToCarFrame(frame: FrameLayout) {
+        // AndroidView.factory runs before the ViewRoot is attached. Do not
+        // create Chromium on phone display 0 and then immediately transfer its
+        // GPU surface to Android Auto display 420.
+        if (!frame.isAttachedToWindow || frame.display == null) return
         val player = WebHost.attach(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))
         }
-        AppLog.add("CAR", "Projection root display=" + (frame.display?.displayId ?: -1) +
-            " player display=" + (player.display?.displayId ?: -1) +
+        val display = frame.display?.displayId ?: -1
+        val childDisplay = player.display?.displayId ?: -1
+        AppLog.add("CAR", "Projection root display=" + display +
+            " player display=" + childDisplay +
             " size=" + frame.width + "x" + frame.height)
         carInput?.bind(player)
     }
@@ -236,6 +242,22 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     factory = { context ->
                         CarFrameLayout(context).also { frame ->
                             playerContainer = frame
+                            frame.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                                override fun onViewAttachedToWindow(v: View) {
+                                    AppLog.add("CAR", "Car frame attached display=" +
+                                        (frame.display?.displayId ?: -1))
+                                    if (playerContainer === frame) {
+                                        bindVideoToCarFrame(frame)
+                                        handler.postDelayed({
+                                            if (carStarted && playerContainer === frame)
+                                                WebHost.logCarRenderProbe()
+                                        }, 1_800L)
+                                    }
+                                }
+                                override fun onViewDetachedFromWindow(v: View) {
+                                    AppLog.add("CAR", "Car frame detached")
+                                }
+                            })
                             frame.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
                                 val width = right - left
                                 val height = bottom - top
@@ -248,9 +270,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                     }
                                     handler.removeCallbacks(refit)
                                     handler.postDelayed(refit, 180L)
+                                    handler.postDelayed({
+                                        if (carStarted && playerContainer === frame)
+                                            WebHost.logCarRenderProbe()
+                                    }, 2_000L)
                                 }
                             }
-                            bindVideoToCarFrame(frame)
+                            // First WebView creation belongs in onViewAttachedToWindow,
+                            // when Android Auto's virtual display is known.
                         }
                     },
                     update = { frame ->
@@ -341,6 +368,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         attachIfNeeded()
         handler.removeCallbacks(refit)
         handler.postDelayed(refit, 180L)
+        handler.postDelayed({ if (carStarted) WebHost.logCarRenderProbe() }, 2_000L)
     }
 
     private fun attachIfNeeded() {
