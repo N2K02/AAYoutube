@@ -55,7 +55,7 @@ internal class CarMediaNotificationManager(
 
         val compact = mutableListOf<Int>()
         var actionIndex = 0
-        if (snapshot.canPrev) {
+        if (snapshot.id.isNotBlank()) {
             builder.addAction(android.R.drawable.ic_media_previous, "Previous",
                 action(PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS))
             compact.add(actionIndex++)
@@ -66,7 +66,7 @@ internal class CarMediaNotificationManager(
             action(if (snapshot.playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY)
         )
         compact.add(actionIndex++)
-        if (snapshot.canNext) {
+        if (snapshot.id.isNotBlank()) {
             builder.addAction(android.R.drawable.ic_media_next, "Next",
                 action(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
             compact.add(actionIndex)

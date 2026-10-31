@@ -252,9 +252,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (updateGate.playbackChanged(
                 state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
             )) {
+            val items = queueGate.items()
+            val activeIndex = items.indexOfFirst { it.id == s.id }
             session.setPlaybackState(PlaybackStateCompat.Builder()
                 .setActions(actions)
                 .setState(state, position, speed)
+                .setActiveQueueItemId(if (activeIndex >= 0) activeIndex.toLong()
+                    else android.support.v4.media.session.MediaSessionCompat.QueueItem.UNKNOWN_ID)
                 .build())
         }
         val artwork = MediaArtworkLoader.urlFor(s.art, s.id)
@@ -275,6 +279,21 @@ class PlaybackService : MediaBrowserServiceCompat() {
             session.setMetadata(metadata.build())
         }
         if (queueGate.update(s.queue)) {
+            // Android Auto's Now Playing queue is a native MediaSession queue, not
+            // just browse-only "Up next" children.
+            val entries = queueGate.items().mapIndexed { i, item ->
+                MediaSessionCompat.QueueItem(
+                    MediaDescriptionCompat.Builder()
+                        .setMediaId("v:" + item.id)
+                        .setTitle(item.title)
+                        .setSubtitle(item.artist)
+                        .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg"))
+                        .build(),
+                    i.toLong(),
+                )
+            }
+            session.setQueue(entries)
+            session.setQueueTitle("Up next")
             notifyChildrenChanged(ROOT)
             notifyChildrenChanged("queue")
         }
@@ -317,10 +336,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
         notifications.createChannel()
         Library.init(this)
         session = MediaSessionCompat(this, "AAYoutube").apply {
+            // Android Auto can redirect media-card taps to the app's video
+            // projection when the same package exports both entry points.
+            // Follow AABrowser: keep the car's native media card in place.
             setSessionActivity(PendingIntent.getActivity(
                 this@PlaybackService, 0,
-                Intent(this@PlaybackService, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                Intent(this@PlaybackService, NoOpMediaActivity::class.java),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             ))
             setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -340,8 +361,26 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     snapshot = snapshot.copy(playing = false, buffering = false)
                     publish(snapshot)
                 }
-                override fun onSkipToNext() = send(Msg.NEXT)
-                override fun onSkipToPrevious() = send(Msg.PREV)
+                override fun onSkipToNext() {
+                    // YouTube sometimes omits next/prev availability despite
+                    // supplying a complete Mix/playlist queue. Respect the
+                    // reported player when it supports skipping, otherwise
+                    // navigate the native queue by ID.
+                    val fallback = if (snapshot.canNext) null else
+                        MusicQueueNavigation.next(snapshot.id, queueGate.items())
+                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
+                    else send(Msg.NEXT)
+                }
+                override fun onSkipToPrevious() {
+                    val fallback = if (snapshot.canPrev) null else
+                        MusicQueueNavigation.previous(snapshot.id, queueGate.items())
+                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
+                    else send(Msg.PREV)
+                }
+                override fun onSkipToQueueItem(id: Long) {
+                    val item = MusicQueueNavigation.at(id, queueGate.items()) ?: return
+                    send(Msg.OPEN, Bundle().apply { putString("id", item) })
+                }
                 override fun onStop() {
                     send(Msg.STOP)
                     snapshot = snapshot.copy(playing = false, buffering = false)
@@ -420,7 +459,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         clientPackageName: String,
         clientUid: Int,
         rootHints: Bundle?
-    ): BrowserRoot = BrowserRoot(ROOT, null)
+    ): BrowserRoot {
+        AppLog.add("MEDIA", "Browse root requested from " + clientPackageName)
+        return BrowserRoot(ROOT, null)
+    }
 
     override fun onLoadChildren(
         parentId: String,
@@ -509,11 +551,18 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
 
-    /** Match the controls to the actual YouTube player's capabilities. */
+    /** Android Auto hides buttons not declared in PlaybackStateCompat.
+     * YouTube frequently reports canNext/canPrev=false even with an active
+     * playlist; native skip handling falls back to our captured queue. */
     private fun actionsFor(s: Snap): Long {
         var actions = ACTIONS
-        if (s.canNext) actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT
-        if (s.canPrev) actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+        if (s.id.isNotBlank()) {
+            actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            if (queueGate.items().isNotEmpty()) {
+                actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM
+            }
+        }
         if (!s.live && !s.ad && s.durMs > 0L) {
             actions = actions or PlaybackStateCompat.ACTION_SEEK_TO or
                 PlaybackStateCompat.ACTION_FAST_FORWARD or PlaybackStateCompat.ACTION_REWIND
@@ -526,6 +575,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         private const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
+            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
             PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
     }
 }

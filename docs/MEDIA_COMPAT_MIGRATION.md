@@ -204,3 +204,24 @@ Tapping or swiping upward does not reveal the menu. The existing Features
 setting still defaults to three seconds, with the Never option preserved.
 Car host chrome remains host-controlled. Verify both entries on a parked
 Android Auto unit; a working APK build does not establish host behavior.
+
+## Real-head-unit feedback: video launcher unresponsive, Music missing skip actions
+
+The video projector is still the AABrowser legacy `CarActivityService` and is
+not replaced with a navigation side-panel. Added service and activity-entry
+logs for diagnosing launch stages on a real head unit, and applied the upstream
+CarActivity theme before superclass initialization. Media session's click
+PendingIntent now uses AABrowser's private no-op activity so tapping the music
+player cannot hijack the WebView/video route. Video remains separate from the
+exported 'AAYouTube Music' media browser.
+
+Android Auto's media UI chooses its visible controls from session
+PlaybackState actions. YouTube's per-video canNext/canPrev flags were false in
+normal Mix playlists even though 25 tracks were known, hiding the buttons.
+For a loaded video, Next/Previous are now advertised; they prefer YouTube's
+own handlers but safely fall back to known queue IDs. Published the queue via
+MediaSession.setQueue, a queue title, active-item ID and a working skip-to-queue
+callback. Pure queue navigation tests cover boundaries and missing items. The
+notification's standard Previous/Play-Pause/Next controls now agree with the
+media-session capabilities. CI does not prove the video launch failure is fixed:
+check CAR logs for service requested, activity resolved and activity launched.

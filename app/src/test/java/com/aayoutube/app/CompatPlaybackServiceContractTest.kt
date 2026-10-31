@@ -28,8 +28,10 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("val actions = actionsFor(s)"))
         assertTrue(source.contains("!s.rate.isFinite() -> 1f"))
         assertTrue(source.contains("s.rate.coerceIn(0.1f, 4f)"))
-        assertTrue(source.contains("if (s.canNext)"))
-        assertTrue(source.contains("if (s.canPrev)"))
+        assertTrue(source.contains("if (s.id.isNotBlank())"))
+        assertTrue(source.contains("PlaybackStateCompat.ACTION_SKIP_TO_NEXT"))
+        assertTrue(source.contains("PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS"))
+        assertTrue(source.contains("PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM"))
         assertTrue(source.contains("!s.live && !s.ad && s.durMs > 0L"))
         assertTrue(source.contains("if (query.isNullOrBlank()) onPlay()"))
     }
@@ -40,8 +42,8 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor("))
         assertTrue(manager.contains("MediaButtonReceiver.buildMediaButtonPendingIntent"))
         assertTrue(manager.contains("setShowActionsInCompactView(*compact.toIntArray())"))
-        assertTrue(manager.contains("if (snapshot.canPrev)"))
-        assertTrue(manager.contains("if (snapshot.canNext)"))
+        assertTrue(manager.contains("if (snapshot.id.isNotBlank())"))
+        assertTrue(manager.contains("if (snapshot.id.isNotBlank())"))
         assertTrue(manager.contains("fun placeholder()"))
     }
     @Test fun browserRecoveryAndBoundedIpcDrain() {

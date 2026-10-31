@@ -87,6 +87,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
+        // Upstream AABrowser applies the window theme before CarActivity
+        // initialization. Log BEFORE super to diagnose failing car launches.
+        AppLog.add("CAR", "Video CarActivity launching")
+        setTheme(R.style.Theme_AAYoutube)
         super.onCreate(bundle)
         CarMode.resetToCarScreen(this)
         savedController.performRestore(bundle)
