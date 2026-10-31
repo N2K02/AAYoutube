@@ -36,10 +36,28 @@ internal class CarHostRegistry {
     val active: String? get() = hosts.keys.lastOrNull()
     val size: Int get() = hosts.size
 
-    /** Claim (or re-claim) ownership; the latest claim is the active host. */
+    /**
+     * Called from onCreate. Creation of a NEW activity transfers ownership.
+     * Calling again for the same instance must never reorder hosts: Android
+     * Auto can deliver onStart to the OLD activity after creating the new one.
+     */
     fun claim(token: String, rebind: () -> Unit) {
-        hosts.remove(token)
+        hosts[token] = rebind // LinkedHashMap assignment preserves the existing order.
+    }
+
+    /**
+     * Called from onStart. An already registered host only refreshes its
+     * callback, never becomes newest. A host stopped earlier can resume
+     * ownership only when no newer car activity remains registered.
+     */
+    fun resume(token: String, rebind: () -> Unit): Boolean {
+        if (hosts.containsKey(token)) {
+            hosts[token] = rebind
+            return true
+        }
+        if (hosts.isNotEmpty()) return false
         hosts[token] = rebind
+        return true
     }
 
     /** Release a host. If it was active, returns the next host's rebind action. */

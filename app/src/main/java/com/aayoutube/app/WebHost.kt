@@ -338,6 +338,15 @@ object WebHost {
         AppLog.add("CAR", "Car host active=" + token + " hosts=" + carHosts.size)
     }
 
+    /** Do not let an old activity's late onStart steal a replacement's window. */
+    fun resumeCarHost(token: String, rebind: () -> Unit): Boolean {
+        val registered = carHosts.resume(token, rebind)
+        activeCarHost.value = carHosts.active
+        if (!registered) AppLog.add("CAR", "Ignoring stale car host onStart=" + token +
+            " active=" + (carHosts.active ?: "none"))
+        return registered
+    }
+
     /** An old car activity's teardown must not take the player from the newer one. */
     fun releaseCarHost(token: String) {
         val wasActive = carHosts.isActive(token)

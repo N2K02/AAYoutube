@@ -37,14 +37,35 @@ class CarHostRegistryTest {
         assertEquals(1, aRebinds)
     }
 
-    @Test fun restartedInstanceReclaimsOwnership() {
+    @Test fun oldInstanceLateOnStartDoesNotStealReplacement() {
         val hosts = CarHostRegistry()
         hosts.claim("A") {}
         hosts.claim("B") {}
-        // The host brings A back to the front: onStart claims again.
+        // Older A receives onStart after B's new Presentation is created.
+        assertTrue(hosts.resume("A") {})
+        assertTrue(hosts.isActive("B"))
+        // A duplicate claim also cannot reorder the same instance.
         hosts.claim("A") {}
-        assertTrue(hosts.isActive("A"))
+        assertTrue(hosts.isActive("B"))
         assertEquals(2, hosts.size)
+    }
+
+    @Test fun stoppedHostCannotResurrectBehindActiveNewerWindow() {
+        val hosts = CarHostRegistry()
+        hosts.claim("A") {}
+        hosts.claim("B") {}
+        assertNull(hosts.release("A"))
+        assertFalse(hosts.resume("A") {})
+        assertTrue(hosts.isActive("B"))
+        assertEquals(1, hosts.size)
+    }
+
+    @Test fun stoppedHostCanResumeWhenNoCarWindowRemains() {
+        val hosts = CarHostRegistry()
+        hosts.claim("A") {}
+        assertNull(hosts.release("A"))
+        assertTrue(hosts.resume("A") {})
+        assertTrue(hosts.isActive("A"))
     }
 
     @Test fun lastHostReleaseAndQuitClearOwnership() {

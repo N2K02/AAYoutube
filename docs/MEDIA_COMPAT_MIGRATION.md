@@ -404,3 +404,23 @@ own WebView in its Compose factory and destroys it with the window.
 Expected on device: video, then a short reload (≈1–2 s, same position) when
 Android Auto replaces the car window, then video again. Not proven by CI: confirm on
 a parked head unit and send `adb logcat -s AAYouTube-CAR` if the screen stays black.
+
+## Follow-up audit: late old-activity onStart owner race
+
+Commit `851be754` already handled the observed 14:37 same-display
+window replacement and per-instance teardown. A code audit found a
+separate lifecycle ordering race: both `onCreate` and `onStart`
+called `CarHostRegistry.claim(token)`, which previously removed and
+reinserted *existing* tokens, making a delayed `onStart` on the older
+activity steal the newer car window's active ownership.
+
+The registry now treats `claim` as an idempotent registration and
+`resume` as a non-promoting onStart refresh; a previously stopped host
+can register again only when no newer car host is registered.
+`LegacyProjectionActivity.onStart` touches shared WebHost playback,
+media callbacks and car projection only when the host is active. The
+new activity takes `requestLink` immediately in `onCreate`, preventing
+an old instance's teardown from restoring a phone callback before the
+new host starts. Unit tests cover delayed onStart, duplicate claims,
+stopped-host reentry and last-host resume. These guard against another
+black-screen ownership race but do not substitute for head-unit tests.

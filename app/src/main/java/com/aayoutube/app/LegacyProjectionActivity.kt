@@ -178,6 +178,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.claimCarHost(carToken, onBecameActive)
         WebHost.showOnCar(true, carToken)
         WebHost.prepareForCarProjection()
+        // Immediately transfer the web-process callback; an old activity
+        // can stop before this new instance reaches onStart.
+        WebHost.requestLink = relink
 
         val compose = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@LegacyProjectionActivity)
@@ -392,8 +395,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
         configureLegacyCarInput()
-        WebHost.claimCarHost(carToken, onBecameActive)
+        val registered = WebHost.resumeCarHost(carToken, onBecameActive)
+        if (!registered) return
         WebHost.showOnCar(true, carToken)
+        if (!WebHost.isActiveCarHost(carToken)) return
         WebHost.prepareForCarProjection()
         WebHost.setHold(false)
         WebHost.requestLink = relink
@@ -405,7 +410,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         super.onResume()
         AppLog.add("CAR", "Video projection onResume")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-        WebHost.setHold(false)
+        if (WebHost.isActiveCarHost(carToken)) WebHost.setHold(false)
         updateCarWindow()
         attachIfNeeded()
         handler.removeCallbacks(refit)
