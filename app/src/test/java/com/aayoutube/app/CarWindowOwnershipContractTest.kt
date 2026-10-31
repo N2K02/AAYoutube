@@ -106,10 +106,10 @@ class CarWindowOwnershipContractTest {
     @Test fun blackScreenDiagnosticsReachLogcat() {
         val log = source("app/src/main/java/com/aayoutube/app/AppLog.kt")
         val add = log.substringAfter("fun add(tag: String, message: String) {")
-        assertTrue("CAR lines are mirrored before the diagnostics-file switch",
-            add.indexOf("if (tag == \"CAR\") runCatching {") < add.indexOf("if (context?.let { marker(it).isFile } != true) return"))
-        assertTrue(add.contains("android.util.Log.i(LOGCAT_TAG, redact(message)"))
-        assertTrue(log.contains("private const val LOGCAT_TAG = \"AAYouTube-CAR\""))
+        assertTrue("Android Auto diagnostics must always reach Logcat",
+            add.contains("if (tag == \"CAR\") Log.i(\"AAYouTube-CAR\", safe)"))
+        assertTrue(add.contains("val safe = redact(message)"))
+        assertFalse("There must be no private diagnostic file switch", add.contains("marker(it).isFile"))
         val probe = web.substringAfter("fun logCarRenderProbe()").substringBefore("fun detach(")
         assertTrue(probe.contains("document.elementFromPoint(innerWidth/2,innerHeight/2)"))
         assertTrue(probe.contains("Object.getOwnPropertyDescriptor(Document.prototype,'hidden')"))
