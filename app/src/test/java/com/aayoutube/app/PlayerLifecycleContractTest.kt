@@ -25,6 +25,8 @@ class PlayerLifecycleContractTest {
         assertTrue(web.contains("PlayerDisplayPolicy.shouldRecreate(webDisplayId, targetDisplay)"))
         assertTrue(web.contains("Recreate Chromium display"))
         assertTrue(web.contains("pendingUrl = restored"))
+        assertTrue(web.contains("if (w.parent !== destination || destination == null)"))
+        assertTrue(car.contains("WebHost.attach(projectionContext(frame.context, frame), frame)"))
         assertTrue(web.contains("carProjectionActive.value = carShown"))
         assertTrue(web.contains("webDisplayId = null"))
         assertTrue(web.contains("webGeneration++"))

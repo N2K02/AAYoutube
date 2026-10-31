@@ -101,7 +101,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     private fun bindVideoToCarFrame(frame: FrameLayout) {
-        val player = WebHost.attach(projectionContext(frame.context, frame))
+        val player = WebHost.attach(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))

@@ -297,3 +297,7 @@ of the WebView while a car projection is active.
 Added isolated display-transition tests and lifecycle contract assertions.
 Hardware validation remains necessary: WebView rendering could still be
 affected by proprietary projection host graphics beyond IME context.
+
+- Car's AndroidView.update no longer detaches the already-parented Chromium
+  WebView on every Compose recomposition. WebHost.attach accepts an optional
+  destination frame and preserves its hardware Surface if parent is unchanged.

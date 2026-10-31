@@ -270,14 +270,19 @@ object WebHost {
      * process before the car screen appeared. Chromium caches the display's
      * IME and video Surface; rebasing MutableContextWrapper alone is too late.
      */
-    fun attach(context: Context): WebView {
+    fun attach(context: Context, destination: ViewGroup? = null): WebView {
         val targetDisplay = displayId(context)
         if (web != null && PlayerDisplayPolicy.shouldRecreate(webDisplayId, targetDisplay)) {
             recreateForDisplay(context, targetDisplay!!)
         }
         val w = ensureWeb(context)
-        wrapper?.setBaseContext(context)
-        (w.parent as? ViewGroup)?.removeView(w)
+        // Compose calls AndroidView.update on ordinary state changes. Detaching
+        // the same decoder-bearing WebView from its *existing* car frame on
+        // each update can present a permanent black surface.
+        if (w.parent !== destination || destination == null) {
+            wrapper?.setBaseContext(context)
+            (w.parent as? ViewGroup)?.removeView(w)
+        }
         AppLog.add("VIEW", "WebView attach display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1))
         return w
