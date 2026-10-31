@@ -43,6 +43,8 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("MainActivity.restorePhoneLink()"))
         assertFalse(activity.contains("runOnUiThread"))
         assertTrue(activity.contains("WindowInsetsControllerCompat"))
+        assertTrue(activity.contains("bindVideoToCarFrame(frame)"))
+        assertTrue(activity.contains("fallback.createDisplayContext(display)"))
         assertTrue(activity.contains("setViewTreeLifecycleOwner(this)"))
         assertTrue(activity.contains("updateCarWindow()"))
         assertTrue(activity.contains("findCarInputManager()"))

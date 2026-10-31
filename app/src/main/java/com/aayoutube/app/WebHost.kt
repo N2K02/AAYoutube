@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.content.MutableContextWrapper
+import android.view.Display
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.content.Context
@@ -63,6 +64,7 @@ object WebHost {
 
     private var wrapper: MutableContextWrapper? = null
     private var web: WebView? = null
+    private var webDisplayId: Int? = null
     private var webGeneration = 0
     private var scriptHandler: ScriptHandler? = null
     private var link: Messenger? = null
@@ -104,6 +106,7 @@ object WebHost {
     @Volatile var carShown = false
         private set
     private val carOwners = mutableSetOf<String>()
+    val carProjectionActive = MutableStateFlow(false)
 
     /** The app screen is on the car display (Android 15+): videos fill the screen there. */
     val carScreen = MutableStateFlow(false)
@@ -128,11 +131,16 @@ object WebHost {
 
     internal fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
 
-    private fun ensureWeb(): WebView {
+    private fun displayId(context: Context): Int? =
+        runCatching { context.display?.displayId }.getOrNull()
+
+    private fun ensureWeb(baseContext: Context = app): WebView {
         web?.let { return it }
-        val context = MutableContextWrapper(app)
+        val context = MutableContextWrapper(baseContext)
         wrapper = context
+        webDisplayId = displayId(baseContext) ?: Display.DEFAULT_DISPLAY
         val w = BackgroundWebView(context)
+        AppLog.add("VIEW", "WebView created display=" + webDisplayId)
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
@@ -257,12 +265,60 @@ object WebHost {
 
     // ---------------------------------------------------------------- screens
 
-    /** Called by the screen: hands over the WebView (re-based onto the activity). */
-    fun attach(context: android.content.Context): WebView {
-        val w = ensureWeb()
+    /**
+     * Unlike AABrowser, our WebView may have been born in the phone/background
+     * process before the car screen appeared. Chromium caches the display's
+     * IME and video Surface; rebasing MutableContextWrapper alone is too late.
+     */
+    fun attach(context: Context): WebView {
+        val targetDisplay = displayId(context)
+        if (web != null && PlayerDisplayPolicy.shouldRecreate(webDisplayId, targetDisplay)) {
+            recreateForDisplay(context, targetDisplay!!)
+        }
+        val w = ensureWeb(context)
         wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
+        AppLog.add("VIEW", "WebView attach display=" + (targetDisplay ?: -1) +
+            " created=" + (webDisplayId ?: -1))
         return w
+    }
+
+    private fun recreateForDisplay(context: Context, target: Int) {
+        val previous = web ?: return
+        val state = snapshot.value
+        val oldDisplay = webDisplayId
+        val url = previous.url?.takeIf { it.startsWith("https://") } ?: lastUrl ?: home()
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val isWatch = uri?.path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }
+        val restored = if (isWatch && state.id.isNotBlank()) {
+            uri!!.buildUpon().clearQuery().apply {
+                uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
+                    uri.getQueryParameters(key).forEach { value -> appendQueryParameter(key, value) }
+                }
+                if (state.posMs > 0) appendQueryParameter("t", "${state.posMs / 1000}s")
+                appendQueryParameter("aay", if (state.playing) "1" else "paused")
+            }.build().toString()
+        } else url
+        AppLog.add("CAR", "Recreate Chromium display $oldDisplay -> $target" +
+            " playing=${state.playing} position=${state.posMs / 1000}s")
+        // A display transition is not Quit. Preserve car ownership, MediaSession,
+        // snapshot and cookies; replace only the renderer and its cached services.
+        exitFullscreen()
+        web = null
+        webGeneration++
+        runCatching { scriptHandler?.remove() }
+        scriptHandler = null
+        (previous.parent as? ViewGroup)?.removeView(previous)
+        previous.stopLoading()
+        previous.destroy()
+        wrapper = null
+        webDisplayId = null
+        frozen = false
+        pendingUrl = restored
+        val replacement = ensureWeb(context)
+        replacement.onResume()
+        replacement.resumeTimers()
+        replacement.invalidate()
     }
 
     fun detach(container: ViewGroup) {
@@ -299,6 +355,7 @@ object WebHost {
         val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
+        carProjectionActive.value = carShown
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (carShown) {
@@ -568,11 +625,13 @@ object WebHost {
         w?.pauseTimers()
         w?.destroy()
         wrapper = null
+        webDisplayId = null
         frozen = false
         snapshot.value = Snap()
         if (!preserveCarOwners) {
             carOwners.clear()
             carShown = false
+            carProjectionActive.value = false
         }
         lyricsTracking = false
         lyricsClock.value = LyricsClock()

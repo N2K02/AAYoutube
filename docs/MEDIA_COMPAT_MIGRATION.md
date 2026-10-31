@@ -272,3 +272,28 @@ service/host logs will show whether execution reaches
 `Video CarActivity launching` with the new APK. Compilation and CI cannot
 prove runtime linkage into the proprietary car host: verify with parked-car
 video startup and check logcat for this exact missing-class exception.
+
+## Android Auto black screen after legacy crash fixed — virtual-display WebView
+
+Latest device logcat repeatedly says ViewRootImpl display ID 323 while
+Chromium InputMethodManager stays on display ID 0. This is not a fatal
+exception or sufficient proof of the black screen's cause, but it exposes
+a concrete difference from AABrowser: AABrowser creates WebView inside
+the car AndroidView context, while AAYouTube constructed a background
+WebView against application/phone context, then merely rebased a
+MutableContextWrapper when moving to the car.
+
+WebHost now tracks the WebView's creation display ID. On phone/car display
+changes, it recreates only the Chromium instance against a context bound
+to the actual projected display, preserving the selected YouTube URL,
+playlist, position, play/pause intent, cookies and MediaSession ownership.
+This costs a short reload instead of reusing a potentially black surface.
+It never recreates for a temporary null/unknown display or unchanged ID.
+LegacyProjectionActivity also rechecks display context after the frame
+attaches to the car ViewRoot, and logs the projection root/player display
+IDs and frame dimensions. The phone Compose tree no longer takes ownership
+of the WebView while a car projection is active.
+
+Added isolated display-transition tests and lifecycle contract assertions.
+Hardware validation remains necessary: WebView rendering could still be
+affected by proprietary projection host graphics beyond IME context.

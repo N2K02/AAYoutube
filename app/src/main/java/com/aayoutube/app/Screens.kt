@@ -508,6 +508,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val browseOn by BrowseHost.created.collectAsState()
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
+    val projectedToCar by WebHost.carProjectionActive.collectAsState()
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
@@ -568,7 +569,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
                 else -> Modifier.fillMaxSize()
             }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
-            key(version) {
+            // Do not let a still-resumed phone screen steal the car's player.
+            if (!projectedToCar || onCar) key(version) {
                 AndroidView(
                     modifier = playerMod,
                     factory = { ctx ->

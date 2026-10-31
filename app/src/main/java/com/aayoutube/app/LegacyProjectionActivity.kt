@@ -84,6 +84,33 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var lastWidth = 0
     private var lastHeight = 0
     private val refit = Runnable { WebHost.refitCarViewport() }
+
+    // CarActivity uses a virtual display; Activity/application context can
+    // still resolve default display 0 even when its ViewRoot uses display 323.
+    private fun projectionContext(fallback: android.content.Context, frame: View? = null):
+        android.content.Context {
+        val display = frame?.display ?: carWindow()?.decorView?.display ?: return fallback
+        return runCatching {
+            android.view.ContextThemeWrapper(
+                fallback.createDisplayContext(display), R.style.Theme_AAYoutube
+            )
+        }.getOrElse {
+            AppLog.add("CAR", "Projection display context failed: " + it.javaClass.simpleName)
+            fallback
+        }
+    }
+
+    private fun bindVideoToCarFrame(frame: FrameLayout) {
+        val player = WebHost.attach(projectionContext(frame.context, frame))
+        if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
+            frame.removeAllViews()
+            frame.addView(player, FrameLayout.LayoutParams(-1, -1))
+        }
+        AppLog.add("CAR", "Projection root display=" + (frame.display?.displayId ?: -1) +
+            " player display=" + (player.display?.displayId ?: -1) +
+            " size=" + frame.width + "x" + frame.height)
+        carInput?.bind(player)
+    }
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
@@ -216,21 +243,18 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                     lastWidth = width
                                     lastHeight = height
                                     AppLog.add("CAR", "Projection viewport=" + width + "x" + height)
+                                    handler.post {
+                                        if (playerContainer === frame) bindVideoToCarFrame(frame)
+                                    }
                                     handler.removeCallbacks(refit)
                                     handler.postDelayed(refit, 180L)
                                 }
                             }
-                            val web = WebHost.attach(context)
-                            frame.addView(web, FrameLayout.LayoutParams(-1, -1))
-                            carInput?.bind(web)
+                            bindVideoToCarFrame(frame)
                         }
                     },
                     update = { frame ->
-                        if (frame.childCount == 0 && WebHost.fullscreenView.value == null) {
-                            val web = WebHost.attach(frame.context)
-                            frame.addView(web, FrameLayout.LayoutParams(-1, -1))
-                            carInput?.bind(web)
-                        }
+                        if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
                     },
                     onRelease = { frame ->
                         WebHost.detach(frame)
@@ -321,13 +345,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     private fun attachIfNeeded() {
         playerContainer?.let { frame ->
-            if (frame.childCount == 0 && WebHost.fullscreenView.value == null) {
-                val web = WebHost.attach(frame.context)
-                frame.addView(web, FrameLayout.LayoutParams(-1, -1))
-            }
-            // Rebind after onStart replaces the SDK manager, even if the WebView
-            // was already attached before the activity temporarily stopped.
-            (frame.getChildAt(0) as? WebView)?.let { carInput?.bind(it) }
+            if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
         }
     }
 
