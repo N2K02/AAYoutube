@@ -68,13 +68,21 @@ class LegacyProjectionContractTest {
 
     @Test fun projectionUsesExistingPlayerMediaAndSafeShutdown() {
         val activity = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertTrue(activity.contains("WebHost.attach("))
+        assertTrue(activity.contains("WebHost.attachToCarWindow("))
         assertTrue(activity.contains("WebHost.detach("))
-        assertTrue(activity.contains("WebHost.showOnCar(true, \"legacy-projection\")"))
+        // One owner token per car activity instance: Android Auto recreates the
+        // activity while the old instance is alive (31_10-14-37-54 log).
+        assertTrue(activity.contains("private val carToken = \"legacy-projection@\" + Integer.toHexString(System.identityHashCode(this))"))
+        assertTrue(activity.contains("WebHost.showOnCar(true, carToken)"))
+        assertFalse(activity.contains("WebHost.showOnCar(true, \"legacy-projection\")"))
         assertTrue(activity.contains("WebHost.setHold(false)"))
-        assertTrue(activity.indexOf("WebHost.showOnCar(true, \"legacy-projection\")") <
+        assertTrue(activity.indexOf("WebHost.claimCarHost(carToken, onBecameActive)") <
             activity.indexOf("setContent { AAYoutubeTheme { LegacyProjectionScreen() } }"))
-        assertTrue(activity.contains("WebHost.showOnCar(false, \"legacy-projection\")"))
+        assertTrue(activity.indexOf("WebHost.showOnCar(true, carToken)") <
+            activity.indexOf("setContent { AAYoutubeTheme { LegacyProjectionScreen() } }"))
+        assertTrue(activity.contains("WebHost.showOnCar(false, carToken)"))
+        assertFalse(activity.contains("WebHost.showOnCar(false, \"legacy-projection\")"))
+        assertTrue(activity.contains("WebHost.releaseCarHost(carToken)"))
         assertTrue(activity.contains("WebHost.requestReattachment()"))
         assertTrue(activity.contains("mediaController?.disconnect()"))
         assertTrue(activity.contains("CompatMediaConnection(this)"))

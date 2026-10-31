@@ -108,6 +108,14 @@ object WebHost {
     private val carOwners = mutableSetOf<String>()
     val carProjectionActive = MutableStateFlow(false)
 
+    /** Android Auto may briefly run an old and a new car activity; only the newest owns the player. */
+    private val carHosts = CarHostRegistry()
+    val activeCarHost = MutableStateFlow<String?>(null)
+    /** Identity of the car window token the current renderer draws into (null: not in a car window). */
+    private var carWindowId: Int? = null
+    private var playingWhenCarLeft = false
+    private var carLeftAt = 0L
+
     /** The app screen is on the car display (Android 15+): videos fill the screen there. */
     val carScreen = MutableStateFlow(false)
     val carDisplay: Boolean get() = carScreen.value
@@ -145,6 +153,8 @@ object WebHost {
         val context: Context = if (inCarDisplay) baseContext
             else MutableContextWrapper(baseContext).also { wrapper = it }
         if (inCarDisplay) wrapper = null
+        // A brand-new renderer has not drawn into any car window yet.
+        carWindowId = null
         val w = BackgroundWebView(context)
         AppLog.add("VIEW", "WebView created display=" + webDisplayId +
             " directCarContext=" + inCarDisplay)
@@ -280,7 +290,7 @@ object WebHost {
     fun attach(context: Context, destination: ViewGroup? = null): WebView {
         val targetDisplay = displayId(context)
         if (web != null && PlayerDisplayPolicy.shouldRecreate(webDisplayId, targetDisplay)) {
-            recreateForDisplay(context, targetDisplay!!)
+            recreateRenderer(context, targetDisplay!!, "display")
         }
         val w = ensureWeb(context)
         // Compose calls AndroidView.update on ordinary state changes. Detaching
@@ -290,29 +300,79 @@ object WebHost {
             wrapper?.setBaseContext(context)
             (w.parent as? ViewGroup)?.removeView(w)
         }
+        // A phone/background screen now owns the renderer, not a car window.
+        carWindowId = null
         AppLog.add("VIEW", "WebView attach display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1))
         return w
     }
 
-    private fun recreateForDisplay(context: Context, target: Int) {
+    /**
+     * The projected car path. AABrowser creates its WebView inside each
+     * CarActivity window and never moves it. Android Auto replaces that window
+     * (new Surface / activity recreate on the same display, see the 14:37 log),
+     * and a renderer moved into the replacement keeps playing audio over black.
+     * So a car bind keeps the renderer only inside the window it already draws
+     * into; any other display or car window gets a fresh renderer at the same
+     * video position and play state.
+     */
+    fun attachToCarWindow(context: Context, frame: ViewGroup): WebView {
+        val targetDisplay = displayId(context)
+        val targetWindow = frame.windowToken?.let { System.identityHashCode(it) }
+        val reason = if (web == null) null else PlayerDisplayPolicy.carRecreateReason(
+            webDisplayId, targetDisplay, carWindowId, targetWindow)
+        if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)
+        val w = ensureWeb(context)
+        if (w.parent !== frame) (w.parent as? ViewGroup)?.removeView(w)
+        carWindowId = targetWindow
+        AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
+            " created=" + (webDisplayId ?: -1) + " window=" +
+            (targetWindow?.let { Integer.toHexString(it) } ?: "none") +
+            " renderer=" + (reason?.let { "new($it)" } ?: "kept"))
+        return w
+    }
+
+    fun claimCarHost(token: String, rebind: () -> Unit) {
+        carHosts.claim(token, rebind)
+        activeCarHost.value = carHosts.active
+        AppLog.add("CAR", "Car host active=" + token + " hosts=" + carHosts.size)
+    }
+
+    /** An old car activity's teardown must not take the player from the newer one. */
+    fun releaseCarHost(token: String) {
+        val wasActive = carHosts.isActive(token)
+        val next = carHosts.release(token)
+        activeCarHost.value = carHosts.active
+        if (wasActive) AppLog.add("CAR", "Car host released=" + token +
+            " next=" + (carHosts.active ?: "none"))
+        next?.invoke()
+    }
+
+    fun isActiveCarHost(token: String): Boolean = carHosts.isActive(token)
+
+    private fun recreateRenderer(context: Context, target: Int, reason: String) {
         val previous = web ?: return
         val state = snapshot.value
         val oldDisplay = webDisplayId
         val url = previous.url?.takeIf { it.startsWith("https://") } ?: lastUrl ?: home()
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val isWatch = uri?.path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }
+        val now = SystemClock.elapsedRealtime()
+        // The old car window's teardown can pause the page a moment before the
+        // new window binds. Keep the user's play intent unless they paused.
+        val play = state.playing || (playingWhenCarLeft && now - carLeftAt < 8_000 &&
+            now - userPausedAt > 8_000)
         val restored = if (isWatch && state.id.isNotBlank()) {
             uri!!.buildUpon().clearQuery().apply {
                 uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
                     uri.getQueryParameters(key).forEach { value -> appendQueryParameter(key, value) }
                 }
                 if (state.posMs > 0) appendQueryParameter("t", "${state.posMs / 1000}s")
-                appendQueryParameter("aay", if (state.playing) "1" else "paused")
+                appendQueryParameter("aay", if (play) "1" else "paused")
             }.build().toString()
         } else url
-        AppLog.add("CAR", "Recreate Chromium display $oldDisplay -> $target" +
-            " playing=${state.playing} position=${state.posMs / 1000}s")
+        AppLog.add("CAR", "Recreate Chromium $reason $oldDisplay -> $target" +
+            " playing=$play position=${state.posMs / 1000}s")
         // A display transition is not Quit. Preserve car ownership, MediaSession,
         // snapshot and cookies; replace only the renderer and its cached services.
         exitFullscreen()
@@ -346,10 +406,22 @@ object WebHost {
             " attached=" + w.isAttachedToWindow + " shown=" + w.isShown +
             " accelerated=" + w.isHardwareAccelerated +
             " display=" + (w.display?.displayId ?: -1))
+        // Also reports the element painted at the screen centre (a page overlay
+        // covering the video), the real page visibility and whether frames
+        // keep decoding, so a black car screen can be classified from logcat.
         w.evaluateJavascript(
             """(function(){
-                var v=document.querySelector('video');
+                function d(n){if(!n)return null;var c=(typeof n.className==='string'?n.className:'')
+                    .trim().split(/\s+/).slice(0,2).join('.');
+                    return (n.tagName||'').toLowerCase()+(n.id?'#'+n.id:'')+(c?'.'+c:'');}
+                var v=document.querySelector('video.html5-main-video')||document.querySelector('video');
                 var r=v&&v.getBoundingClientRect();
+                var top=null,inPlayer=null;
+                try{var e=document.elementFromPoint(innerWidth/2,innerHeight/2);top=d(e);
+                    var p=document.getElementById('movie_player')||(v&&v.parentElement);
+                    inPlayer=!!(e&&p&&(p===e||p.contains(e)||e.contains(p)));}catch(x){}
+                var hidden=null;
+                try{hidden=Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get.call(document);}catch(x){}
                 return JSON.stringify({
                     ready:document.readyState,
                     viewport:[innerWidth,innerHeight],
@@ -357,7 +429,14 @@ object WebHost {
                     videoSize:v?[v.videoWidth,v.videoHeight]:null,
                     bounds:r?[Math.round(r.width),Math.round(r.height)]:null,
                     frames:v?(v.webkitDecodedFrameCount||0):0,
-                    paused:v?v.paused:null
+                    dropped:v?(v.webkitDroppedFrameCount||0):0,
+                    t:v?Math.round(v.currentTime):null,
+                    paused:v?v.paused:null,
+                    vis:v?getComputedStyle(v).visibility:null,
+                    hidden:hidden,
+                    car:document.documentElement.classList.contains('aay-car'),
+                    top:top,
+                    inPlayer:inPlayer
                 });
             })()""".trimIndent()
         ) { result ->
@@ -399,6 +478,10 @@ object WebHost {
         val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
+        if (alreadyProjected && !carShown) {
+            playingWhenCarLeft = snapshot.value.playing
+            carLeftAt = SystemClock.elapsedRealtime()
+        }
         carProjectionActive.value = carShown
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
@@ -670,12 +753,15 @@ object WebHost {
         w?.destroy()
         wrapper = null
         webDisplayId = null
+        carWindowId = null
         frozen = false
         snapshot.value = Snap()
         if (!preserveCarOwners) {
             carOwners.clear()
             carShown = false
             carProjectionActive.value = false
+            carHosts.clear()
+            activeCarHost.value = null
         }
         lyricsTracking = false
         lyricsClock.value = LyricsClock()

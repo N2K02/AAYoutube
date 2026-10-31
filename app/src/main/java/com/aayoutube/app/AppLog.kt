@@ -20,6 +20,7 @@ object AppLog {
     private const val TOTAL_BYTES = 2 * 1024 * 1024L
     private val lock = Any()
     private const val ENABLED_MARKER = "logging-enabled"
+    private const val LOGCAT_TAG = "AAYouTube-CAR"
     private fun marker(app: Context): File =
         File(File(app.filesDir, "diagnostics"), ENABLED_MARKER)
     private val lines = ArrayDeque<String>()
@@ -75,6 +76,12 @@ object AppLog {
 
     /** Never pass secrets or request bodies here: redaction is a defense in depth. */
     fun add(tag: String, message: String) {
+        // Android Auto video diagnostics are usually captured with logcat on the
+        // head-unit session. Mirror only the non-sensitive [CAR] lines (no URLs,
+        // page text or titles), even when the in-app diagnostics file is off.
+        if (tag == "CAR") runCatching {
+            android.util.Log.i(LOGCAT_TAG, redact(message).replace('\n', ' ').take(1000))
+        }
         if (context?.let { marker(it).isFile } != true) return
         val now = Date()
         val row: String

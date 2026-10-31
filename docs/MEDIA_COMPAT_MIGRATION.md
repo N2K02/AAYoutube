@@ -354,3 +354,53 @@ to distinguish host-initiated projection closure from a renderer glitch.
 No old auto-focus keyboard behavior is retained. Actual on-head-unit
 verification is still needed: the log does not prove the car host's
 reason for calling stop().
+
+## Video visible ~1 s, then black with audio — replaced car window (14:37 hardware test)
+
+Uploaded logcat `31_10-14-37-54_991.log` (legacy projection, the first video path):
+
+- `22.533`: the WebView is already attached to a car `ViewRootImpl` on display 620;
+  VP9 decoder `#449` started at `21.1`.
+- `23.580–23.702`: Android Auto hands over a **new Surface** and the car activity
+  is set up again on the **same display**: `PPUIHOST setup(spec)` ×2, a new
+  Presentation, our `onStart` (`MediaBrowserCompat: Connecting`),
+  `CSL.MenuController onRestoreInstanceState`, `show()`, then a new window
+  `VRI[LegacyProjectionActivity]#4`.
+- The decoder is never released until `34.950` (`onStop → WebHost.detach`), and
+  audio keeps playing. Because the display ID is unchanged, `PlayerDisplayPolicy`
+  kept the renderer and the live WebView was simply **moved into the replacement
+  window**. That is the screen that stays black.
+- The video stays at 256×144 for the whole session: background "tiny" quality. Every
+  instance used the same `"legacy-projection"` owner key, so the old instance's
+  `onStop/onDestroy` could clear the new instance's projection (`carShown=false`,
+  car layout off, `setBg(true)`) and bump `webVersion` under it.
+- Three host `stop()` calls at the end (`35.014`, `35.270` ×2) suggest the old
+  and new car instances were both still alive.
+
+AABrowser never moves a live WebView: each `MainCarActivity` window creates its
+own WebView in its Compose factory and destroys it with the window.
+
+**Correction**
+
+- `LegacyProjectionActivity` has a per-instance owner token. `WebHost` keeps a
+  `CarHostRegistry`: the latest claimed (`onCreate`/`onStart`) instance is the only
+  one allowed to bind the player or show the fullscreen view. An old instance's
+  teardown releases only its own token, so the newer window keeps car layout,
+  foreground quality and the WebView (`requestReattachment` stays a no-op).
+- `WebHost.attachToCarWindow()` records the window token the renderer draws into.
+  A bind into a **different car window** (or display) builds a fresh renderer at
+  the same position and play intent (`aay=1` also when the old window's teardown
+  paused the page < 8 s earlier, unless the user paused). This matches AABrowser.
+  Re-binding inside the same window keeps the decoder.
+- The phone screen no longer reparents or rotates for YouTube's fullscreen view
+  while the car projects it. An older car input bridge no longer removes the
+  newer instance's touch listener.
+- Diagnostics: `[CAR]` lines are mirrored to logcat under tag `AAYouTube-CAR`
+  (no URLs/titles), so a plain logcat shows host claims, `Car WebView bind …
+  renderer=kept|new(window|display)` and render probes at 2/6/12 s. The probes add
+  decoded/dropped frames, current time, the real page visibility, the `aay-car`
+  class and the element painted at the screen centre.
+
+Expected on device: video, then a short reload (≈1–2 s, same position) when
+Android Auto replaces the car window, then video again. Not proven by CI: confirm on
+a parked head unit and send `adb logcat -s AAYouTube-CAR` if the screen stays black.

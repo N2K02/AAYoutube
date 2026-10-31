@@ -41,7 +41,7 @@ class LyricsVideoIdentityContractTest {
         // Compose updates the projected frame repeatedly. Preserve the
         // decoder surface when that exact WebView already belongs to it.
         assertTrue(projection.contains("if (frame.childCount != 1 || frame.getChildAt(0) !== player)"))
-        assertTrue(projection.contains("WebHost.attach(projectionContext(frame.context, frame), frame)"))
+        assertTrue(projection.contains("WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)"))
         assertTrue(projection.contains("if (!frame.isAttachedToWindow || frame.display == null) return"))
         assertTrue(projection.contains("onViewAttachedToWindow(v: View)"))
         assertTrue(projection.contains("if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)"))

@@ -244,9 +244,14 @@ fun AppRoot(activity: MainActivity) {
     val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
     val providerVersion by LyricsPrefs.providersVersion.collectAsState()
-    val fullscreen by WebHost.fullscreenView.collectAsState()
+    val fullscreenView by WebHost.fullscreenView.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
+    val projectedToCar by WebHost.carProjectionActive.collectAsState()
+    // While Android Auto projects the video, YouTube's fullscreen view belongs
+    // to the car window. A still-composed phone screen must not reparent it
+    // (car turns black) or rotate the phone for it.
+    val fullscreen = fullscreenView.takeIf { !projectedToCar || onCar }
     val snap by WebHost.snapshot.collectAsState()
     val playerMode by WebHost.mode.collectAsState()
     val flags by Features.state.collectAsState()

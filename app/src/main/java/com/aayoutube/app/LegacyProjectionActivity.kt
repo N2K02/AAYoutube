@@ -86,6 +86,33 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var lastHeight = 0
     private val refit = Runnable { WebHost.refitCarViewport() }
 
+    // Android Auto recreates this CarActivity (new Surface, restored state)
+    // while the previous instance is still alive. Each instance has its own
+    // owner token so the old one's onStop/onDestroy cannot clear the new
+    // one's projection, switch the page to background quality or steal the
+    // player back into a window that is no longer on the car screen.
+    private val carToken = "legacy-projection@" + Integer.toHexString(System.identityHashCode(this))
+    private var inactiveLogged = false
+    private val rebindWhenActive = Runnable {
+        val frame = playerContainer ?: return@Runnable
+        if (carStarted && WebHost.isActiveCarHost(carToken) && WebHost.fullscreenView.value == null)
+            bindVideoToCarFrame(frame)
+    }
+    private val onBecameActive: () -> Unit = {
+        handler.removeCallbacks(rebindWhenActive)
+        // A host shutting down several instances stops this one shortly after.
+        handler.postDelayed(rebindWhenActive, 1_200L)
+    }
+    private val renderProbe = Runnable {
+        if (carStarted && WebHost.isActiveCarHost(carToken)) WebHost.logCarRenderProbe()
+    }
+
+    /** Frames decoded vs. painted, over the first seconds of a car bind. */
+    private fun scheduleRenderProbes() {
+        handler.removeCallbacks(renderProbe)
+        longArrayOf(2_000L, 6_000L, 12_000L).forEach { handler.postDelayed(renderProbe, it) }
+    }
+
     // CarActivity uses a virtual display; Activity/application context can
     // still resolve default display 0 even when its ViewRoot uses display 323.
     private fun projectionContext(fallback: android.content.Context, frame: View? = null):
@@ -106,7 +133,16 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // create Chromium on phone display 0 and then immediately transfer its
         // GPU surface to Android Auto display 420.
         if (!frame.isAttachedToWindow || frame.display == null) return
-        val player = WebHost.attach(projectionContext(frame.context, frame), frame)
+        if (!WebHost.isActiveCarHost(carToken)) {
+            if (!inactiveLogged) AppLog.add("CAR", "Inactive car host " + carToken +
+                " keeps its hands off the player owned by " + (WebHost.activeCarHost.value ?: "none"))
+            inactiveLogged = true
+            return
+        }
+        inactiveLogged = false
+        // Never move a live renderer into a replacement car window: it decodes
+        // and plays audio but paints black. A different window gets a new one.
+        val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))
@@ -115,6 +151,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             // immediately, followed by the host stopping the projection.
             frame.isFocusableInTouchMode = true
             frame.requestFocus()
+            scheduleRenderProbes()
         }
         val display = frame.display?.displayId ?: -1
         val childDisplay = player.display?.displayId ?: -1
@@ -137,7 +174,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Legacy AABrowser projection activity created")
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
-        WebHost.showOnCar(true, "legacy-projection")
+        // The newest car activity instance is the one Android Auto shows.
+        WebHost.claimCarHost(carToken, onBecameActive)
+        WebHost.showOnCar(true, carToken)
         WebHost.prepareForCarProjection()
 
         val compose = ComposeView(this).apply {
@@ -230,6 +269,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private fun LegacyProjectionScreen() {
         val version by WebHost.webVersion.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
+        val activeHost by WebHost.activeCarHost.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
         val flags by Features.state.collectAsState()
         var controlsVisible by remember { mutableStateOf(true) }
@@ -252,13 +292,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                 override fun onViewAttachedToWindow(v: View) {
                                     AppLog.add("CAR", "Car frame attached display=" +
                                         (frame.display?.displayId ?: -1))
-                                    if (playerContainer === frame) {
-                                        bindVideoToCarFrame(frame)
-                                        handler.postDelayed({
-                                            if (carStarted && playerContainer === frame)
-                                                WebHost.logCarRenderProbe()
-                                        }, 1_800L)
-                                    }
+                                    if (playerContainer === frame) bindVideoToCarFrame(frame)
                                 }
                                 override fun onViewDetachedFromWindow(v: View) {
                                     AppLog.add("CAR", "Car frame detached")
@@ -276,10 +310,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                     }
                                     handler.removeCallbacks(refit)
                                     handler.postDelayed(refit, 180L)
-                                    handler.postDelayed({
-                                        if (carStarted && playerContainer === frame)
-                                            WebHost.logCarRenderProbe()
-                                    }, 2_000L)
+                                    scheduleRenderProbes()
                                 }
                             }
                             // First WebView creation belongs in onViewAttachedToWindow,
@@ -296,7 +327,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 )
             }
             val fullscreenView = full
-            if (fullscreenView != null) {
+            // An inactive (being replaced) car window must not take the
+            // fullscreen video view away from the window on the car screen.
+            if (fullscreenView != null && activeHost == carToken) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
@@ -359,7 +392,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
         configureLegacyCarInput()
-        WebHost.showOnCar(true, "legacy-projection")
+        WebHost.claimCarHost(carToken, onBecameActive)
+        WebHost.showOnCar(true, carToken)
         WebHost.prepareForCarProjection()
         WebHost.setHold(false)
         WebHost.requestLink = relink
@@ -376,7 +410,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         attachIfNeeded()
         handler.removeCallbacks(refit)
         handler.postDelayed(refit, 180L)
-        handler.postDelayed({ if (carStarted) WebHost.logCarRenderProbe() }, 2_000L)
+        scheduleRenderProbes()
     }
 
     private fun attachIfNeeded() {
@@ -409,15 +443,19 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lastHeight = 0
         carInput?.stop()
         carInput = null
+        // Only this instance's ownership ends here. A newer car window keeps
+        // the player, its car layout and its foreground video quality.
+        WebHost.releaseCarHost(carToken)
         playerContainer?.let { WebHost.detach(it) }
-        WebHost.showOnCar(false, "legacy-projection")
+        WebHost.showOnCar(false, carToken)
         if (WebHost.requestLink === relink) {
             WebHost.requestLink = null
             MainActivity.restorePhoneLink()
         }
         mediaController?.disconnect()
         mediaController = null
-        // A still-running phone Compose window can reclaim the existing WebView.
+        // A still-running phone Compose window can reclaim the existing WebView
+        // (no-op while another car window is still projecting it).
         WebHost.requestReattachment()
         super.onStop()
     }
@@ -429,8 +467,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             WebHost.requestLink = null
             MainActivity.restorePhoneLink()
         }
-        WebHost.showOnCar(false, "legacy-projection")
         handler.removeCallbacksAndMessages(null)
+        WebHost.releaseCarHost(carToken)
+        WebHost.showOnCar(false, carToken)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         carInput?.stop()
@@ -458,9 +497,10 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     private var active = false
 
     fun bind(web: WebView) {
-        if (target === web) return
+        if (target === web && owners[web] === this) return
         stop()
         target = web
+        owners[web] = this
         // Do not listen to WebView focus changes. Video player focus is not
         // a text-edit request. Return false to preserve swipe/playback touches.
         web.setOnTouchListener { _, event ->
@@ -497,11 +537,19 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
 
     fun stop() {
         stopInputOnly()
-        target?.setOnTouchListener(null)
+        // An old car instance stopping after a newer one bound the same
+        // WebView must not remove the newer instance's touch listener.
+        target?.let { web ->
+            if (owners[web] === this) {
+                web.setOnTouchListener(null)
+                owners.remove(web)
+            }
+        }
         target = null
     }
 
     companion object {
+        private val owners = java.util.WeakHashMap<WebView, LegacyCarInput>()
         // Traverse YouTube's shadow roots; autofocus on a video is excluded.
         // This is evaluated only after ACTION_UP, never on window/view focus.
         private val EDITABLE_FOCUS_SCRIPT = """
