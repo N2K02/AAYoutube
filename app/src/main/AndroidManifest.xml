@@ -18,9 +18,6 @@
         - ":web" process: the WebView and the app screens
         A WebView crash or freeze therefore can never take Android Auto down with it.
     -->
-    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
 
     <!-- To show the Android Auto app version on the Info page. -->
     <queries>
@@ -28,13 +25,14 @@
     </queries>
 
     <application
+        android:hardwareAccelerated="true"
         android:name=".AAYoutubeApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="AAYoutube"
         android:theme="@style/Theme.AAYoutube"
-        android:usesCleartextTraffic="false"
-        android:appCategory="game">
+        android:usesCleartextTraffic="false">
+
 
         <meta-data
             android:name="distractionOptimized"
@@ -43,7 +41,7 @@
             android:name="android.max_aspect"
             android:value="4.0" />
 
-        <!-- Tells Android Auto this is a media app -->
+        <!-- Single projected video entry for Android Auto. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -61,20 +59,11 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <!-- Android 15+: Android Auto lists this screen in the car launcher and runs it on the car display.
-                     Same markers as AABrowser: the car launcher plus the navigation-app categories, which is how
-                     Android Auto picks up a sideloaded screen app ("Unknown sources" in its developer settings). -->
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
-            <!-- Personal use: keep the screen usable on the car display while driving (sideloaded, your responsibility). -->
-            <meta-data
-                android:name="distractionOptimized"
-                android:value="true" />
             <meta-data
                 android:name="android.max_aspect"
                 android:value="5.0" />
+            <meta-data android:name="distractionOptimized" android:value="true" />
             <!-- Fill the car display (it can be very wide and short). -->
             <layout
                 android:minWidth="1dp"
@@ -82,6 +71,11 @@
                 android:gravity="fill"
                 android:defaultWidth="800dp"
                 android:defaultHeight="480dp" />
+            <!-- Android Auto voice search entry. -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- Opens YouTube links in this app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -95,20 +89,40 @@
             </intent-filter>
         </activity>
 
-        <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
-
-        <!-- Shows the YouTube page on the car screen. Lives in the web process, next to the WebView. -->
-        <service
-            android:name=".CarVideoService"
-            android:enabled="@bool/legacy_car_screen"
-            android:process=":web"
-            android:exported="true">
+        <!-- Restore the distinct Android Auto car-launcher entry that main
+             previously exposed with CAR_LAUNCHER on MainActivity. PR #22
+             removed that filter while migrating to LegacyProjectionService,
+             and the video icon stopped appearing in Customize launcher.
+             An alias gives Android Auto its own label without renaming the
+             phone's MainActivity/LAUNCHER entry. Direct activities are for
+             supported parked use; the legacy projection service remains
+             available for hosts that support that integration. -->
+        <activity-alias
+            android:name=".AutoVideoLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="AAYT Video"
+            android:targetActivity=".MainActivity">
             <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
+        <!-- Exact AABrowser legacy CarActivityService entry, backed by the pinned aauto.aar.
+             CarActivity is instantiated by the projection SDK; it is NOT a manifest Activity. -->
+        <service
+            android:name=".LegacyProjectionService"
+            android:process=":web"
+            android:enabled="true"
+            android:exported="true"
+            android:label="AAYT Video">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION" />
+                <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM" />
             </intent-filter>
         </service>
 
@@ -117,21 +131,29 @@
             android:process=":web"
             android:exported="false" />
 
-        <!-- Media session for the notification, lock screen and Bluetooth. No Android Auto media player
-             (no MediaBrowserService filter): Android Auto hides an app's screen when it has one, so it
-             shows AAYoutube's full screen with the video (CAR_LAUNCHER, above) instead. -->
-        <service
-            android:name=".PlaybackService"
-            android:exported="true"
+        <!-- Independent Android Auto MUSIC entry. The native MediaBrowserServiceCompat
+             renders the host-owned playback template; it never creates or moves
+             the video WebView owned by the legacy car projection. -->
+        <service android:name=".PlaybackService" android:exported="true"
+            android:label="AAYT Music"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
-                <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 
-        <!-- Enables media-button delivery and Media3 playback resumption after service recreation -->
+        <!-- Car media-card click should stay inside Android Auto's music UI,
+             not steal focus from the independent WebView video projection. -->
+        <activity android:name=".NoOpMediaActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- MediaCompat media-button delivery -->
         <receiver
-            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />

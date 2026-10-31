@@ -1,22 +1,23 @@
 package com.aayoutube.app
 
 import java.io.File
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Phone Settings, car menu and About & updates use the same updater state. */
+/** Updates are badged in the persistent Settings shortcut and on the Update row. */
 class UpdateBadgeContractTest {
-    @Test fun settingsAndAboutUpdatesShowBadgeWithoutDuplicateNavigation() {
+    @Test fun headerAndSettingsShareUpdaterStatus() {
         val path = "app/src/main/java/com/aayoutube/app/Screens.kt"
         val src = listOf(File(path), File("../$path"))
             .firstOrNull { it.isFile }?.readText() ?: error("Missing $path")
-        val phoneMenu = src.substringAfter("if (menuOpen) {")
-            .substringBefore("Spacer(Modifier.height(24.dp))")
-        assertTrue(phoneMenu.contains("if (item == Tab.Settings)"))
-        assertFalse(phoneMenu.contains("if (item == Tab.Update)"))
-        assertTrue(phoneMenu.contains("N2K02UpdateBadge(sharedUpdateStatus)"))
-        assertTrue(src.contains("badge = t == Tab.Settings && updateAvailable"))
+        val header = src.substringAfter("private fun AAYoutubePageHeader(")
+            .substringBefore("fun AppRoot(")
+        assertTrue(header.contains("Box(modifier = Modifier.size(width = 56.dp, height = 48.dp))"))
+        assertTrue(header.contains("modifier = Modifier.align(Alignment.CenterStart).size(40.dp)"))
+        assertTrue(header.contains("modifier = Modifier.size(20.dp)"))
+        assertTrue(header.contains("N2K02UpdateBadge("))
+        assertTrue(header.contains("modifier = Modifier.align(Alignment.TopEnd)"))
+        assertTrue(!header.contains("N2K02UpdateBadgedIcon(updateStatus)"))
         val settings = src.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
         assertTrue(settings.contains("if (destination == Tab.Update)"))

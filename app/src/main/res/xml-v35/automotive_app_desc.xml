@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 15+: same as AABrowser. The car screen is the CAR_LAUNCHER activity; the drawing-surface
-     car service (template) is only used on Android 14 and older. -->
-<automotiveApp>
+<automotiveApp xmlns:tools="http://schemas.android.com/tools">
+    <!-- One true video projection and one distinct native music media player. -->
+    <uses name="service" tools:ignore="InvalidUsesTagAttribute" />
+    <uses name="projection" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="media" />
 </automotiveApp>

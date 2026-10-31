@@ -2,7 +2,6 @@ package com.aayoutube.app
 
 import android.os.Bundle
 import android.os.SystemClock
-import androidx.media3.session.SessionCommand
 
 /**
  * Messages between the two processes.
@@ -27,17 +26,21 @@ object Msg {
     const val STOP = 10
     const val FREEZE = 11
     const val QUIT = 12      // Exit pressed: close the screen too
+    const val SYNC = 13      // Ask whether the page survived an IPC reconnect
 
     // web process -> media process
     const val STATE = 101
+    const val QUIT_ACK = 102  // web process confirms quit command received
+    const val REGISTER_ACK = 103  // web process confirms the session message channel is ready
+    const val PLAYER_MISSING = 104  // the shared WebView is absent
+    const val RENDERER_GONE = 105  // previous playback intent before renderer replacement
 }
 
 /** Custom commands on the media session (app -> service, and notification buttons). */
 object Commands {
-    /** Sent by the app screen when it connects, so the service links up with the web process. */
-    val HELLO = SessionCommand("com.aayoutube.app.HELLO", Bundle.EMPTY)
-    val FAVOURITE = SessionCommand("com.aayoutube.app.FAVOURITE", Bundle.EMPTY)
-    val EXIT = SessionCommand("com.aayoutube.app.EXIT", Bundle.EMPTY)
+    const val HELLO = "com.aayoutube.app.HELLO"
+    const val FAVOURITE = "com.aayoutube.app.FAVOURITE"
+    const val EXIT = "com.aayoutube.app.EXIT"
 }
 
 /** One entry of the queue shown in Android Auto (playlist, Mix, or Up next). */
@@ -109,7 +112,9 @@ data class Snap(
                     val ids = b.getStringArrayList("qid").orEmpty()
                     val ts = b.getStringArrayList("qt").orEmpty()
                     val ars = b.getStringArrayList("qa").orEmpty()
-                    ids.indices.map { i -> QItem(ids[i], ts.getOrElse(i) { "" }, ars.getOrElse(i) { "" }) }
+                    ids.indices.take(40).map { i ->
+                        QItem(ids[i], ts.getOrElse(i) { "" }, ars.getOrElse(i) { "" })
+                    }
                 },
             )
         }

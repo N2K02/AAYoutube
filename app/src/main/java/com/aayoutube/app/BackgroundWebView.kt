@@ -5,21 +5,25 @@ import android.view.View
 import android.webkit.WebView
 
 /**
- * A WebView that does not tell the browser engine when its window is hidden.
+ * Match AABrowser's primary WebView behavior: Android Auto and phone/launcher
+ * lifecycle transitions must not pause the Chromium renderer or hide its
+ * window. Playback controls still pause the actual HTML video on user request.
  *
- * When the app goes to the background, Android marks the window as gone and the WebView
- * passes that on to Chromium, which pauses media below anything the page script can stop.
- * Reporting "visible" keeps the video (and its sound) playing; nothing is drawn while the
- * window is hidden, so this costs no rendering work.
- * Known workaround: https://github.com/react-native-webview/react-native-webview/issues/1570
+ * WebHost may explicitly freeze an idle page via pauseForIdle(), and destroys
+ * the entire WebView during Quit. These are different from Android calling
+ * onPause() as the projected window changes focus.
  */
 class BackgroundWebView(context: Context) : WebView(context) {
-    override fun onWindowVisibilityChanged(visibility: Int) {
-        if (visibility != View.VISIBLE && Features.current.backgroundPlay) {
-            AppLog.add("VIEW", "Window hidden ($visibility): keeping the page visible for background play")
-            super.onWindowVisibilityChanged(View.VISIBLE)
-        } else {
-            super.onWindowVisibilityChanged(visibility)
-        }
+    override fun onPause() {
+        // AABrowser's deliberate no-op, independent of projection/playing flags.
     }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        // AABrowser always tells Chromium its primary WebView remains visible.
+        super.onWindowVisibilityChanged(View.VISIBLE)
+        if (visibility == View.VISIBLE) invalidate()
+    }
+
+    /** Explicit idle cleanup is the only caller allowed to pause this WebView. */
+    fun pauseForIdle() = super.onPause()
 }

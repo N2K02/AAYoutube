@@ -13,8 +13,47 @@
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
+  // The secondary browse WebView is never allowed competing audible playback.
+  if (BROWSE) {
+    try {
+      var browsePlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () {
+        this.muted = true;
+        return browsePlay.apply(this, arguments);
+      };
+      document.addEventListener('playing', function (event) {
+        if (event.target && event.target instanceof HTMLMediaElement)
+          event.target.muted = true;
+      }, true);
+    } catch (e) {}
+  }
   var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
+  // YouTube provides a real login flag in its page configuration. Generic Google
+  // cookies and avatar placeholders are not proof that YouTube is signed in.
+  var lastAccountReport = '';
+  function reportAccount() {
+    if (BROWSE || !N || typeof N.account !== 'function') return;
+    try {
+      var cfg = window.ytcfg;
+      if (!cfg) return;
+      var signedIn = typeof cfg.get === 'function' ? cfg.get('LOGGED_IN') : undefined;
+      if (typeof signedIn !== 'boolean' && cfg.data_)
+        signedIn = cfg.data_.LOGGED_IN;
+      if (typeof signedIn !== 'boolean') return;
+      var status = signedIn ? 'signed_in' : 'signed_out';
+      if (status !== lastAccountReport) {
+        lastAccountReport = status;
+        N.account(status);
+      }
+    } catch (e) {}
+  }
+  A.checkAccount = reportAccount;
+  if (!BROWSE) {
+    window.addEventListener('yt-navigate-finish', reportAccount);
+    window.addEventListener('pageshow', reportAccount);
+    setInterval(reportAccount, 5000);
+  }
 
   function later(fn, ms) { return setTimeout(function () { try { fn(); } catch (e) {} }, ms || 0); }
 
@@ -143,8 +182,8 @@
       try { if (p && p.unMute) p.unMute(); } catch (e) {}
       try { if (p && p.setVolume && p.getVolume && p.getVolume() === 0) p.setVolume(100); } catch (e) {}
       v.muted = false;
-      var b = document.querySelector('.ytp-unmute, .ytmUnmuteButton, ytm-unmute-button button, button[class*="unmute" i]');
-      if (b && b.offsetParent !== null) { try { b.click(); } catch (e) {} }
+      // The temporary muted-autoplay overlay is hidden by CSS. Never click it
+      // programmatically: a second click could mute the playing video again.
       console.log('[aay] unmuted the video (YouTube started it muted)');
     };
     ['volumechange', 'play', 'playing', 'loadedmetadata'].forEach(function (type) {
@@ -164,29 +203,68 @@
     } catch (e) {}
   }
 
-  /* ---------- 1e. Swipe down on the playing video: mini player, keep browsing ---------- */
-  try {
-    if (!BROWSE) {
-      var sw = null;
-      document.addEventListener('touchstart', function (e) {
-        sw = null;
-        if (e.touches.length !== 1 || A.inPip || A.isMini || document.fullscreenElement) return;
-        if (!/^\/(watch|live\/)/.test(location.pathname)) return;
-        var t = e.target;
-        if (!t || !t.closest || !t.closest('.html5-video-player,#player-container-id,#player')) return;
-        sw = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
-      }, { capture: true, passive: true });
-      document.addEventListener('touchend', function (e) {
-        if (!sw) return;
-        var c = e.changedTouches[0], dx = c.clientX - sw.x, dy = c.clientY - sw.y, dt = Date.now() - sw.t;
-        sw = null;
-        if (dy > 90 && Math.abs(dx) < dy / 2 && dt < 900) {
-          console.log('[aay] swipe down on the video: mini player');
-          try { N && N.mini(); } catch (x) {}
-        }
-      }, { capture: true, passive: true });
-    }
-  } catch (e) {}
+  /* ---------- 1e. Swipe down on the video to enter the in-app mini player ---------- */
+  // Listen at capture phase: YouTube can stop propagation and replace its player DOM.
+  if (!BROWSE) {
+    var swipeStart = null;
+    document.addEventListener('touchstart', function(e) {
+      swipeStart = null;
+      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar ||
+          document.fullscreenElement || document.webkitFullscreenElement) return;
+      if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+      var target = e.target;
+      if (!target || !target.closest) return;
+      var player = target.closest('.html5-video-player,#player-container-id,#player,' +
+        'ytm-player,ytm-watch-player,ytm-player-component,video');
+      if (!player) return;
+      swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
+    }, { capture: true, passive: true });
+    document.addEventListener('touchend', function(e) {
+      var start = swipeStart;
+      swipeStart = null;
+      if (!start || !e.changedTouches.length) return;
+      var dx = e.changedTouches[0].clientX - start.x;
+      var dy = e.changedTouches[0].clientY - start.y;
+      if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+      console.log('[aay] player swipe down -> mini');
+      try { if (window.AAYNative) window.AAYNative.mini(); }
+      catch (err) { console.warn('[aay] mini bridge failed', err); }
+    }, { capture: true, passive: true });
+    document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
+  }
+
+  /* ---------- 1g. AABrowser-style tap-to-seek for Android Auto ---------- */
+  // The Car App Library surface exposes taps, not horizontal scrubbing gestures.
+  // A tap within a visible YouTube progress bar seeks without altering other controls.
+  if (!BROWSE) {
+    var seekTap = null;
+    window.addEventListener('pointerdown', function (e) {
+      seekTap = e.isPrimary && A.isCar && /^\/(watch|live\/)/.test(location.pathname) ?
+        { id: e.pointerId, x: e.clientX, y: e.clientY, target: e.target } : null;
+    }, true);
+    window.addEventListener('pointermove', function (e) {
+      if (seekTap && e.pointerId === seekTap.id &&
+          Math.hypot(e.clientX - seekTap.x, e.clientY - seekTap.y) > 12) seekTap = null;
+    }, true);
+    window.addEventListener('pointercancel', function () { seekTap = null; }, true);
+    window.addEventListener('pointerup', function (e) {
+      var t = seekTap; seekTap = null;
+      if (!t || t.id !== e.pointerId || !A.isCar || isAd()) return;
+      var bar = document.querySelector('.ytPlayerProgressBarDragContainer,.ytp-progress-bar-container,.ytp-progress-bar');
+      if (!bar || getComputedStyle(bar).visibility !== 'visible') return;
+      var rect = bar.getBoundingClientRect();
+      if (rect.width <= 0 || t.x < rect.left || t.x > rect.right || t.y < rect.top || t.y > rect.bottom) return;
+      var el = t.target;
+      if (el && el.closest && !bar.contains(el) && el.closest('button,a,[role="button"]')) return;
+      var v = getVideo();
+      if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+      var fraction = Math.max(0, Math.min(1,
+        (getComputedStyle(bar).direction === 'rtl' ? rect.right - t.x : t.x - rect.left) / rect.width));
+      v.currentTime = fraction * v.duration;
+      console.log('[aay] car progress tap seeks to ' + Math.round(v.currentTime) + 's');
+      schedReport(120);
+    }, true);
+  }
 
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
@@ -311,22 +389,47 @@
   var CSS_PROMO =
     'ytm-mealbar-promo-renderer,ytm-upsell-dialog-renderer,ytm-app-promo-renderer,ytd-mealbar-promo-renderer,' +
     'ytd-popup-container ytd-mealbar-promo-renderer{display:none!important}';
+  // Hide YouTube's mobile Open App promotion without hiding the search or account controls.
+  var CSS_OPEN_APP =
+    'ytm-open-app-button,ytm-open-app-button-renderer,ytm-app-button-renderer,' +
+    'ytm-mobile-topbar-renderer a[href*="intent://"],' +
+    'ytm-mobile-topbar-renderer a[href*="market://"],' +
+    'ytm-mobile-topbar-renderer a[aria-label="Open App"],' +
+    'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}';
+  // A real 16:9 WebView viewport, not a scaled graphics layer, shows the
+  // small and PiP video. Do NOT hide every ancestor with visibility:hidden:
+  // Chromium's accelerated video surface may disappear even if <video> is visible.
   var CSS_PIP =
-    'html.aay-pip,html.aay-pip body{background:#000!important;overflow:hidden!important}' +
-    'html.aay-pip body *{visibility:hidden!important}' +
-    'html.aay-pip .html5-video-player,html.aay-pip .html5-video-player *{visibility:visible!important}' +
-    'html.aay-pip .html5-video-player{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483647!important;margin:0!important}' +
-    'html.aay-pip .html5-video-container{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483646!important}' +
-    'html.aay-pip video{position:fixed!important;top:0!important;left:0!important;width:100vw!important;' +
-    'height:100vh!important;max-width:none!important;max-height:none!important;object-fit:contain!important;' +
-    'transform:none!important;z-index:2147483647!important}' +
-    'html.aay-pip .ytp-chrome-top,html.aay-pip .ytp-chrome-bottom,html.aay-pip .ytp-gradient-top,' +
-    'html.aay-pip .ytp-gradient-bottom,html.aay-pip .ytp-pause-overlay,html.aay-pip .ytp-ce-element,' +
-    'html.aay-pip .ytp-cards-teaser,html.aay-pip .ytp-endscreen-content{display:none!important}' +
-    'html.aay-fit:not(.aay-pip) video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
-    'height:100%!important;object-fit:contain!important}';
+    'html.aay-video-only,html.aay-video-only body{background:#000!important;overflow:hidden!important;' +
+    'width:100%!important;height:100%!important;margin:0!important;padding:0!important}' +
+    'html.aay-video-only #player-container-id,html.aay-video-only .player-container,' +
+    'html.aay-video-only #player-container,html.aay-video-only ytm-watch-player,' +
+    'html.aay-video-only ytm-player,html.aay-video-only ytm-player-component,' +
+    'html.aay-video-only ytm-player-container,html.aay-video-only .player-size{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;min-height:0!important;' +
+    'margin:0!important;padding:0!important;transform:none!important;' +
+    'background:#000!important;z-index:2147483000!important}' +
+    'html.aay-video-only #player,html.aay-video-only #movie_player,' +
+    'html.aay-video-only .html5-video-player,html.aay-video-only .html5-video-container{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;transform:none!important;' +
+    'margin:0!important;padding:0!important;z-index:2147483001!important}' +
+    'html.aay-video-only video.html5-main-video{' +
+    'position:absolute!important;inset:0!important;width:100%!important;height:100%!important;' +
+    'max-width:none!important;max-height:none!important;object-fit:contain!important;' +
+    'transform:none!important;visibility:visible!important;z-index:2147483002!important}' +
+    'html.aay-video-only .ytp-chrome-top,html.aay-video-only .ytp-chrome-bottom,' +
+    'html.aay-video-only .ytp-gradient-top,html.aay-video-only .ytp-gradient-bottom,' +
+    'html.aay-video-only .ytp-pause-overlay,html.aay-video-only .ytp-ce-element,' +
+    'html.aay-video-only .ytp-cards-teaser,html.aay-video-only .ytp-endscreen-content{' +
+    'display:none!important}' +
+    'html.aay-fit:not(.aay-video-only) video.html5-main-video{left:0!important;top:0!important;' +
+    'width:100%!important;height:100%!important;object-fit:contain!important}';
+  // Suppress only the muted-autoplay prompt, not normal player volume controls.
+  var CSS_UNMUTE =
+    '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
+    '[class*="tap-to-unmute" i],[class*="unmute-overlay" i]{display:none!important}';
   // Car screen (wide and short): the player, with YouTube's own controls, fills the whole screen,
   // like the YouTube app held sideways. The rest of the page is under it (back = mini player).
   var CSS_CAR =
@@ -343,11 +446,40 @@
     'html.aay-car video.html5-main-video{left:0!important;top:0!important;width:100%!important;' +
     'height:100%!important;object-fit:contain!important}' +
     'html.aay-car #player-control-container{position:fixed!important;top:0!important;left:0!important;' +
-    'width:100vw!important;height:100vh!important;z-index:2147483001!important}';
+    'width:100vw!important;height:100vh!important;z-index:2147483001!important}' +
+    // YouTube mobile watch pages use ytm-player and ytm-watch-player wrappers. Without
+    // these selectors the player remains at its original short mobile height, leaving
+    // the title/queue panel visible below it on wide Android Auto screens.
+    'html.aay-car ytm-watch-player,html.aay-car ytm-player,html.aay-car ytm-player-component,' +
+    'html.aay-car ytm-watch-player-component,html.aay-car ytm-player-container,' +
+    'html.aay-car .player-size,html.aay-car .player-placeholder{' +
+    'position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;' +
+    'max-width:none!important;max-height:none!important;min-height:0!important;' +
+    'margin:0!important;padding:0!important;aspect-ratio:auto!important;' +
+    'transform:none!important;background:#000!important;z-index:2147483000!important}' +
+    'html.aay-car ytm-watch,html.aay-car ytm-watch-flexy{' +
+    'overflow:hidden!important}' +
+    'html.aay-car ytm-watch-metadata,html.aay-car ytm-watch-next-feed,' +
+    'html.aay-car ytm-item-section-renderer,html.aay-car ytm-playlist-panel-renderer{' +
+    'visibility:hidden!important}';
+  // The rules above turn every player-like wrapper into a full-screen black box at the
+  // same z-index. A wrapper WITHOUT the video (m.youtube.com spacers such as
+  // .player-placeholder/.player-size come after the player in the DOM) then paints over
+  // the video: Android Auto showed black while the video decoded and played audio.
+  // carGuard() marks those wrappers; the :not(#id) chain outranks the #id rules above.
+  var CSS_CAR_GUARD =
+    'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;' +
+    'background:transparent!important;visibility:hidden!important;width:0!important;height:0!important;' +
+    'min-height:0!important;overflow:hidden!important;pointer-events:none!important}' +
+    'html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){background:transparent!important}' +
+    'html.aay-car .aay-car-chain:not(#aay-x):not(#aay-y),' +
+    'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;
+    // Hide promos must control the app-install banners as well as upsell dialogs.
+    if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
@@ -387,28 +519,50 @@
 
   /* ---------- 4. Media session: title, artwork and next/previous from YouTube itself ---------- */
   var curMeta = null;
+  // AABrowser's WebView compatibility technique: Android WebView may not expose the
+  // Media Session API at all. Supply a minimal implementation before YouTube loads,
+  // so artist, artwork and playlist transport actions are still reported to MediaCompat.
   try {
+    if (!navigator.mediaSession) {
+      var virtualSession = {
+        metadata: null, playbackState: 'none',
+        setActionHandler: function () {}, setPositionState: function () {}
+      };
+      Object.defineProperty(navigator, 'mediaSession', {
+        configurable: true, get: function () { return virtualSession; }
+      });
+      if (!window.MediaMetadata) {
+        window.MediaMetadata = function (values) {
+          values = values || {};
+          this.title = values.title || '';
+          this.artist = values.artist || '';
+          this.album = values.album || '';
+          this.artwork = values.artwork || [];
+        };
+      }
+    }
     var ms = navigator.mediaSession;
     if (ms) {
-      var desc = Object.getOwnPropertyDescriptor(MediaSession.prototype, 'metadata');
-      if (desc && desc.set) {
-        Object.defineProperty(ms, 'metadata', {
-          configurable: true,
-          get: function () { return curMeta; },
-          set: function (m) {
-            curMeta = m;
-            try { desc.set.call(ms, m); } catch (e) {}
-            schedReport(150);
-          }
-        });
-      }
-      var origSet = ms.setActionHandler.bind(ms);
+      var realProto = typeof MediaSession !== 'undefined' ? MediaSession.prototype : null;
+      var desc = realProto && Object.getOwnPropertyDescriptor(realProto, 'metadata');
+      curMeta = ms.metadata || null;
+      Object.defineProperty(ms, 'metadata', {
+        configurable: true,
+        get: function () { return curMeta; },
+        set: function (m) {
+          curMeta = m;
+          try { if (desc && desc.set) desc.set.call(ms, m); } catch (e) {}
+          schedReport(150);
+        }
+      });
+      var origSet = ms.setActionHandler && ms.setActionHandler.bind(ms);
       ms.setActionHandler = function (action, handler) {
-        H[action] = handler;
-        try { return origSet(action, handler); } catch (e) {}
+        if (typeof handler === 'function') H[action] = handler;
+        else delete H[action];
+        try { if (origSet) return origSet(action, handler); } catch (e) {}
       };
     }
-  } catch (e) {}
+  } catch (e) { console.log('[aay] media session compatibility: ' + e); }
 
   /* ---------- 5. Reporting what the video is doing to the app ---------- */
   var lastId = '';
@@ -504,7 +658,7 @@
   }
 
   /* ---------- 6. SponsorBlock ---------- */
-  var sb = { id: '', segs: [] };
+  var sb = { id: '', segs: [], request: 0 };
   function sha256hex(s) {
     return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(function (buf) {
       return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
@@ -513,12 +667,15 @@
   function sbLoad(id) {
     if (!CFG.sponsorBlock || !id || sb.id === id) return;
     sb.id = id; sb.segs = [];
+    var request = ++sb.request;
     var cats = CFG.sbExtra ? ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro'] : ['sponsor', 'selfpromo', 'interaction'];
     sha256hex(id).then(function (h) {
       return fetch('https://sponsor.ajay.app/api/skipSegments/' + h.slice(0, 4) +
         '?categories=' + encodeURIComponent(JSON.stringify(cats)) +
         '&actionTypes=' + encodeURIComponent('["skip"]'));
     }).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+      // Ignore results for an earlier video or a previous category selection.
+      if (request !== sb.request || sb.id !== id || !CFG.sponsorBlock) return;
       for (var i = 0; i < list.length; i++) {
         if (list[i].videoID === id) {
           sb.segs = list[i].segments.map(function (s) { return { a: s.segment[0], b: s.segment[1] }; });
@@ -536,7 +693,7 @@
   }
 
   /* ---------- 7. Return YouTube Dislike (best effort: depends on the page layout) ---------- */
-  var ryd = { id: '', txt: '' };
+  var ryd = { id: '', txt: '', request: 0 };
   function fmt(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
     if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
@@ -546,9 +703,13 @@
   function rydLoad(id) {
     if (!CFG.returnDislike || !id || ryd.id === id) return;
     ryd.id = id; ryd.txt = '';
+    var request = ++ryd.request;
     fetch('https://returnyoutubedislikeapi.com/votes?videoId=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) { if (j && typeof j.dislikes === 'number') { ryd.txt = fmt(j.dislikes); rydApply(); } })
+      .then(function (j) {
+        if (request !== ryd.request || ryd.id !== id || !CFG.returnDislike) return;
+        if (j && typeof j.dislikes === 'number') { ryd.txt = fmt(j.dislikes); rydApply(); }
+      })
       .catch(function () {});
   }
   function rydApply() {
@@ -568,7 +729,15 @@
   /* ---------- 8. Ads that still get through: skip them, then restore the video ---------- */
   var adSped = false, saved = { rate: 1, muted: false };
   function skipAd() {
-    if (!CFG.blockAds) return;
+    if (!CFG.blockAds) {
+      // If the user switches blocking off mid-ad, restore playback speed and mute.
+      if (adSped) {
+        adSped = false;
+        var current = getVideo();
+        if (current) { current.playbackRate = saved.rate; current.muted = saved.muted; }
+      }
+      return;
+    }
     var p = document.querySelector('.html5-video-player');
     var v = getVideo();
     if (!p || !v) return;
@@ -655,11 +824,24 @@
     });
     v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
     v.addEventListener('loadedmetadata', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } onLoaded(v); schedReport(120); }, true);
-    v.addEventListener('timeupdate', function () { sbTick(v); }, true);
+    var lastProgressReportAt = 0;
+    v.addEventListener('timeupdate', function () {
+      sbTick(v);
+      // This also notices a new video playing in an existing element (Mix/Autoplay)
+      // without waiting for the 30-second heartbeat. Limit cross-process traffic.
+      var now = Date.now();
+      if (now - lastProgressReportAt > 1400) {
+        lastProgressReportAt = now;
+        schedReport(0);
+      }
+    }, true);
     // Ads are detected from the player's class, not by polling.
     var p = document.querySelector('.html5-video-player');
     if (p) new MutationObserver(function () { skipAd(); }).observe(p, { attributes: true, attributeFilter: ['class'] });
     if (v.readyState >= 1) onLoaded(v);
+    // If the script attaches after YouTube's initial play event, report immediately rather
+    // than waiting for the 30-second heartbeat. The media service needs the active state.
+    schedReport(120);
   }
 
   function openFirstResult() {
@@ -685,6 +867,7 @@
       rydApply();
       openFirstResult();
       carLayout();
+      reportAccount();
     } catch (e) {}
   }
   function schedTick() { if (!tickTimer) tickTimer = setTimeout(tick, 300); }
@@ -698,7 +881,34 @@
   setInterval(function () {
     var v = getVideo();
     if (v && !v.paused) schedReport(0);
-  }, 30000);
+  }, 10000);
+  // Route changes can replace the video without raising loadedmetadata.
+  window.addEventListener('yt-navigate-finish', function () { schedReport(0); });
+
+  /* ---------- 9b. Timed lyrics: use real HTMLVideoElement.currentTime ---------- */
+  // Media-session snapshots are infrequent. A dedicated clock is necessary for
+  // seeking, buffering and playback rate changes while lyrics are actually visible.
+  // Never run this polling loop for the mini-browser or a hidden/plain-text panel.
+  var lyricClockTimer = 0;
+  function sendLyricClock() {
+    if (!lyricClockTimer || BROWSE || !N || typeof N.lyricsTime !== 'function') return;
+    var v = getVideo();
+    var pv = playerVideo();
+    var id = (pv && pv.video_id) || urlId();
+    if (!v || !id || !isFinite(v.currentTime) || isAd()) return;
+    N.lyricsTime(id, v.currentTime, !v.paused && !v.ended,
+      v.readyState < 3, v.playbackRate || 1);
+  }
+  A.lyricsSync = function (on) {
+    if (BROWSE) return;
+    if (!on) {
+      if (lyricClockTimer) { clearInterval(lyricClockTimer); lyricClockTimer = 0; }
+      return;
+    }
+    if (lyricClockTimer) return;
+    lyricClockTimer = setInterval(sendLyricClock, 250);
+    sendLyricClock();
+  };
 
   /* ---------- 10. Commands from the app ---------- */
   function next() {
@@ -728,8 +938,25 @@
   };
 
   A.config = function (c) {
+    var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
+    if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
+      sb.request++;
+      sb.id = ''; sb.segs = [];
+      if (CFG.sponsorBlock) sbLoad(urlId());
+    }
+    if (oldDislike !== CFG.returnDislike) {
+      ryd.request++;
+      ryd.id = ''; ryd.txt = '';
+      if (!CFG.returnDislike) {
+        document.querySelectorAll('.aay-ryd').forEach(function (tag) { tag.remove(); });
+      } else {
+        rydLoad(urlId());
+      }
+    }
+    if (A.isBg) A.setBg(true);
+    skipAd();
     schedTick();
   };
 
@@ -796,25 +1023,92 @@
   function liftAncestors(v, on) { lifted = lift(lifted, v, on); }
 
   // Car screen: the video fills the screen on a watch page (not in the mini player).
-  var carOn = false, carBox = null, carLifted = [];
+  var carOn = false, carBox = null, carLifted = [], carVideo = null, carGuarded = -1;
   function playerBox() {
     return document.getElementById('player-container-id') || document.querySelector('.player-container') ||
       document.getElementById('player-container') || document.getElementById('movie_player');
   }
+  // Same wrappers the car CSS makes full-screen black boxes.
+  var CAR_WRAPPERS = '#player-container-id,.player-container,#player-container,ytm-watch-player,' +
+    'ytm-player,ytm-player-component,ytm-watch-player-component,ytm-player-container,' +
+    '.player-size,.player-placeholder';
+  function mark(el, name, on) {
+    if (!el || !el.classList || el.classList.contains(name) === !!on) return;
+    el.classList.toggle(name, !!on);
+  }
+  function unmarkAll(name) {
+    var list = document.querySelectorAll('.' + name);
+    for (var i = 0; i < list.length; i++) mark(list[i], name, false);
+  }
+  // Only wrappers that contain the video stay black full-screen boxes. One holding just
+  // YouTube's controls loses its background; one holding neither is hidden.
+  function carGuard(v) {
+    if (!v) {
+      unmarkAll('aay-car-off'); unmarkAll('aay-car-clear'); unmarkAll('aay-car-chain');
+      return 0;
+    }
+    var chain = [];
+    for (var el = v.parentElement; el && el !== document.body && el !== document.documentElement; el = el.parentElement)
+      chain.push(el);
+    var old = document.querySelectorAll('.aay-car-chain');
+    for (var i = 0; i < old.length; i++) if (chain.indexOf(old[i]) < 0) mark(old[i], 'aay-car-chain', false);
+    chain.forEach(function (c) { mark(c, 'aay-car-chain', true); });
+    var ctl = document.getElementById('player-control-container');
+    var list = document.querySelectorAll(CAR_WRAPPERS), off = 0;
+    for (var j = 0; j < list.length; j++) {
+      var w = list[j];
+      var hasVideo = w.contains(v), hasControls = !!(ctl && w !== ctl && w.contains(ctl));
+      mark(w, 'aay-car-off', !hasVideo && !hasControls);
+      mark(w, 'aay-car-clear', !hasVideo && hasControls);
+      if (!hasVideo) off++;
+    }
+    return off;
+  }
   function carLayout() {
     var on = !!A.isCar && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
-    if (on === carOn && box === carBox) return;
+    var v = on ? getVideo() : null;
+    var guarded;
+    if (on === carOn && box === carBox && v === carVideo) {
+      // YouTube adds wrappers after the player: guard them on every DOM change.
+      guarded = carGuard(on ? v : null);
+      if (on && guarded !== carGuarded) {
+        carGuarded = guarded;
+        console.log('[aay] car guard: ' + guarded + ' wrapper(s) without the video neutralised');
+      }
+      return;
+    }
     var changed = on !== carOn;
-    carOn = on; carBox = box;
+    carOn = on; carBox = box; carVideo = v;
     carLifted = lift(carLifted, box, on);
     if (document.documentElement) document.documentElement.classList.toggle('aay-car', on);
+    guarded = carGuard(on ? v : null);
+    if (on && guarded !== carGuarded) {
+      carGuarded = guarded;
+      console.log('[aay] car guard: ' + guarded + ' wrapper(s) without the video neutralised');
+    }
     if (changed) {
       console.log('[aay] car screen: video fills the screen=' + on);
       fixLayout();
     }
   }
   A.car = function (on) { A.isCar = !!on; carLayout(); };
+  // Reflow against measured car dimensions after transferring a mini WebView.
+  A.refitCar = function () {
+    if (!A.isCar || BROWSE) return;
+    if (A.isMini) A.mini(false);
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+    try { if (p && p.setSize) p.setSize(); } catch (e) {}
+    var v = getVideo();
+    if (v) {
+      var r = v.getBoundingClientRect();
+      console.log('[aay] car viewport=' + window.innerWidth + 'x' + window.innerHeight +
+        ' video=' + Math.round(r.width) + 'x' + Math.round(r.height));
+    }
+  };
 
   // After the small layout ends, YouTube keeps the small video size it measured (black border
   // around a small picture). Tell it the size changed a few times while the window grows back,
@@ -841,14 +1135,26 @@
   function smallLayout() {
     var on = !!(A.inPip || A.isMini);
     liftAncestors(getVideo(), on);
-    document.documentElement.classList.toggle('aay-pip', on);
-    if (!on) fixLayout();
+    document.documentElement.classList.toggle('aay-video-only', on);
+    document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
+    document.documentElement.classList.toggle('aay-pip', !!A.inPip);
+    // Clear YouTube's cached video dimensions when Android resizes into PiP.
+    if (on) {
+      document.documentElement.classList.remove('aay-fit');
+      // Recalculate YouTube's internal player size after native WebView resizes.
+      [0, 150, 450].forEach(function (ms) { later(function () {
+        var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+        try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+        window.dispatchEvent(new Event('resize'));
+      }, ms); });
+    } else fixLayout();
   }
 
   A.mini = function (on) {
     A.isMini = !!on;
     smallLayout();
     carLayout();
+    A.setBg(A.isBg);
     window.dispatchEvent(new Event('resize'));
   };
 
@@ -863,6 +1169,7 @@
       pipTimer = setInterval(pipCheck, 2000);
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
+    A.setBg(A.isBg);
     window.dispatchEvent(new Event('resize'));
   };
 
@@ -873,11 +1180,11 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p || !p.setPlaybackQualityRange) return;
     try {
-      if (on && CFG.lowQuality && !lowered) {
+      if (on && !A.inPip && !A.isMini && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
         lowered = true;
         console.log('[aay] background: lowest video quality');
         p.setPlaybackQualityRange('tiny', 'tiny');
-      } else if (!on && lowered) {
+      } else if ((!on || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
         // Only undo our own change; a quality the user picked in the player is left alone.
         lowered = false;
         console.log('[aay] foreground: video quality back to automatic');
@@ -886,50 +1193,4 @@
     } catch (e) {}
   };
 
-  // AAYoutube entry lives in YouTube's actual HTML bottom navigation, not over it.
-  // Reattach after SPA transitions and YouTube's own DOM replacements.
-  (function installHtmlMenu() {
-    var id = 'aay-html-menu';
-    function mount() {
-      var old = document.getElementById(id);
-      if (window.__AAY_CAR || location.hostname.indexOf('m.youtube.com') < 0) {
-        if (old) old.remove();
-        return;
-      }
-      var nav = document.querySelector('ytm-pivot-bar-renderer') ||
-                document.querySelector('ytm-mobile-topbar-renderer ~ ytm-pivot-bar-renderer') ||
-                document.querySelector('[role="tablist"]');
-      if (!nav) { if (old) old.remove(); return; }
-      if (old && old.parentElement === nav) return;
-      if (old) old.remove();
-      var button = document.createElement('button');
-      button.id = id;
-      button.type = 'button';
-      button.setAttribute('aria-label', 'AAYoutube menu');
-      button.style.cssText = 'display:flex;flex:1;min-width:0;align-items:center;justify-content:center;flex-direction:column;gap:3px;background:transparent;border:0;color:inherit;font:inherit;padding:5px 2px;cursor:pointer;';
-      var symbol = document.createElement('span');
-      symbol.textContent = '☰';
-      symbol.style.cssText = 'font-size:25px;line-height:27px;';
-      var label = document.createElement('span');
-      label.textContent = 'Menu';
-      label.style.cssText = 'font-size:11px;line-height:14px;';
-      button.appendChild(symbol); button.appendChild(label);
-      button.addEventListener('click', function (event) {
-        event.preventDefault(); event.stopPropagation();
-        try { window.AAYNative.openMenu(); } catch (e) {}
-      });
-      nav.appendChild(button);
-    }
-    var pending = false;
-    function schedule() {
-      if (pending) return;
-      pending = true;
-      setTimeout(function () { pending = false; mount(); }, 120);
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
-    else mount();
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
-    window.addEventListener('yt-navigate-finish', schedule);
-    window.addEventListener('popstate', schedule);
-  })();
 })();

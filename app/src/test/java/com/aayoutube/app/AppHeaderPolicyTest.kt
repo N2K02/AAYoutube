@@ -13,8 +13,8 @@ class AppHeaderPolicyTest {
     }
 
     @Test
-    fun carKeepsVideoImmersiveButShowsOtherPageHeaders() {
-        assertFalse(showAAYoutubeHeader(true, true, false, false))
+    fun carShowsHeaderAndSettingsOnWatchAndSettingsPages() {
+        assertTrue(showAAYoutubeHeader(true, true, false, false))
         assertTrue(showAAYoutubeHeader(false, true, false, false))
     }
 

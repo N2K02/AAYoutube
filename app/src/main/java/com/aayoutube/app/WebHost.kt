@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.content.MutableContextWrapper
+import android.view.Display
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.content.Context
@@ -63,8 +64,11 @@ object WebHost {
 
     private var wrapper: MutableContextWrapper? = null
     private var web: WebView? = null
+    private var webDisplayId: Int? = null
+    private var webGeneration = 0
     private var scriptHandler: ScriptHandler? = null
     private var link: Messenger? = null
+    private var linkEpoch = -1
     private var frozen = false
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private var pendingUrl: String? = null
@@ -72,6 +76,8 @@ object WebHost {
     private var lastDesktop = false
     private var jsSource: String? = null
     private var lastLinkRequest = 0L
+    private var lastRendererCrashAt = 0L
+    private var rendererCrashCount = 0
 
     // What the screens show.
     val progress = MutableStateFlow(100)
@@ -81,10 +87,11 @@ object WebHost {
     val onWatchPage = MutableStateFlow(false)
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
+    internal val lyricsClock = MutableStateFlow(LyricsClock())
+    private var lyricsTracking = false
+    val youtubeAccount = MutableStateFlow(YouTubeAccountState.CHECKING)
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
-    /** YouTube HTML bottom-nav menu tap, delivered from the page bridge. */
-    val htmlMenuTap = MutableStateFlow(0L)
 
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
@@ -95,8 +102,19 @@ object WebHost {
     @Volatile var activityVisible = false
         private set
 
-    /** The video is being shown on the car screen (see CarVideoService). */
+    /** The video is being shown on the car screen (see LegacyProjectionActivity). */
     @Volatile var carShown = false
+        private set
+    private val carOwners = mutableSetOf<String>()
+    val carProjectionActive = MutableStateFlow(false)
+
+    /** Android Auto may briefly run an old and a new car activity; only the newest owns the player. */
+    private val carHosts = CarHostRegistry()
+    val activeCarHost = MutableStateFlow<String?>(null)
+    /** Identity of the car window token the current renderer draws into (null: not in a car window). */
+    private var carWindowId: Int? = null
+    private var playingWhenCarLeft = false
+    private var carLeftAt = 0L
 
     /** The app screen is on the car display (Android 15+): videos fill the screen there. */
     val carScreen = MutableStateFlow(false)
@@ -107,7 +125,7 @@ object WebHost {
         carScreen.value = on
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
-        js("window.__aay&&window.__aay.car($on)")
+        js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
 
@@ -121,11 +139,26 @@ object WebHost {
 
     internal fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
 
-    private fun ensureWeb(): WebView {
+    private fun displayId(context: Context): Int? =
+        runCatching { context.display?.displayId }.getOrNull()
+
+    private fun ensureWeb(baseContext: Context = app): WebView {
         web?.let { return it }
-        val context = MutableContextWrapper(app)
-        wrapper = context
+        webDisplayId = displayId(baseContext) ?: Display.DEFAULT_DISPLAY
+        // Unlike a phone WebView that stays alive offscreen, the projected car
+        // view must use the real display context *directly*, matching AABrowser.
+        // A mutable wrapper created on display 0 can cache the wrong IMM and
+        // graphics services even after its base context is replaced.
+        val inCarDisplay = webDisplayId != Display.DEFAULT_DISPLAY
+        val context: Context = if (inCarDisplay) baseContext
+            else MutableContextWrapper(baseContext).also { wrapper = it }
+        if (inCarDisplay) wrapper = null
+        // A brand-new renderer has not drawn into any car window yet.
+        carWindowId = null
         val w = BackgroundWebView(context)
+        AppLog.add("VIEW", "WebView created display=" + webDisplayId +
+            " directCarContext=" + inCarDisplay)
+        webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
         web = w
@@ -191,7 +224,7 @@ object WebHost {
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(w, true)
 
-        w.addJavascriptInterface(WebBridge(), "AAYNative")
+        w.addJavascriptInterface(WebBridge(webGeneration), "AAYNative")
         w.webViewClient = client
         w.webChromeClient = chrome
     }
@@ -209,7 +242,7 @@ object WebHost {
 
     internal fun script(): String {
         val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + carDisplay + ";\n" + source
+        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
     }
 
     private fun installScript(w: WebView) {
@@ -221,11 +254,16 @@ object WebHost {
     }
 
     private fun applyFeatures(f: FeatureFlags) {
+        val desktopChanged = f.desktopSite != lastDesktop
+        lastDesktop = f.desktopSite
+        // The mini-player BrowseHost shares the same features and YouTube session.
+        // Update both WebViews instead of leaving the browse page on stale settings.
+        BrowseHost.applyFeatures(f, desktopChanged)
         val w = web ?: return
-        if (f.desktopSite != lastDesktop) {
-            lastDesktop = f.desktopSite
+        if (desktopChanged) {
             w.settings.userAgentString = userAgent(f.desktopSite)
             installScript(w)
+            youtubeAccount.value = YouTubeAccountState.CHECKING
             w.loadUrl(home())
             return
         }
@@ -244,13 +282,210 @@ object WebHost {
 
     // ---------------------------------------------------------------- screens
 
-    /** Called by the screen: hands over the WebView (re-based onto the activity). */
-    fun attach(context: android.content.Context): WebView {
-        val w = ensureWeb()
-        wrapper?.setBaseContext(context)
-        (w.parent as? ViewGroup)?.removeView(w)
+    /**
+     * Unlike AABrowser, our WebView may have been born in the phone/background
+     * process before the car screen appeared. Chromium caches the display's
+     * IME and video Surface; rebasing MutableContextWrapper alone is too late.
+     */
+    fun attach(context: Context, destination: ViewGroup? = null): WebView {
+        val targetDisplay = displayId(context)
+        if (web != null && PlayerDisplayPolicy.shouldRecreate(webDisplayId, targetDisplay)) {
+            recreateRenderer(context, targetDisplay!!, "display")
+        }
+        val w = ensureWeb(context)
+        // Compose calls AndroidView.update on ordinary state changes. Detaching
+        // the same decoder-bearing WebView from its *existing* car frame on
+        // each update can present a permanent black surface.
+        if (w.parent !== destination || destination == null) {
+            wrapper?.setBaseContext(context)
+            (w.parent as? ViewGroup)?.removeView(w)
+        }
+        // A phone/background screen now owns the renderer, not a car window.
+        carWindowId = null
+        AppLog.add("VIEW", "WebView attach display=" + (targetDisplay ?: -1) +
+            " created=" + (webDisplayId ?: -1))
         return w
     }
+
+    /**
+     * The projected car path. AABrowser creates its WebView inside each
+     * CarActivity window and never moves it. Android Auto replaces that window
+     * (new Surface / activity recreate on the same display, see the 14:37 log),
+     * and a renderer moved into the replacement keeps playing audio over black.
+     * So a car bind keeps the renderer only inside the window it already draws
+     * into; any other display or car window gets a fresh renderer at the same
+     * video position and play state.
+     */
+    fun attachToCarWindow(context: Context, frame: ViewGroup): WebView {
+        val targetDisplay = displayId(context)
+        val targetWindow = frame.windowToken?.let { System.identityHashCode(it) }
+        val reason = if (web == null) null else PlayerDisplayPolicy.carRecreateReason(
+            webDisplayId, targetDisplay, carWindowId, targetWindow)
+        if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)
+        val w = ensureWeb(context)
+        if (w.parent !== frame) (w.parent as? ViewGroup)?.removeView(w)
+        carWindowId = targetWindow
+        AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
+            " created=" + (webDisplayId ?: -1) + " window=" +
+            (targetWindow?.let { Integer.toHexString(it) } ?: "none") +
+            " renderer=" + (reason?.let { "new($it)" } ?: "kept"))
+        return w
+    }
+
+    fun claimCarHost(token: String, rebind: () -> Unit) {
+        carHosts.claim(token, rebind)
+        activeCarHost.value = carHosts.active
+        AppLog.add("CAR", "Car host active=" + token + " hosts=" + carHosts.size)
+    }
+
+    /** Do not let an old activity's late onStart steal a replacement's window. */
+    fun resumeCarHost(token: String, rebind: () -> Unit): Boolean {
+        val registered = carHosts.resume(token, rebind)
+        activeCarHost.value = carHosts.active
+        if (!registered) AppLog.add("CAR", "Ignoring stale car host onStart=" + token +
+            " active=" + (carHosts.active ?: "none"))
+        return registered
+    }
+
+    /** An old car activity's teardown must not take the player from the newer one. */
+    fun releaseCarHost(token: String) {
+        val wasActive = carHosts.isActive(token)
+        val next = carHosts.release(token)
+        activeCarHost.value = carHosts.active
+        if (wasActive) AppLog.add("CAR", "Car host released=" + token +
+            " next=" + (carHosts.active ?: "none"))
+        next?.invoke()
+    }
+
+    fun isActiveCarHost(token: String): Boolean = carHosts.isActive(token)
+
+    private fun recreateRenderer(context: Context, target: Int, reason: String) {
+        val previous = web ?: return
+        val state = snapshot.value
+        val oldDisplay = webDisplayId
+        val url = previous.url?.takeIf { it.startsWith("https://") } ?: lastUrl ?: home()
+        val uri = runCatching { Uri.parse(url) }.getOrNull()
+        val isWatch = uri?.path.orEmpty().let { it.startsWith("/watch") || it.startsWith("/live/") }
+        val now = SystemClock.elapsedRealtime()
+        // The old car window's teardown can pause the page a moment before the
+        // new window binds. Keep the user's play intent unless they paused.
+        val play = state.playing || (playingWhenCarLeft && now - carLeftAt < 8_000 &&
+            now - userPausedAt > 8_000)
+        val restored = if (isWatch && state.id.isNotBlank()) {
+            uri!!.buildUpon().clearQuery().apply {
+                uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
+                    uri.getQueryParameters(key).forEach { value -> appendQueryParameter(key, value) }
+                }
+                if (state.posMs > 0) appendQueryParameter("t", "${state.posMs / 1000}s")
+                appendQueryParameter("aay", if (play) "1" else "paused")
+            }.build().toString()
+        } else url
+        AppLog.add("CAR", "Recreate Chromium $reason $oldDisplay -> $target" +
+            " playing=$play position=${state.posMs / 1000}s")
+        // A display transition is not Quit. Preserve car ownership, MediaSession,
+        // snapshot and cookies; replace only the renderer and its cached services.
+        exitFullscreen()
+        web = null
+        webGeneration++
+        runCatching { scriptHandler?.remove() }
+        scriptHandler = null
+        (previous.parent as? ViewGroup)?.removeView(previous)
+        previous.stopLoading()
+        previous.destroy()
+        wrapper = null
+        webDisplayId = null
+        frozen = false
+        pendingUrl = restored
+        val replacement = ensureWeb(context)
+        replacement.onResume()
+        replacement.resumeTimers()
+        replacement.invalidate()
+    }
+
+
+    /**
+     * Diagnose a genuinely black car page without mistaking the framework's
+     * nonfatal InputMethodManager fallback warning for a decoder failure.
+     * Logs only geometry/readyState/frame counters; never URLs or page text.
+     */
+    fun logCarRenderProbe() {
+        val w = web ?: return
+        if (!carShown && !carDisplay) return
+        AppLog.add("CAR", "WebView geometry=" + w.width + "x" + w.height +
+            " attached=" + w.isAttachedToWindow + " shown=" + w.isShown +
+            " accelerated=" + w.isHardwareAccelerated +
+            " display=" + (w.display?.displayId ?: -1))
+        // Also reports the element painted at the screen centre (a page overlay
+        // covering the video), the real page visibility and whether frames
+        // keep decoding, so a black car screen can be classified from logcat.
+        w.evaluateJavascript(
+            """(function(){
+                function d(n){if(!n)return null;var c=(typeof n.className==='string'?n.className:'')
+                    .trim().split(/\s+/).slice(0,2).join('.');
+                    return (n.tagName||'').toLowerCase()+(n.id?'#'+n.id:'')+(c?'.'+c:'');}
+                var v=document.querySelector('video.html5-main-video')||document.querySelector('video');
+                var r=v&&v.getBoundingClientRect();
+                var top=null,inPlayer=null;
+                try{var e=document.elementFromPoint(innerWidth/2,innerHeight/2);top=d(e);
+                    var p=document.getElementById('movie_player')||(v&&v.parentElement);
+                    inPlayer=!!(e&&p&&(p===e||p.contains(e)||e.contains(p)));}catch(x){}
+                var hidden=null;
+                try{hidden=Object.getOwnPropertyDescriptor(Document.prototype,'hidden').get.call(document);}catch(x){}
+                return JSON.stringify({
+                    ready:document.readyState,
+                    viewport:[innerWidth,innerHeight],
+                    hasVideo:!!v,
+                    videoSize:v?[v.videoWidth,v.videoHeight]:null,
+                    bounds:r?[Math.round(r.width),Math.round(r.height)]:null,
+                    frames:v?(v.webkitDecodedFrameCount||0):0,
+                    dropped:v?(v.webkitDroppedFrameCount||0):0,
+                    t:v?Math.round(v.currentTime):null,
+                    paused:v?v.paused:null,
+                    vis:v?getComputedStyle(v).visibility:null,
+                    hidden:hidden,
+                    car:document.documentElement.classList.contains('aay-car'),
+                    top:top,
+                    inPlayer:inPlayer
+                });
+            })()""".trimIndent()
+        ) { result ->
+            AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
+        }
+        // What is painted over the video: the hit-test stack at the centre down to
+        // the <video>, plus any full-screen opaque fixed/absolute box that does not
+        // contain it (hit-testing skips pointer-events:none covers). No page text.
+        w.evaluateJavascript(
+            """(function(){
+                function d(n){if(!n)return '?';var c=(typeof n.className==='string'?n.className:'')
+                    .trim().split(/\s+/).slice(0,2).join('.');
+                    return (n.tagName||'').toLowerCase()+(n.id?'#'+n.id:'')+(c?'.'+c:'');}
+                function bg(c){var b=c.backgroundColor;
+                    return (b==='rgba(0, 0, 0, 0)'||b==='transparent')?'':' bg='+b.replace(/rgba?\(|\)|\s/g,'');}
+                function info(n,c){return d(n)+(c.position!=='static'?' '+c.position:'')+
+                    (c.zIndex!=='auto'?' z'+c.zIndex:'')+(c.opacity!=='1'?' op'+c.opacity:'')+
+                    (c.visibility!=='visible'?' '+c.visibility:'')+bg(c);}
+                var v=document.querySelector('video.html5-main-video')||document.querySelector('video');
+                var out=[],s=[];
+                try{s=document.elementsFromPoint(innerWidth/2,innerHeight/2);}catch(x){}
+                for(var i=0;i<s.length&&out.length<8;i++){out.push(info(s[i],getComputedStyle(s[i])));if(s[i]===v)break;}
+                var covers=[],all=document.querySelectorAll('body *');
+                for(var j=0;j<all.length&&covers.length<4;j++){var e=all[j];
+                    if(e===v||(v&&e.contains(v)))continue;
+                    var c=getComputedStyle(e);
+                    if((c.position!=='fixed'&&c.position!=='absolute')||c.display==='none'||c.visibility!=='visible'||!bg(c))continue;
+                    var r=e.getBoundingClientRect();
+                    if(r.width<innerWidth*0.9||r.height<innerHeight*0.9)continue;
+                    covers.push(info(e,c));}
+                return 'stack='+out.join(' > ')+' | covers='+(covers.join(' ; ')||'none')+
+                    ' | guarded='+document.querySelectorAll('.aay-car-off,.aay-car-clear').length;
+            })()""".trimIndent()
+        ) { result ->
+            AppLog.add("CAR", "Chromium paint probe=" + result.take(900))
+        }
+    }
+
+    // Also probe after the car page navigates to a video, not only after a bind.
+    private val carWatchProbe = Runnable { logCarRenderProbe() }
 
     fun detach(container: ViewGroup) {
         val mine = web?.parent === container
@@ -269,7 +504,7 @@ object WebHost {
             scheduleFreeze()
         }
         // Hidden screen = background mode: lowest video quality saves data and battery.
-        js("window.__aay&&window.__aay.setBg(${!shown})")
+        refreshBackgroundQuality()
     }
 
     /** Player buttons for the car screen: play, pause, next, prev. */
@@ -280,15 +515,38 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
-    fun showOnCar(on: Boolean) {
-        carShown = on
-        if (on) {
+    fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
+        // AABrowser exposes classic projection and wide surfaces independently.
+        // A temporary car/phone handoff must not freeze or reset the shared player.
+        val alreadyProjected = carShown
+        if (on) carOwners.add(owner) else carOwners.remove(owner)
+        carShown = carOwners.isNotEmpty()
+        if (alreadyProjected && !carShown) {
+            playingWhenCarLeft = snapshot.value.playing
+            carLeftAt = SystemClock.elapsedRealtime()
+        }
+        carProjectionActive.value = carShown
+        AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
+        js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
+        if (carShown) {
             main.removeCallbacks(freezeSoon)
+            if (!alreadyProjected) noteVisibilityChange()
             unfreeze()
+            // Android can call WebView.onPause while moving between phone and
+            // projected windows. Explicitly restore the native renderer (as
+            // upstream AABrowser does), even when 'frozen' was already false.
+            web?.let { it.onResume(); it.resumeTimers(); it.invalidate() }
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
-        js("window.__aay&&window.__aay.setBg(${!shown})")
+        refreshBackgroundQuality()
+    }
+
+    /** Rebind an already-created phone AndroidView after a car window relinquishes it.
+     * Even a stopped Activity needs the version bump so its retained Compose tree will
+     * reclaim the WebView when it resumes. Never steal from a second active car host. */
+    fun requestReattachment() {
+        if (!carShown) webVersion.update { it + 1 }
     }
 
     /** The screen is leaving the foreground (or came back): page pauses are ignored until it returns. */
@@ -299,6 +557,17 @@ object WebHost {
     }
 
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
+
+    /** Use the measured native video/WebView bounds as the Android PiP source. */
+    fun pipSourceRect(out: android.graphics.Rect): Boolean {
+        val w = web ?: return false
+        return w.isAttachedToWindow && w.getGlobalVisibleRect(out) &&
+            out.width() > 0 && out.height() > 0
+    }
+
+    fun refreshBackgroundQuality() {
+        js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
+    }
 
     fun openUrl(url: String) {
         // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
@@ -311,7 +580,7 @@ object WebHost {
         }
         unfreeze()
         mode.value = PlayerMode.FULL
-        load(normalise(url))
+        load(withCarPlaybackIntent(normalise(url)))
     }
 
     // ---------------------------------------------------------------- mini player
@@ -327,18 +596,44 @@ object WebHost {
         }
 
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
+    fun requestMiniFromBridge(generation: Int) {
+        main.post { if (generation == webGeneration) enterMini() }
+    }
+
     fun enterMini() {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
-        AppLog.add("VIEW", "Mini player on")
-        mode.value = PlayerMode.MINI
-        // Like the YouTube app: Home underneath (or wherever you were browsing before).
-        BrowseHost.showFrom(home())
+        AppLog.add("VIEW", "Mini player on (playing=${snapshot.value.playing})")
+        // Arm page-side pause protection *before* changing the WebView viewport. YouTube can
+        // pause during the resize, before Compose finishes drawing the mini player.
+        noteVisibilityChange()
         js("window.__aay&&window.__aay.mini(true)")
+        mode.value = PlayerMode.MINI
+        // Keep the same player WebView and browse independently underneath it.
+        BrowseHost.showFrom(home())
+    }
+
+    /** Undo the phone mini-player viewport before projecting the same renderer.
+     * Never reload, seek or force play; respect the user's paused state. */
+    fun prepareForCarProjection() {
+        val wasMini = mode.value == PlayerMode.MINI
+        if (mode.value != PlayerMode.FULL) {
+            AppLog.add("CAR", "Expand video from " + mode.value)
+            noteVisibilityChange()
+            mode.value = PlayerMode.FULL
+            BrowseHost.pause()
+        }
+        if (wasMini) js("window.__aay&&window.__aay.mini(false)")
+        js("window.__aay&&window.__aay.car(true)")
+    }
+
+    fun refitCarViewport() {
+        if (carShown) js("window.__aay&&window.__aay.refitCar&&window.__aay.refitCar()")
     }
 
     fun expandPlayer() {
         if (mode.value == PlayerMode.FULL) return
         AppLog.add("VIEW", "Mini player expanded")
+        noteVisibilityChange()
         mode.value = PlayerMode.FULL
         js("window.__aay&&window.__aay.mini(false)")
     }
@@ -394,17 +689,58 @@ object WebHost {
         if (w.url.isNullOrEmpty() || w.url == "about:blank") w.loadUrl(home()) else w.reload()
     }
 
+    /** Only poll the real video position while the user is viewing timed lyrics. */
+    fun setLyricsTracking(active: Boolean) {
+        if (lyricsTracking == active) return
+        lyricsTracking = active
+        AppLog.add("LYRICS", "Video clock tracking=" + active)
+        if (!active) lyricsClock.value = LyricsClock()
+        js("window.__aay&&window.__aay.lyricsSync($active)")
+    }
+
+    /** Invoked from the WebView's JavaScript bridge thread, never by another app. */
+    fun onJsLyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
+        if (!seconds.isFinite() || seconds < 0 || seconds > 86_400 ||
+            !rate.isFinite() || rate <= 0 || rate > 8.0) return
+        main.post {
+            // Reject a sample from a previous video or a disposed lyrics panel.
+            if (generation != webGeneration || !lyricsTracking || id.isBlank() || id != snapshot.value.id) return@post
+            lyricsClock.value = LyricsClock(
+                videoId = id,
+                posMs = (seconds * 1000).toLong(),
+                playing = playing,
+                buffering = buffering,
+                rate = rate.toFloat(),
+                sampledAtMs = SystemClock.elapsedRealtime(),
+            )
+        }
+    }
+
     fun clearCache() {
         web?.clearCache(true)
     }
 
-    /** Sign out and forget everything the page stored. */
+    /** Sign out and forget everything the page stored, including the mini-player browser.
+     * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
     fun clearSession() {
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().flush()
-        WebStorage.getInstance().deleteAllData()
-        web?.clearCache(true)
-        web?.loadUrl(home())
+        youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
+        CookieManager.getInstance().removeAllCookies {
+            main.post {
+                CookieManager.getInstance().flush()
+                WebStorage.getInstance().deleteAllData()
+                web?.clearCache(true)
+                web?.loadUrl(home())
+                BrowseHost.onSessionCleared()
+            }
+        }
+    }
+
+    /** Called by the injected script, using YouTube's own LOGGED_IN flag. */
+    fun reportAccountStatus(value: String, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
+        val state = YouTubeAccountState.fromScript(value) ?: return
+        main.post { if (generation == webGeneration) youtubeAccount.value = state }
     }
 
     fun exitFullscreen() {
@@ -431,7 +767,7 @@ object WebHost {
         if (frozen) return
         frozen = true
         AppLog.add("POWER", "Page frozen")
-        w.onPause()
+        (w as? BackgroundWebView)?.pauseForIdle()
         w.pauseTimers()
     }
 
@@ -445,19 +781,34 @@ object WebHost {
     }
 
     /** Frees the WebView completely (nothing is playing and no screen is open). */
-    fun release() {
+    fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
+        main.removeCallbacks(freezeSoon)
         exitFullscreen()
-        val w = web ?: return
+        val w = web
         web = null
+        webGeneration++ // Ignore already-queued bridge reports from the disposed renderer.
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
-        (w.parent as? ViewGroup)?.removeView(w)
-        w.stopLoading()
-        w.destroy()
+        (w?.parent as? ViewGroup)?.removeView(w)
+        w?.stopLoading()
+        w?.pauseTimers()
+        w?.destroy()
         wrapper = null
+        webDisplayId = null
+        carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        if (!preserveCarOwners) {
+            carOwners.clear()
+            carShown = false
+            carProjectionActive.value = false
+            carHosts.clear()
+            activeCarHost.value = null
+        }
+        lyricsTracking = false
+        lyricsClock.value = LyricsClock()
+        youtubeAccount.value = YouTubeAccountState.CHECKING
         webVersion.update { it + 1 }
     }
 
@@ -469,6 +820,7 @@ object WebHost {
     fun onLinkUnbound() {
         AppLog.add("LINK", "Media service disconnected")
         link = null
+        linkEpoch = -1
         if (!shown && !snapshot.value.playing) scheduleFreeze()
     }
 
@@ -476,12 +828,18 @@ object WebHost {
 
     fun onCommand(m: Message) {
         val d = m.data ?: Bundle.EMPTY
-        AppLog.add("LINK", "From media process: what=${m.what} data=${d.keySet().joinToString { k -> "$k=${d.get(k)}" }}")
+        AppLog.add("LINK", "From media process: what=${m.what} keys=${d.keySet().sorted().joinToString()}")
         if (m.what != Msg.FREEZE) unfreeze()
         when (m.what) {
             Msg.REGISTER -> {
                 link = m.replyTo
-                if (snapshot.value.id.isNotEmpty()) send(Msg.STATE, snapshot.value.toBundle())
+                linkEpoch = d.getInt("epoch", -1)
+                // The service resets its reconnect budget only after this acknowledgement.
+                send(Msg.REGISTER_ACK, Bundle().apply { putInt("epoch", linkEpoch) })
+            }
+            Msg.SYNC -> {
+                if (web == null) send(Msg.PLAYER_MISSING, Bundle())
+                else send(Msg.STATE, snapshot.value.toBundle())
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
@@ -497,6 +855,10 @@ object WebHost {
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
+                BrowseHost.release()
+                runCatching {
+                    m.replyTo?.send(Message.obtain(null, Msg.QUIT_ACK))
+                }.onFailure { AppLog.add("LINK", "Quit acknowledgement failed") }
                 cmd("pause")
                 val close = onQuit
                 if (close != null) close() else release()
@@ -507,9 +869,28 @@ object WebHost {
 
     private fun open(id: String, startSec: Long) {
         if (id.isBlank()) return
+        // Android Auto may reissue PLAY or media selection after a browser
+        // reconnect while the SAME Chromium player already survives. Reloading
+        // it causes sound interruptions and extra OPEN -> page load loops.
+        if (web != null && snapshot.value.id == id && isOnWatchPage()) {
+            AppLog.add("LINK", "Reusing current video instead of reloading")
+            val currentSec = snapshot.value.posMs.coerceAtLeast(0L) / 1000
+            if (startSec > 0 && kotlin.math.abs(startSec - currentSec) > 4)
+                cmd("seek", startSec.toString())
+            if (!snapshot.value.playing) cmd("play")
+            return
+        }
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
         // aay=1 tells the page script to start playing as soon as the video is ready.
         load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
+    }
+
+    /** Legacy Assistant / car voice search, routed to the MediaCompat playback search. */
+    fun voiceSearch(query: String) {
+        if (query.isBlank()) return
+        unfreeze()
+        mode.value = PlayerMode.FULL
+        search(query)
     }
 
     private fun search(query: String) {
@@ -529,6 +910,17 @@ object WebHost {
         }
     }
 
+    /** Only a newly selected car video gets autoplay intent. A paused
+     * session restored on startup, or a user pressing Pause, stays paused. */
+    private fun withCarPlaybackIntent(url: String): String {
+        if (!carShown && !carDisplay) return url
+        val uri = Uri.parse(url)
+        if (!allowedHost(uri.host) || !uri.path.orEmpty().let {
+                it.startsWith("/watch") || it.startsWith("/live/")
+            } || uri.getQueryParameter("aay") != null) return url
+        return uri.buildUpon().appendQueryParameter("aay", "1").build().toString()
+    }
+
     private fun normalise(url: String): String {
         val u = Uri.parse(url)
         val host = u.host?.lowercase().orEmpty()
@@ -546,15 +938,19 @@ object WebHost {
         val l = link ?: return
         try {
             val m = Message.obtain(null, what)
+            if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)
+                data.putInt("epoch", linkEpoch)
             m.data = data
             l.send(m)
         } catch (e: RemoteException) {
             link = null
+            linkEpoch = -1
         }
     }
 
     /** Called on a WebView thread by [WebBridge]. */
-    fun onJsState(json: String) {
+    fun onJsState(json: String, generation: Int = webGeneration) {
+        if (generation != webGeneration) return
         val s = runCatching {
             val o = JSONObject(json)
             Snap(
@@ -579,7 +975,7 @@ object WebHost {
                 }.orEmpty(),
             )
         }.getOrNull() ?: return
-        main.post { publish(s) }
+        main.post { if (generation == webGeneration) publish(s) }
     }
 
     private var lastLogged = ""
@@ -687,7 +1083,10 @@ object WebHost {
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+            if (view !== web) return
             AppLog.add("PAGE", "Started $url")
+            lyricsClock.value = LyricsClock()
+            youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
             offline.value = false
             // Older WebViews cannot run a script before the page: inject as early as possible instead.
@@ -695,18 +1094,31 @@ object WebHost {
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
+            if (view !== web) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
-            view.evaluateJavascript("window.__aay&&window.__aay.car($carDisplay)", null)
+            if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
+            if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
             canGoBack.value = view.canGoBack()
+            // A new document resets __aay.isMini; reapply our layout if navigation or reload
+            // happened while the mini player was open.
+            if (mode.value == PlayerMode.MINI) js("window.__aay&&window.__aay.mini(true)")
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+            if (view !== web) return
             canGoBack.value = view.canGoBack()
+            val wasWatch = onWatchPage.value
             onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
                 .let { it.startsWith("/watch") || it.startsWith("/live/") }
+            if (carShown && onWatchPage.value && !wasWatch) {
+                main.removeCallbacks(carWatchProbe)
+                main.postDelayed(carWatchProbe, 3_000L)
+                main.postDelayed(carWatchProbe, 9_000L)
+            }
             if (!url.isNullOrEmpty() && url != "about:blank") {
                 lastUrl = url
                 saveUrl(url)
@@ -718,14 +1130,28 @@ object WebHost {
             if (request.isForMainFrame) offline.value = true
         }
 
-        // The page's renderer died (out of memory, crash): rebuild the WebView instead of crashing the app.
+        // Preserve visible car ownership and playback intent while replacing the
+        // renderer. Only two automatic resumptions are allowed per 15-second window.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            AppLog.add("CRASH", "Renderer gone, crashed=${detail.didCrash()} url=$lastUrl")
-            val resume = lastUrl
-            val visible = shown
-            release()
-            if (visible) {
-                pendingUrl = resume
+            if (web !== view) return true
+            val now = SystemClock.elapsedRealtime()
+            rendererCrashCount = if (now - lastRendererCrashAt <= 15_000L) rendererCrashCount + 1 else 1
+            lastRendererCrashAt = now
+            val before = snapshot.value
+            val mayResume = rendererCrashCount <= 2 && before.playing && before.id.isNotBlank()
+            val reopen = if (before.id.isNotBlank()) {
+                val base = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
+                base + "watch?v=" + Uri.encode(before.id) +
+                    (if (before.posMs > 0) "&t=" + before.posMs / 1000 + "s" else "") +
+                    (if (mayResume) "&aay=1" else "&aay=paused")
+            } else lastUrl
+            AppLog.add("CRASH", "Renderer gone; repeat=$rendererCrashCount resume=$mayResume")
+            if (mayResume) send(Msg.RENDERER_GONE, before.toBundle())
+            else send(Msg.STATE, before.copy(playing = false, buffering = false).toBundle())
+            release(preserveCarOwners = true)
+            pendingUrl = reopen
+            if (shown || mayResume) {
+                if (!shown) main.post { if (web == null) ensureWeb() }
                 webVersion.update { it + 1 }
             }
             return true
@@ -734,7 +1160,8 @@ object WebHost {
 
     private val chrome = object : WebChromeClient() {
         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
-            AppLog.add("JS", "${m.messageLevel()} ${m.message()} (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
+            val cleaned = WebConsolePolicy.clean(m.message()) ?: return true
+            AppLog.add("JS", "${m.messageLevel()} $cleaned (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
             return true
         }
 
@@ -779,22 +1206,26 @@ object WebHost {
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
-class WebBridge {
+class WebBridge(private val generation: Int) {
     @JavascriptInterface
-    fun openMenu() {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            WebHost.htmlMenuTap.value = WebHost.htmlMenuTap.value + 1L
-        }
+    fun state(json: String) {
+        WebHost.onJsState(json, generation)
     }
 
     @JavascriptInterface
-    fun state(json: String) {
-        WebHost.onJsState(json)
+    fun account(status: String) {
+        WebHost.reportAccountStatus(status, generation)
+    }
+
+    /** Real HTMLVideoElement position, sampled only while timed lyrics are displayed. */
+    @JavascriptInterface
+    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+        WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
     }
 
     /** Swipe down on the playing video. */
     @JavascriptInterface
     fun mini() {
-        android.os.Handler(android.os.Looper.getMainLooper()).post { WebHost.enterMini() }
+        WebHost.requestMiniFromBridge(generation)
     }
 }

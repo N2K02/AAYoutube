@@ -1,25 +1,52 @@
 package com.aayoutube.app
 
 import android.content.ComponentName
+import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 
-/**
- * AAYoutube in Android Auto is always the full screen with the video (no audio-only media player).
- *
- * Older versions could switch the media service off in favour of a media-player entry; Android keeps
- * that disabled state across updates, so it is put back to the default here.
- */
+/** Restore the sole projected video entry and private media connection. */
 object CarMode {
     fun serviceComponent(c: Context): ComponentName = ComponentName(c, PlaybackService::class.java)
-
     fun resetToCarScreen(c: Context) {
-        val component = serviceComponent(c)
         val pm = c.packageManager
-        if (pm.getComponentEnabledSetting(component) == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) return
-        AppLog.add("CAR", "Android Auto: car screen (media player removed)")
-        runCatching {
-            pm.setComponentEnabledSetting(component, PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP)
+        listOf(ComponentName(c, LegacyProjectionService::class.java), serviceComponent(c)).forEach { component ->
+            runCatching {
+                if (pm.getComponentEnabledSetting(component) != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
+                    pm.setComponentEnabledSetting(component,
+                        PackageManager.COMPONENT_ENABLED_STATE_DEFAULT, PackageManager.DONT_KILL_APP)
+                    AppLog.add("CAR", "Restored " + component.className.substringAfterLast('.'))
+                }
+            }.onFailure { AppLog.add("CAR", "Component restore failed: " + it.javaClass.simpleName) }
         }
+        // Phone-side self-check: a missing [CAR] launch record might mean
+        // Android Auto never dispatched the exported projection service.
+        // Verify the package manager can actually discover our service so the
+        // next device logs distinguish manifest discovery from car host routing.
+        val query = Intent(Intent.ACTION_MAIN)
+            .setPackage(c.packageName)
+            .addCategory("com.google.android.gms.car.category.CATEGORY_PROJECTION")
+        val matches = runCatching {
+            pm.queryIntentServices(query, PackageManager.MATCH_DISABLED_COMPONENTS)
+        }.getOrDefault(emptyList())
+        val videoEntry = LegacyProjectionService::class.java.name
+        val discovered = matches.any { it.serviceInfo?.name == videoEntry }
+        val component = ComponentName(c, LegacyProjectionService::class.java)
+        val state = pm.getComponentEnabledSetting(component)
+        AppLog.add("CAR", "Video projection manifest discoverable=$discovered; enabledState=$state")
+
+        // The legacy projection service alone is not a CAR_LAUNCHER activity.
+        // PR #22 removed MainActivity's old car-launcher filter, causing the
+        // AAYT Video shortcut to disappear from Customize launcher.
+        val launcherQuery = Intent(Intent.ACTION_MAIN)
+            .setPackage(c.packageName)
+            .addCategory("android.intent.category.CAR_LAUNCHER")
+        val carLaunchers = runCatching {
+            pm.queryIntentActivities(launcherQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
+        }.getOrDefault(emptyList())
+        val aliasName = c.packageName + ".AutoVideoLauncher"
+        val carLauncherFound = carLaunchers.any { it.activityInfo?.name == aliasName }
+        AppLog.add("CAR", "Video car-launcher alias discoverable=$carLauncherFound" +
+            "; entries=" + carLaunchers.size)
     }
 }

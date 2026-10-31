@@ -2,6 +2,7 @@ package com.aayoutube.app
 
 import android.Manifest
 import android.app.PictureInPictureParams
+import android.graphics.Rect
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -12,10 +13,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
-import com.google.common.util.concurrent.MoreExecutors
 
 /**
  * The screen. Runs in the ":web" process, next to the WebView. It also tells the media service
@@ -28,9 +25,16 @@ class MainActivity : ComponentActivity() {
         // sharing one page. Only the last of them to hide may pause or hide the page.
         private val started = mutableSetOf<MainActivity>()
         private val resumed = mutableSetOf<MainActivity>()
+        /** Restore ownership when the projected car activity relinquishes the media link. */
+        fun restorePhoneLink() {
+            val phone = started.lastOrNull() ?: return
+            WebHost.requestLink = { phone.runOnUiThread { phone.sayHello() } }
+        }
     }
 
-    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var compatConnection: CompatMediaConnection? = null
+    private var watchTabVisible = true
+    private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -57,19 +61,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // A reused activity can move to another car display.
+        WebHost.setCarScreen(!onPhoneScreen())
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            intent.dataString?.let { WebHost.openUrl(it) }
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.dataString?.let { WebHost.openUrl(it) }
+            "android.media.action.MEDIA_PLAY_FROM_SEARCH" -> {
+                val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty()
+                AppLog.add("CAR", "Assistant media search received")
+                if (query.isNotBlank()) WebHost.voiceSearch(query)
+                else WebHost.cmd("play")
+            }
         }
     }
 
     override fun onStart() {
         super.onStart()
         started += this
-        WebHost.requestLink = { runOnUiThread { sayHello() } }
+        if (!WebHost.carShown) WebHost.requestLink = relinkPhone
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         WebHost.setCarScreen(!onPhoneScreen())
         sayHello()
@@ -80,13 +92,16 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         resumed -= this
-        if (resumed.isEmpty()) WebHost.setHold(true)
+        if (resumed.isEmpty() && !WebHost.carShown) WebHost.setHold(true)
     }
 
     override fun onResume() {
         super.onResume()
         resumed += this
-        if (!isInPictureInPictureMode) WebHost.setHold(false)
+        if (!isInPictureInPictureMode) {
+            WebHost.setHold(false)
+            WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
+        }
         LiveUpdater.onResume(this)
         updatePip()
     }
@@ -103,54 +118,49 @@ class MainActivity : ComponentActivity() {
         started -= this
         releaseController()
         val other = started.lastOrNull()
-        if (other != null) {
-            // Another screen is still showing the page: it keeps the link, the page stays visible.
-            WebHost.requestLink = { other.runOnUiThread { other.sayHello() } }
-            return
+        if (WebHost.requestLink === relinkPhone) {
+            // Never remove a link now owned by the projection activity.
+            WebHost.requestLink = null
+            if (other != null) restorePhoneLink()
         }
-        WebHost.requestLink = null
+        if (other != null) return
         WebHost.onActivityVisible(false)
         BrowseHost.pause()
     }
 
     private fun sayHello() {
-        if (controllerFuture != null) return
-        val token = SessionToken(this, CarMode.serviceComponent(this))
-        val future = MediaController.Builder(this, token).buildAsync()
-        controllerFuture = future
-        future.addListener({
-            runCatching {
-                val controller = future.get()
-                controller.sendCustomCommand(Commands.HELLO, Bundle.EMPTY)
-            }
-            // Kept until the screen stops: if it were released now, the service would shut down
-            // again straight away and take the link to the web process with it.
-        }, MoreExecutors.directExecutor())
+        if (compatConnection != null) return
+        compatConnection = CompatMediaConnection(this) {
+            it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)
+        }.also { it.connect() }
     }
 
-    /** Quit (menu): stop playback and the media service, then close the screen and the page. */
     fun quit() {
         AppLog.add("UI", "Quit")
-        val future = controllerFuture
-        if (future != null && future.isDone) {
-            runCatching { future.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
-        } else {
-            // Not connected yet: connect just to send Exit.
-            val token = SessionToken(this, CarMode.serviceComponent(this))
-            val f = MediaController.Builder(applicationContext, token).buildAsync()
-            f.addListener({
-                runCatching { f.get().sendCustomCommand(Commands.EXIT, Bundle.EMPTY) }
-                MediaController.releaseFuture(f)
-            }, MoreExecutors.directExecutor())
+        compatConnection?.command(Commands.EXIT)
+        // Deliver Quit even when MediaBrowser is disconnected or still reconnecting.
+        // The service deduplicates this with the MediaSession custom action.
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                this, Intent(this, PlaybackService::class.java).setAction(PlaybackService.ACTION_QUIT)
+            )
+        }.onFailure {
+            AppLog.add("UI", "Media shutdown intent failed: ${it.javaClass.simpleName}")
         }
-        closeEverything()
+        // Give the media process time to acknowledge the request before tearing down :web.
+        // The local fallback still quits when the media service is unavailable.
+        android.os.Handler(mainLooper).postDelayed({
+            if (!isFinishing && !isDestroyed) closeEverything()
+        }, 1_600L)
     }
 
     private fun closeEverything() {
         WebHost.onQuit = null
+        WebHost.requestLink = null
+        releaseController()
         WebHost.cmd("pause")
+        BrowseHost.release()
         finishAndRemoveTask()
-        // Give Exit a moment to reach the media service, then end this process (the WebView with it).
         android.os.Handler(mainLooper).postDelayed({
             WebHost.release()
             android.os.Process.killProcess(android.os.Process.myPid())
@@ -158,10 +168,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun releaseController() {
-        controllerFuture?.let { MediaController.releaseFuture(it) }
-        controllerFuture = null
+        compatConnection?.disconnect()
+        compatConnection = null
     }
-
     // ---------------------------------------------------------------- picture in picture
 
     /** False when Android Auto is showing this screen on the car display (no picture in picture there). */
@@ -170,20 +179,38 @@ class MainActivity : ComponentActivity() {
         return id == null || id == android.view.Display.DEFAULT_DISPLAY
     }
 
-    fun updatePip() {
-        if (Build.VERSION.SDK_INT < 26) return
-        val playing = WebHost.snapshot.value.playing
+    /** Android chooses floating PiP dimensions. Use the real video source
+     * rectangle and disable WebView-unsafe seamless surface resizing. */
+    private fun pipParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
-        if (Build.VERSION.SDK_INT >= 31) builder.setAutoEnterEnabled(Features.current.autoPip && playing && WebHost.isOnWatchPage() && onPhoneScreen())
-        runCatching { setPictureInPictureParams(builder.build()) }
+        val bounds = Rect()
+        if (WebHost.pipSourceRect(bounds)) builder.setSourceRectHint(bounds)
+        if (Build.VERSION.SDK_INT >= 31) {
+            builder.setAutoEnterEnabled(
+                Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
+                    WebHost.isOnWatchPage() && onPhoneScreen() && !isInPictureInPictureMode
+            )
+            builder.setSeamlessResizeEnabled(false)
+        }
+        return builder.build()
+    }
+
+    fun updatePip(isWatchTab: Boolean = watchTabVisible) {
+        if (Build.VERSION.SDK_INT < 26 || !onPhoneScreen()) return
+        watchTabVisible = isWatchTab
+        runCatching { setPictureInPictureParams(pipParams()) }
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip && WebHost.snapshot.value.playing && WebHost.isOnWatchPage() && onPhoneScreen()) {
-            runCatching {
-                enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
-            }
+        // Android 12+ auto-enter is driven by PiP params; do NOT switch CSS
+        // into PiP early if the launcher ultimately declines the transition.
+        if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip &&
+            watchTabVisible && WebHost.snapshot.value.playing &&
+            WebHost.isOnWatchPage() && onPhoneScreen()) {
+            WebHost.pip(true)
+            val entered = runCatching { enterPictureInPictureMode(pipParams()) }.getOrDefault(false)
+            if (!entered) WebHost.pip(false)
         }
     }
 
@@ -202,5 +229,6 @@ class MainActivity : ComponentActivity() {
             WebHost.setHold(false)
         }
         WebHost.pip(isInPictureInPictureMode)
+        WebHost.refreshBackgroundQuality()
     }
 }

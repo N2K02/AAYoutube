@@ -1,422 +1,583 @@
 package com.aayoutube.app
 
-import android.app.PendingIntent
 import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
+import android.app.PendingIntent
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.os.IBinder
+import android.os.Message
+import android.os.Messenger
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
-import android.os.SystemClock
-import androidx.annotation.OptIn
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.session.CommandButton
-import androidx.media3.session.LibraryResult
-import androidx.media3.session.MediaLibraryService
-import androidx.media3.session.MediaLibraryService.LibraryParams
-import androidx.media3.session.MediaLibraryService.MediaLibrarySession
-import androidx.media3.session.MediaSession
-import androidx.media3.session.SessionCommand
-import androidx.media3.session.SessionError
-import androidx.media3.session.SessionResult
-import com.google.common.collect.ImmutableList
-import com.google.common.util.concurrent.Futures
-import com.google.common.util.concurrent.ListenableFuture
+import android.support.v4.media.MediaMetadataCompat
+import android.os.Bundle
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.MediaDescriptionCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
+import androidx.media.MediaBrowserServiceCompat
 
 /**
- * The media process: media session, notification and everything Android Auto talks to.
- *
- * It has no WebView and no screens. Its main thread only answers from memory and sends
- * fire-and-forget messages to the web process ([HostLink]), so Android Auto's calls (browse,
- * search, play, next) always return at once, whatever the WebView is doing.
- *
- * Battery: a partial wake lock is held only while a video is actually playing; after 2 minutes
- * paused the page is frozen (timers and scripts stop), and after 15 minutes the web process is
- * released and this service stops.
+ * Android Auto media browser and media session; the WebView runs in a separate process.
  */
-@OptIn(UnstableApi::class)
-open class PlaybackService : MediaLibraryService() {
+class PlaybackService : MediaBrowserServiceCompat() {
+    private lateinit var session: MediaSessionCompat
+    private var outgoing: Messenger? = null
+    private var bound = false
+    private val pending = ArrayDeque<Pair<Int, Bundle>>()
+    private val maxPendingCommands = 32
+    private val handler = Handler(Looper.getMainLooper())
+    private var foreground = false
+    private val notifications = CarMediaNotificationManager(this)
+    private val updateGate = MediaUpdateGate()
+    private val artworkLoader = MediaArtworkLoader {
+        if (!shuttingDown) {
+            updateGate.invalidateMetadata()
+            lastNotification = null
+            publish(snapshot)
+        }
+    }
+    private val queueGate = QueueUpdateGate()
+    private data class NotificationKey(
+        val id: String, val title: String, val artist: String,
+        val canNext: Boolean, val canPrev: Boolean,
+        val artwork: String, val bitmapReady: Boolean
+    )
+    private var lastNotification: NotificationKey? = null
+    private var lastRecentId = ""
+    private var lastSavedPosition = -1L
+    private var lastSavedId = ""
+    private var idleSince = 0L
+    private var shuttingDown = false
+    private var quitRequested = false
+    private val finishQuit = Runnable {
+        if (quitRequested) {
+            shuttingDown = true
+            pending.clear()
+            stopSelf()
+        }
+    }
+    private var retries = 0
+    private var registrationEpoch = 0
+    private var awaitingRegistration = false
+    private var recoveringPlayback = false
+    private val recovery = PlaybackRecovery()
+    /** A binder connection alone is not evidence that the WebView can accept commands. */
+    private val registrationTimeout = Runnable {
+        if (!shuttingDown && !quitRequested && awaitingRegistration && bound) {
+            AppLog.add("MEDIA", "WebView registration timed out; reconnecting")
+            lost()
+        }
+    }
+    private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
+    private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
+    private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested) stopSelf() }
+    private var snapshot = Snap()
+    private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
+        if (message.what == Msg.QUIT_ACK && quitRequested) {
+            handler.removeCallbacks(finishQuit)
+            finishQuit.run()
+        } else if (message.what == Msg.REGISTER_ACK && !quitRequested) {
+            // Only a response from the current binding can reset the retry budget.
+            if (bound && outgoing != null && message.data.getInt("epoch", -1) == registrationEpoch) {
+                awaitingRegistration = false
+                retries = 0
+                handler.removeCallbacks(retry)
+                handler.removeCallbacks(registrationTimeout)
+                drainPending()
+                send(Msg.SYNC)
+            }
+        } else if (message.what == Msg.STATE && !quitRequested && validWebMessage(message)) {
+            val fresh = Snap.from(message.data)
+            val resume = recovery.onExistingPlayer(fresh)
+            recoveringPlayback = recovery.active
+            snapshot = fresh
+            publish(fresh)
+            if (resume) send(Msg.PLAY)
+        } else if (message.what == Msg.PLAYER_MISSING && !quitRequested && validWebMessage(message)) {
+            // OPEN is allowed only when the WebView confirms the player is missing.
+            val wanted = recovery.onMissingPlayer()
+            recoveringPlayback = false
+            if (wanted != null) {
+                send(Msg.OPEN, Bundle().apply {
+                    putString("id", wanted.id)
+                    putLong("sec", wanted.posMs.coerceAtLeast(0L) / 1_000L)
+                })
+            }
+        } else if (message.what == Msg.RENDERER_GONE && !quitRequested && validWebMessage(message)) {
+            val previous = Snap.from(message.data)
+            recoveringPlayback = recovery.onRendererGone(previous)
+            snapshot = previous.copy(playing = false, buffering = recoveringPlayback)
+            publish(snapshot)
+        }
+        true
+    })
+    private var connection: ServiceConnection? = null
 
-    private lateinit var bridge: BridgePlayer
-    private lateinit var link: HostLink
-    private lateinit var session: MediaLibrarySession
-    private val main = Handler(Looper.getMainLooper())
+    private fun validWebMessage(message: Message): Boolean =
+        bound && !awaitingRegistration && outgoing != null &&
+            message.data.getInt("epoch", -1) == registrationEpoch
 
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var lastRecorded = ""
-    private var lastSavedAt = 0L
-    private var buttonsKey = ""
+    private fun newConnection(): ServiceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            if (connection !== this || shuttingDown) return
+            outgoing = Messenger(binder)
+            if (quitRequested) {
+                send(Msg.QUIT, replyTo = incoming)
+                handler.removeCallbacks(finishQuit)
+                handler.postDelayed(finishQuit, 1_500L)
+                return
+            }
+            handler.removeCallbacks(retry)
+            handler.removeCallbacks(registrationTimeout)
+            registrationEpoch++
+            awaitingRegistration = true
+            send(Msg.REGISTER, Bundle().apply { putInt("epoch", registrationEpoch) }, replyTo = incoming)
+            if (outgoing == null) return
+            handler.postDelayed(registrationTimeout, 5_000L)
+            // Wait for REGISTER_ACK before replaying commands to the new process.
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            if (connection === this) lost()
+        }
+        override fun onBindingDied(name: ComponentName) {
+            if (connection === this) lost()
+        }
+        override fun onNullBinding(name: ComponentName) {
+            if (connection === this) lost()
+        }
+    }
+    /** Replay only the commands queued when registration completed; failed sends
+     * can requeue a command without making this loop spin indefinitely. */
+    private fun drainPending() {
+        val toDrain = pending.size
+        for (index in 0 until toDrain) {
+            if (outgoing == null || shuttingDown || quitRequested || pending.isEmpty()) break
+            val (command, data) = pending.removeFirst()
+            send(command, data)
+        }
+    }
 
-    private val freezeTask = Runnable { link.freeze() }
-    private val stopTask = Runnable { exitApp() }
+    private fun ensureWeb() {
+        if (bound || shuttingDown) return
+        // Mark binding before invoking the framework: a synchronous failure must not
+        // leave the service believing it still has a live connection.
+        val attempt = newConnection()
+        connection = attempt
+        bound = runCatching {
+            bindService(Intent(this, WebHostService::class.java), attempt, BIND_AUTO_CREATE)
+        }.getOrDefault(false)
+        if (!bound) {
+            if (connection === attempt) connection = null
+            scheduleRetry()
+        }
+    }
+    private fun scheduleRetry() {
+        val hasWork = recovery.active || pending.isNotEmpty() || snapshot.playing
+        if (shuttingDown || quitRequested || !MediaRetryPolicy.shouldRetry(retries, hasWork)) return
+        handler.removeCallbacks(retry)
+        handler.postDelayed(retry, MediaRetryPolicy.delayMs(retries))
+        retries = (retries + 1).coerceAtMost(6)
+    }
+    private fun lost() {
+        handler.removeCallbacks(registrationTimeout)
+        outgoing = null
+        val wasBound = bound
+        val previous = connection
+        connection = null
+        bound = false
+        if (wasBound && previous != null) runCatching { unbindService(previous) }
+        if (!shuttingDown && !quitRequested && recovery.onLinkLost(snapshot)) {
+            recoveringPlayback = true
+            idleSince = 0L
+            // The WebView might still be playing; ask it before any navigation.
+            snapshot = snapshot.copy(playing = false, buffering = true)
+            publish(snapshot)
+            scheduleRetry()
+        } else if (!shuttingDown && !quitRequested && (pending.isNotEmpty() || awaitingRegistration)) {
+            // A binder can die before registration or the first playback snapshot arrives.
+            scheduleRetry()
+        }
+    }
+    private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
+        if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
+        if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
+        if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT ||
+            command == Msg.OPEN || command == Msg.SEARCH) {
+            recovery.cancel()
+            recoveringPlayback = false
+            if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
+        }
+        // Never issue queued play/open/search commands before WebHost acknowledged
+        // its new Messenger. Pause, stop and Quit must bypass this barrier.
+        val target = outgoing?.takeUnless {
+            awaitingRegistration && command != Msg.REGISTER && command != Msg.QUIT &&
+                command != Msg.PAUSE && command != Msg.STOP && command != Msg.FREEZE
+        } ?: run {
+            if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.FREEZE && command != Msg.STOP && command != Msg.PAUSE) {
+                if (pending.size >= maxPendingCommands) pending.removeFirst()
+                pending.addLast(command to data)
+            }
+            return
+        }
+        runCatching {
+            target.send(Message.obtain(null, command).apply {
+                this.data = data
+                this.replyTo = replyTo
+            })
+        }.onFailure {
+            AppLog.add("MEDIA", "Compat command failed: " + it.javaClass.simpleName)
+            if (command != Msg.REGISTER && command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) {
+                if (pending.size >= maxPendingCommands) pending.removeFirst()
+                pending.addLast(command to data)
+            }
+            lost()
+        }
+    }
+    private fun publish(s: Snap) {
+        val state = when {
+            s.buffering -> PlaybackStateCompat.STATE_BUFFERING
+            s.playing -> PlaybackStateCompat.STATE_PLAYING
+            s.ended -> PlaybackStateCompat.STATE_STOPPED
+            s.id.isNotEmpty() -> PlaybackStateCompat.STATE_PAUSED
+            else -> PlaybackStateCompat.STATE_NONE
+        }
+        val position = s.posMs.coerceAtLeast(0L)
+        val speed = when {
+            !s.playing -> 0f
+            !s.rate.isFinite() -> 1f
+            else -> s.rate.coerceIn(0.1f, 4f)
+        }
+        val queueChanged = queueGate.update(s.queue)
+        if (queueChanged) {
+            // Android Auto's Now Playing queue is a native MediaSession queue, not
+            // just browse-only "Up next" children.
+            val entries = queueGate.items().mapIndexed { i, item ->
+                MediaSessionCompat.QueueItem(
+                    MediaDescriptionCompat.Builder()
+                        .setMediaId("v:" + item.id)
+                        .setTitle(item.title)
+                        .setSubtitle(item.artist)
+                        .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg"))
+                        .build(),
+                    i.toLong(),
+                )
+            }
+            session.setQueue(entries)
+            session.setQueueTitle("Up next")
+            notifyChildrenChanged(ROOT)
+            notifyChildrenChanged("queue")
+        }
+        val actions = actionsFor(s)
+        val playbackChanged = updateGate.playbackChanged(
+            state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
+        )
+        if (playbackChanged || queueChanged) {
+            val items = queueGate.items()
+            val activeIndex = items.indexOfFirst { it.id == s.id }
+            session.setPlaybackState(PlaybackStateCompat.Builder()
+                .setActions(actions)
+                .setState(state, position, speed)
+                .setActiveQueueItemId(if (activeIndex >= 0) activeIndex.toLong()
+                    else MediaSessionCompat.QueueItem.UNKNOWN_ID.toLong())
+                .build())
+        }
+        val artwork = MediaArtworkLoader.urlFor(s.art, s.id)
+        artworkLoader.request(artwork)
+        if (updateGate.metadataChanged(s.id, s.title, s.artist, artwork, s.durMs.coerceAtLeast(0L))) {
+            val metadata = MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, s.id)
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, s.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, s.artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, s.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, s.artist)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, s.durMs.coerceAtLeast(0L))
+                .putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artwork)
+            artworkLoader.bitmapFor(artwork)?.let {
+                metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it)
+                metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
+            }
+            session.setMetadata(metadata.build())
+        }
+        if (s.id.isNotBlank()) {
+            if (s.playing && lastRecentId != s.id) {
+                Library.noteStarted(s)
+                lastRecentId = s.id
+                notifyChildrenChanged("recent")
+            }
+            if (lastSavedId != s.id || lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || (!s.playing && lastSavedPosition != s.posMs)) {
+                Library.saveLast(s)
+                lastSavedPosition = s.posMs
+                lastSavedId = s.id
+            }
+        }
+        if (s.playing) recoveringPlayback = false
+        if (quitRequested) {
+            updateNotification(s)
+            return
+        }
+        if (s.playing) {
+            idleSince = 0L
+            handler.removeCallbacks(freeze)
+            handler.removeCallbacks(idleStop)
+        } else if (recoveringPlayback) {
+            // A disconnected WebView is not an idle playback session.
+            idleSince = 0L
+            handler.removeCallbacks(freeze)
+            handler.removeCallbacks(idleStop)
+        } else if (idleSince == 0L) {
+            idleSince = android.os.SystemClock.elapsedRealtime()
+            handler.postDelayed(freeze, 120_000L)
+            handler.postDelayed(idleStop, 900_000L)
+        }
+        updateNotification(s)
+    }
 
     override fun onCreate() {
         super.onCreate()
+        notifications.createChannel()
         Library.init(this)
-
-        bridge = BridgePlayer(Looper.getMainLooper())
-        link = HostLink(this, bridge)
-        bridge.host = link
-        link.onSnapshot = ::onSnapshot
-
-        val openApp = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        session = MediaLibrarySession.Builder(this, ControlsPlayer(bridge), LibraryCallback())
-            .setSessionActivity(openApp)
-            .setMediaButtonPreferences(buttons())
-            .build()
+        session = MediaSessionCompat(this, "AAYoutube").apply {
+            // Android Auto can redirect media-card taps to the app's video
+            // projection when the same package exports both entry points.
+            // Follow AABrowser: keep the car's native media card in place.
+            setSessionActivity(PendingIntent.getActivity(
+                this@PlaybackService, 0,
+                Intent(this@PlaybackService, NoOpMediaActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            ))
+            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() {
+                    val last = Library.last
+                    if (snapshot.id.isBlank() && last != null) {
+                        send(Msg.OPEN, Bundle().apply {
+                            putString("id", last.id)
+                            putLong("sec", last.posSec)
+                        })
+                    } else send(Msg.PLAY)
+                }
+                override fun onPause() {
+                    send(Msg.PAUSE)
+                    snapshot = snapshot.copy(playing = false, buffering = false)
+                    publish(snapshot)
+                }
+                override fun onSkipToNext() {
+                    // YouTube sometimes omits next/prev availability despite
+                    // supplying a complete Mix/playlist queue. Respect the
+                    // reported player when it supports skipping, otherwise
+                    // navigate the native queue by ID.
+                    val fallback = if (snapshot.canNext) null else
+                        MusicQueueNavigation.next(snapshot.id, queueGate.items())
+                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
+                    else send(Msg.NEXT)
+                }
+                override fun onSkipToPrevious() {
+                    val fallback = if (snapshot.canPrev) null else
+                        MusicQueueNavigation.previous(snapshot.id, queueGate.items())
+                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
+                    else send(Msg.PREV)
+                }
+                override fun onSkipToQueueItem(id: Long) {
+                    val item = MusicQueueNavigation.at(id, queueGate.items()) ?: return
+                    send(Msg.OPEN, Bundle().apply { putString("id", item) })
+                }
+                override fun onStop() {
+                    send(Msg.STOP)
+                    snapshot = snapshot.copy(playing = false, buffering = false)
+                    publish(snapshot)
+                }
+                override fun onCustomAction(action: String?, extras: Bundle?) {
+                    when (action) {
+                        Commands.HELLO -> ensureWeb()
+                        Commands.FAVOURITE -> {
+                            Library.toggleFavourite(snapshot)
+                            notifyChildrenChanged("favourites")
+                        }
+                        Commands.EXIT -> requestQuit()
+                    }
+                }
+                override fun onSeekTo(pos: Long) = send(Msg.SEEK, Bundle().apply { putLong("ms", pos.coerceAtLeast(0L)) })
+                override fun onFastForward() = onSeekTo((snapshot.posMs.coerceAtLeast(0L) + 30_000L).coerceAtMost(snapshot.durMs.takeIf { it > 0 } ?: Long.MAX_VALUE))
+                override fun onRewind() = onSeekTo((snapshot.posMs - 10_000L).coerceAtLeast(0L))
+                override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
+                    when {
+                        mediaId?.startsWith("v:") == true ->
+                            send(Msg.OPEN, Bundle().apply { putString("id", mediaId.removePrefix("v:")) })
+                        mediaId?.startsWith("q:") == true ->
+                            onPlayFromSearch(mediaId.removePrefix("q:"), extras)
+                    }
+                }
+                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+                    if (query.isNullOrBlank()) onPlay()
+                    else send(Msg.SEARCH, Bundle().apply { putString("q", query) })
+                }
+            })
+            setPlaybackState(PlaybackStateCompat.Builder()
+                .setActions(ACTIONS)
+                .setState(PlaybackStateCompat.STATE_NONE, 0, 1f)
+                .build())
+            isActive = true
+        }
+        sessionToken = session.sessionToken
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
+    private fun requestQuit() {
+        if (quitRequested || shuttingDown) return
+        quitRequested = true
+        pending.clear()
+        recoveringPlayback = false
+        recovery.cancel()
+        awaitingRegistration = false
+        handler.removeCallbacks(retry)
+        handler.removeCallbacks(registrationTimeout)
+        handler.removeCallbacks(freeze)
+        handler.removeCallbacks(idleStop)
+        snapshot = snapshot.copy(playing = false, buffering = false)
+        publish(snapshot)
+        if (outgoing == null) ensureWeb()
+        send(Msg.QUIT, replyTo = incoming)
+        handler.removeCallbacks(finishQuit)
+        handler.postDelayed(finishQuit, 1_500L)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A startForegroundService caller must be promoted before WebView IPC responds.
+        if (!foreground) {
+            runCatching {
+                startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notifications.placeholder())
+                foreground = true
+                lastNotification = null
+            }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
+        }
+        if (intent?.action == ACTION_QUIT) requestQuit()
+        // The placeholder is only a startup requirement, not an idle media card.
+        handler.post { if (!shuttingDown) updateNotification(snapshot) }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    override fun onGetRoot(
+        clientPackageName: String,
+        clientUid: Int,
+        rootHints: Bundle?
+    ): BrowserRoot {
+        AppLog.add("MEDIA", "Browse root requested from " + clientPackageName)
+        return BrowserRoot(ROOT, null)
+    }
+
+    override fun onLoadChildren(
+        parentId: String,
+        result: Result<MutableList<MediaBrowserCompat.MediaItem>>
+    ) {
+        val children = when (parentId) {
+            ROOT -> listOfNotNull(
+                folder("recent", "Recently played"),
+                folder("favourites", "Favourites"),
+                folder("queue", "Up next").takeIf { queueGate.items().isNotEmpty() }
+            )
+            "recent" -> Library.recents().map { playable(it) }
+            "favourites" -> Library.favourites().map { playable(it) }
+            "queue" -> queueGate.items().map { playable(it.id, it.title, it.artist) }
+            else -> emptyList()
+        }
+        result.sendResult(children.toMutableList())
+    }
+
+    private fun folder(id: String, title: String): MediaBrowserCompat.MediaItem =
+        MediaBrowserCompat.MediaItem(
+            MediaDescriptionCompat.Builder().setMediaId(id).setTitle(title).build(),
+            MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
+        )
+
+    private fun playable(item: Library.Item) = playable(item.id, item.title, item.artist)
+
+    private fun playable(id: String, title: String, artist: String) =
+        MediaBrowserCompat.MediaItem(
+            MediaDescriptionCompat.Builder().setMediaId("v:" + id)
+                .setTitle(title).setSubtitle(artist)
+                .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${id}/hqdefault.jpg")).build(),
+            MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
+        )
+
+    override fun onSearch(query: String, extras: Bundle?, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
+        result.sendResult(mutableListOf(MediaBrowserCompat.MediaItem(
+            MediaDescriptionCompat.Builder().setMediaId("q:" + query)
+                .setTitle("Play search results").setSubtitle(query).build(),
+            MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
+        )))
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!bridge.playingNow()) exitApp()
+        if (!snapshot.playing && !snapshot.buffering && !recoveringPlayback) stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
-        main.removeCallbacksAndMessages(null)
-        setWake(false)
-        link.release()
+        shuttingDown = true
+        handler.removeCallbacksAndMessages(null)
+        val activeConnection = connection
+        connection = null
+        if (bound && activeConnection != null) runCatching { unbindService(activeConnection) }
+        bound = false
+        outgoing = null
+        pending.clear()
+        recovery.cancel()
+        artworkLoader.shutdown()
+        if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
+        session.isActive = false
         session.release()
-        bridge.release()
         super.onDestroy()
     }
 
-    // ---------------------------------------------------------------- what the page reports
-
-    private fun onSnapshot(s: Snap) {
-        val idChanged = s.id != bridge.snap.id
-        val wasPlaying = bridge.snap.playing
-        bridge.update(s)
-
-        if (s.id.isNotEmpty() && s.title.isNotEmpty() && s.id != lastRecorded) {
-            lastRecorded = s.id
-            Library.noteStarted(s)
-        }
-        // Remember the position when something notable happens, and every ~30 s while playing.
-        val now = SystemClock.elapsedRealtime()
-        if (s.id.isNotEmpty() && (idChanged || (wasPlaying && !s.playing) || (s.playing && now - lastSavedAt > 25_000))) {
-            lastSavedAt = now
-            Library.saveLast(s)
-        }
-        setWake(s.playing)
-        scheduleIdle(s.playing)
-        refreshButtons()
-    }
-
-    private fun setWake(on: Boolean) {
-        if (on) {
-            if (wakeLock?.isHeld != true) {
-                wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
-                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AAYoutube:play")
-                    .apply { setReferenceCounted(false); acquire(6 * 60 * 60 * 1000L) }
+    private fun updateNotification(s: Snap) {
+        if (!s.playing) {
+            lastNotification = null
+            if (foreground) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                foreground = false
             }
-        } else {
-            wakeLock?.let { if (it.isHeld) it.release() }
+            return
+        }
+        val cover = MediaArtworkLoader.urlFor(s.art, s.id)
+        val key = NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev,
+            cover, artworkLoader.bitmapFor(cover) != null)
+        if (foreground && lastNotification == key) return
+        runCatching {
+            startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
+                notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover)))
+            foreground = true
+            lastNotification = key
+        }.onFailure {
+            AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}")
         }
     }
 
-    private fun scheduleIdle(playing: Boolean) {
-        main.removeCallbacks(freezeTask)
-        main.removeCallbacks(stopTask)
-        if (!playing) {
-            main.postDelayed(freezeTask, FREEZE_AFTER_MS)
-            main.postDelayed(stopTask, STOP_AFTER_MS)
-        }
-    }
-
-    /** Exit button, or nothing left to do: stop playback, let the web process go, stop the service. */
-    private fun exitApp() {
-        main.removeCallbacks(freezeTask)
-        main.removeCallbacks(stopTask)
-        link.quit()
-        link.release()
-        bridge.reset()
-        setWake(false)
-        stopSelf()
-    }
-
-    // ---------------------------------------------------------------- notification buttons
-
-    private fun buttons(): List<CommandButton> {
-        val s = bridge.snap
-        val fav = s.id.isNotEmpty() && Library.isFavourite(s.id)
-        return listOfNotNull(
-            CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
-                .setDisplayName("Previous")
-                .setSlots(CommandButton.SLOT_BACK)
-                .build(),
-            CommandButton.Builder(CommandButton.ICON_NEXT)
-                .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
-                .setDisplayName("Next")
-                .setSlots(CommandButton.SLOT_FORWARD)
-                .build(),
-            if (s.id.isEmpty()) null else
-                CommandButton.Builder(if (fav) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
-                    .setCustomIconResId(if (fav) R.drawable.ic_heart_filled else R.drawable.ic_heart)
-                    .setSessionCommand(Commands.FAVOURITE)
-                    .setDisplayName(if (fav) "Remove from favourites" else "Add to favourites")
-                    .setSlots(CommandButton.SLOT_OVERFLOW)
-                    .build(),
-            CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-                .setCustomIconResId(R.drawable.ic_exit)
-                .setSessionCommand(Commands.EXIT)
-                .setDisplayName("Exit")
-                .setSlots(CommandButton.SLOT_OVERFLOW)
-                .build(),
-        )
-    }
-
-    private fun refreshButtons() {
-        val s = bridge.snap
-        val key = s.id + Library.isFavourite(s.id)
-        if (key == buttonsKey) return
-        buttonsKey = key
-        session.setMediaButtonPreferences(buttons())
-    }
-
-    // ---------------------------------------------------------------- browse tree
-
-    private fun folder(id: String, title: String) = MediaItem.Builder()
-        .setMediaId(id)
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle(title)
-                .setIsBrowsable(true)
-                .setIsPlayable(false)
-                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-                .build(),
-        )
-        .build()
-
-    private fun folders() = listOf(
-        folder(RECENT, "Recently played"),
-        folder(FAVOURITES, "Favourites"),
-    )
-
-    private fun videoItem(id: String, title: String, artist: String) = MediaItem.Builder()
-        .setMediaId("v:$id")
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle(title.ifEmpty { "YouTube video" })
-                .setArtist(artist.ifEmpty { "YouTube" })
-                .setArtworkUri(Uri.parse("https://i.ytimg.com/vi/$id/mqdefault.jpg"))
-                .setIsPlayable(true)
-                .setIsBrowsable(false)
-                .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                .build(),
-        )
-        .build()
-
-    private fun searchItem(query: String) = MediaItem.Builder()
-        .setMediaId("q:$query")
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle("Play \"$query\"")
-                .setArtist("YouTube search")
-                .setIsPlayable(true)
-                .setIsBrowsable(false)
-                .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                .build(),
-        )
-        .build()
-
-    private fun pageOf(items: List<MediaItem>, page: Int, pageSize: Int): ImmutableList<MediaItem> {
-        if (pageSize <= 0 || pageSize == Int.MAX_VALUE) return ImmutableList.copyOf(items)
-        val from = (page.toLong() * pageSize).coerceIn(0L, items.size.toLong()).toInt()
-        val to = minOf(items.size, from + pageSize)
-        return ImmutableList.copyOf(items.subList(from, to))
-    }
-
-    private inner class LibraryCallback : MediaLibrarySession.Callback {
-
-        override fun onConnect(
-            session: MediaSession,
-            controller: MediaSession.ControllerInfo,
-        ): MediaSession.ConnectionResult {
-            val base = super.onConnect(session, controller)
-            if (!base.isAccepted) return base
-            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
-                .setAvailableSessionCommands(
-                    base.availableSessionCommands.buildUpon()
-                        .add(Commands.HELLO)
-                        .add(Commands.FAVOURITE)
-                        .add(Commands.EXIT)
-                        .build(),
-                )
-                .setAvailablePlayerCommands(base.availablePlayerCommands)
-                .build()
-        }
-
-        override fun onCustomCommand(
-            session: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            customCommand: SessionCommand,
-            args: Bundle,
-        ): ListenableFuture<SessionResult> {
-            when (customCommand.customAction) {
-                Commands.HELLO.customAction -> link.ensureBound()
-                Commands.FAVOURITE.customAction -> {
-                    Library.toggleFavourite(bridge.snap)
-                    buttonsKey = ""
-                    refreshButtons()
-                }
-                Commands.EXIT.customAction -> exitApp()
-                else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+    /** Android Auto hides buttons not declared in PlaybackStateCompat.
+     * YouTube frequently reports canNext/canPrev=false even with an active
+     * playlist; native skip handling falls back to our captured queue. */
+    private fun actionsFor(s: Snap): Long {
+        var actions = ACTIONS
+        if (s.id.isNotBlank()) {
+            actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            if (queueGate.items().isNotEmpty()) {
+                actions = actions or PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM
             }
-            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
-
-        override fun onGetLibraryRoot(
-            session: MediaLibrarySession,
-            browser: MediaSession.ControllerInfo,
-            params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<MediaItem>> {
-            val extras = Bundle().apply {
-                putBoolean(CONTENT_STYLE_SUPPORTED, true)
-                putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_LIST)
-                putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST)
-                putBoolean(SEARCH_SUPPORTED, true)
-            }
-            val rootParams = LibraryParams.Builder().setExtras(extras).build()
-            return Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "AAYoutube"), rootParams))
+        if (!s.live && !s.ad && s.durMs > 0L) {
+            actions = actions or PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_FAST_FORWARD or PlaybackStateCompat.ACTION_REWIND
         }
-
-        override fun onGetChildren(
-            session: MediaLibrarySession,
-            browser: MediaSession.ControllerInfo,
-            parentId: String,
-            page: Int,
-            pageSize: Int,
-            params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            fun result(items: List<MediaItem>) = LibraryResult.ofItemList(pageOf(items, page, pageSize), params)
-            val list = when (parentId) {
-                ROOT -> folders()
-                RECENT -> Library.recents().take(BROWSE_LIMIT).map { videoItem(it.id, it.title, it.artist) }
-                FAVOURITES -> Library.favourites().take(BROWSE_LIMIT).map { videoItem(it.id, it.title, it.artist) }
-                else -> return Futures.immediateFuture(
-                    LibraryResult.ofError<ImmutableList<MediaItem>>(LibraryResult.RESULT_ERROR_BAD_VALUE),
-                )
-            }
-            return Futures.immediateFuture(result(list))
-        }
-
-        override fun onGetItem(
-            session: MediaLibrarySession,
-            browser: MediaSession.ControllerInfo,
-            mediaId: String,
-        ): ListenableFuture<LibraryResult<MediaItem>> {
-            if (mediaId == ROOT) return Futures.immediateFuture(LibraryResult.ofItem(folder(ROOT, "AAYoutube"), null))
-            folders().firstOrNull { it.mediaId == mediaId }?.let {
-                return Futures.immediateFuture(LibraryResult.ofItem(it, null))
-            }
-            val item = when {
-                mediaId.startsWith("q:") -> searchItem(mediaId.removePrefix("q:"))
-                mediaId.startsWith("v:") -> {
-                    val id = mediaId.removePrefix("v:")
-                    val known = Library.find(id)
-                    videoItem(id, known?.title.orEmpty(), known?.artist.orEmpty())
-                }
-                else -> return Futures.immediateFuture(
-                    LibraryResult.ofError<MediaItem>(LibraryResult.RESULT_ERROR_BAD_VALUE),
-                )
-            }
-            return Futures.immediateFuture(LibraryResult.ofItem(item, null))
-        }
-
-        // Search: the result is one row, "Play <what you said>"; the page does the actual search.
-        override fun onSearch(
-            session: MediaLibrarySession,
-            browser: MediaSession.ControllerInfo,
-            query: String,
-            params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<Void>> {
-            main.post { session.notifySearchResultChanged(browser, query, 1, params) }
-            return Futures.immediateFuture(LibraryResult.ofVoid())
-        }
-
-        override fun onGetSearchResult(
-            session: MediaLibrarySession,
-            browser: MediaSession.ControllerInfo,
-            query: String,
-            page: Int,
-            pageSize: Int,
-            params: LibraryParams?,
-        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
-            Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.of(searchItem(query)), params))
-
-        /** Every "play this" request (app, Auto, voice) arrives here with a video id or a search query. */
-        override fun onAddMediaItems(
-            mediaSession: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> {
-            val resolved = mediaItems.mapNotNull { request ->
-                when {
-                    request.mediaId.startsWith("v:") -> {
-                        val id = request.mediaId.removePrefix("v:")
-                        val known = Library.find(id)
-                        videoItem(id, known?.title.orEmpty(), known?.artist.orEmpty())
-                    }
-                    request.mediaId.startsWith("q:") -> request
-                    request.mediaId.isEmpty() -> {
-                        // Voice: "Play lo-fi on AAYoutube". An empty query means "play something".
-                        val q = request.requestMetadata.searchQuery.orEmpty()
-                        if (q.isNotBlank()) searchItem(q)
-                        else Library.last?.let { videoItem(it.id, it.title, it.artist) }
-                    }
-                    else -> null
-                }
-            }.toMutableList()
-            return Futures.immediateFuture(resolved)
-        }
-
-        /** Only Android Auto may implicitly resume the last video; unrelated media clients must not. */
-        override fun onPlaybackResumption(
-            mediaSession: MediaSession,
-            controller: MediaSession.ControllerInfo,
-        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            // Media3 may request playback resumption from other system/media clients when
-            // they interact with audio. Never let those clients start AAYoutube implicitly.
-            if (controller.packageName != ANDROID_AUTO_PACKAGE) {
-                return Futures.immediateFailedFuture(
-                    UnsupportedOperationException("Playback resumption is restricted to Android Auto"),
-                )
-            }
-            val last = Library.last
-                ?: return Futures.immediateFailedFuture(UnsupportedOperationException("Nothing played yet"))
-            return Futures.immediateFuture(
-                MediaSession.MediaItemsWithStartPosition(
-                    listOf(videoItem(last.id, last.title, last.artist)),
-                    0,
-                    last.posSec * 1000,
-                ),
-            )
-        }
+        return actions
     }
 
-    private companion object {
-        const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
-        const val ROOT = "root"
-        const val RECENT = "recent"
-        const val FAVOURITES = "favourites"
-        const val BROWSE_LIMIT = 20
-
-        const val FREEZE_AFTER_MS = 2 * 60_000L
-        const val STOP_AFTER_MS = 15 * 60_000L
-
-        // Android Auto layout hints
-        const val CONTENT_STYLE_SUPPORTED = "android.media.browse.CONTENT_STYLE_SUPPORTED"
-        const val CONTENT_STYLE_BROWSABLE_HINT = "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT"
-        const val CONTENT_STYLE_PLAYABLE_HINT = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"
-        const val SEARCH_SUPPORTED = "android.media.browse.SEARCH_SUPPORTED"
-        const val CONTENT_STYLE_LIST = 1
+    companion object {
+        const val ACTION_QUIT = "com.aayoutube.app.action.QUIT"
+        private const val ROOT = "root"
+        const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
+            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
+            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+            PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH or PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
     }
 }
