@@ -42,7 +42,7 @@ class TopSettingsNavigationContractTest {
         val text = source()
         val settings = text.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
-        assertTrue(settings.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update)"))
+        assertTrue(settings.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update)"))
         val quit = settings.indexOf("Triple(\"Quit\",")
         val home = settings.indexOf("Triple(\"Home\",")
         val back = settings.indexOf("Triple(\"Back\",")

@@ -143,7 +143,6 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
     Lyrics("Lyrics", Icons.Filled.Info),
-    Logs("Logs", Icons.Rounded.Article),
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
@@ -395,7 +394,6 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Watch -> Unit
                             Tab.Features -> FeaturesPage()
                             Tab.Lyrics -> LyricsSettingsPage()
-                            Tab.Logs -> LogsPage()
                             Tab.Update -> UpdatePage()
                             Tab.Info -> InfoPage()
                             Tab.Settings -> AAYoutubeSettingsMenu(
@@ -712,8 +710,8 @@ private fun AAYoutubeSettingsMenu(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
             )
-            listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Logs, Tab.Update).forEach { destination ->
-                if (destination == Tab.Logs) HorizontalDivider()
+            listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+                if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
                         Text(if (destination == Tab.Update) "About & updates" else destination.label)
@@ -722,7 +720,6 @@ private fun AAYoutubeSettingsMenu(
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
-                            Tab.Logs -> "Diagnostics and session events"
                             Tab.Info -> "App information"
                             Tab.Update -> "Version, experimental releases and update checks"
                             else -> ""
@@ -932,104 +929,6 @@ fun InfoPage() {
             }
         }
 
-    }
-}
-
-// ---------------------------------------------------------------------------- logs
-
-/** Splits log entries into screen rows of [cols] characters, so long lines wrap. */
-private fun wrapRows(entries: List<String>, cols: Int): List<String> {
-    val rows = ArrayList<String>(entries.size + 16)
-    for (entry in entries) {
-        for (part in entry.split('\n')) {
-            if (part.length <= cols) {
-                rows.add(part)
-                continue
-            }
-            rows.add(part.substring(0, cols))
-            var at = cols
-            val room = (cols - 2).coerceAtLeast(1)
-            while (at < part.length) {
-                rows.add("  " + part.substring(at, minOf(at + room, part.length)))
-                at += room
-            }
-        }
-    }
-    return rows
-}
-
-@Composable
-fun LogsPage() {
-    val context = LocalContext.current
-    val enabled by AppLog.enabled.collectAsState()
-    LaunchedEffect(Unit) {
-        while (true) {
-            AppLog.refreshFromDisk()
-            delay(3_000L)
-        }
-    }
-    val version by AppLog.version.collectAsState()
-    var page by rememberSaveable { mutableIntStateOf(0) }
-    var follow by rememberSaveable { mutableStateOf(true) }
-    var pages by remember { mutableIntStateOf(1) }
-    var current by remember { mutableIntStateOf(0) }
-
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Enable logging", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Switch(checked = enabled, onCheckedChange = { AppLog.setEnabled(it) })
-        }
-        if (!enabled && AppLog.size == 0) {
-            Text("Detailed logging is off. Fatal crash reports are still saved locally.")
-            return@Column
-        }
-        if (!enabled) Text("Detailed logging is off. Saved crash reports remain available.")
-
-        val lineStyle = MaterialTheme.typography.labelSmall.copy(
-            fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp,
-        )
-        Card(
-            Modifier.fillMaxWidth().weight(1f),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize().padding(10.dp)) {
-                val density = LocalDensity.current
-                val rowDp = with(density) { 14.sp.toDp() }
-                // A monospace character is about 0.6 of the font size wide.
-                val charDp = with(density) { (11.sp * 0.6f).toDp() }
-                val cols = ((maxWidth / charDp).toInt() - 1).coerceAtLeast(10)
-                val perPage = (maxHeight / rowDp).toInt().coerceAtLeast(1)
-
-                val rows = remember(version, cols) { wrapRows(AppLog.slice(0, Int.MAX_VALUE), cols) }
-                val count = (rows.size + perPage - 1) / perPage
-                val total = count.coerceAtLeast(1)
-                val shown = if (follow) total - 1 else page.coerceIn(0, total - 1)
-                SideEffect { pages = total; current = shown }
-
-                Column(Modifier.fillMaxSize()) {
-                    rows.drop(shown * perPage).take(perPage).forEach {
-                        Text(it, style = lineStyle, maxLines = 1, softWrap = false)
-                    }
-                }
-            }
-        }
-
-        // Left, centre, right.
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            AppButton("Prev", Icons.AutoMirrored.Filled.KeyboardArrowLeft, enabled = current > 0) { page = current - 1; follow = false }
-            Text("${current + 1} / $pages", style = MaterialTheme.typography.labelLarge)
-            AppButton("Next", Icons.AutoMirrored.Filled.KeyboardArrowRight, enabled = current < pages - 1) {
-                page = current + 1; follow = page >= pages - 1
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            AppButton("Copy", Icons.Filled.ContentCopy) {
-                val cm = context.getSystemService(ClipboardManager::class.java)
-                cm.setPrimaryClip(ClipData.newPlainText("AAYoutube logs", AppLog.all()))
-                Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
-            }
-            AppButton("Clear all", Icons.Filled.DeleteSweep) { AppLog.clear(); follow = true }
-        }
     }
 }
 
