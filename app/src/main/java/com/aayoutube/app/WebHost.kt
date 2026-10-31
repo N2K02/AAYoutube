@@ -637,6 +637,17 @@ object WebHost {
 
     private fun open(id: String, startSec: Long) {
         if (id.isBlank()) return
+        // Android Auto may reissue PLAY or media selection after a browser
+        // reconnect while the SAME Chromium player already survives. Reloading
+        // it causes sound interruptions and extra OPEN -> page load loops.
+        if (web != null && snapshot.value.id == id && isOnWatchPage()) {
+            AppLog.add("LINK", "Reusing current video instead of reloading")
+            val currentSec = snapshot.value.posMs.coerceAtLeast(0L) / 1000
+            if (startSec > 0 && kotlin.math.abs(startSec - currentSec) > 4)
+                cmd("seek", startSec.toString())
+            if (!snapshot.value.playing) cmd("play")
+            return
+        }
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
         // aay=1 tells the page script to start playing as soon as the video is ready.
         load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")

@@ -248,10 +248,31 @@ class PlaybackService : MediaBrowserServiceCompat() {
             !s.rate.isFinite() -> 1f
             else -> s.rate.coerceIn(0.1f, 4f)
         }
+        val queueChanged = queueGate.update(s.queue)
+        if (queueChanged) {
+            // Android Auto's Now Playing queue is a native MediaSession queue, not
+            // just browse-only "Up next" children.
+            val entries = queueGate.items().mapIndexed { i, item ->
+                MediaSessionCompat.QueueItem(
+                    MediaDescriptionCompat.Builder()
+                        .setMediaId("v:" + item.id)
+                        .setTitle(item.title)
+                        .setSubtitle(item.artist)
+                        .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg"))
+                        .build(),
+                    i.toLong(),
+                )
+            }
+            session.setQueue(entries)
+            session.setQueueTitle("Up next")
+            notifyChildrenChanged(ROOT)
+            notifyChildrenChanged("queue")
+        }
         val actions = actionsFor(s)
-        if (updateGate.playbackChanged(
-                state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
-            )) {
+        val playbackChanged = updateGate.playbackChanged(
+            state, actions, position, speed, android.os.SystemClock.elapsedRealtime()
+        )
+        if (playbackChanged || queueChanged) {
             val items = queueGate.items()
             val activeIndex = items.indexOfFirst { it.id == s.id }
             session.setPlaybackState(PlaybackStateCompat.Builder()
@@ -277,25 +298,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
             }
             session.setMetadata(metadata.build())
-        }
-        if (queueGate.update(s.queue)) {
-            // Android Auto's Now Playing queue is a native MediaSession queue, not
-            // just browse-only "Up next" children.
-            val entries = queueGate.items().mapIndexed { i, item ->
-                MediaSessionCompat.QueueItem(
-                    MediaDescriptionCompat.Builder()
-                        .setMediaId("v:" + item.id)
-                        .setTitle(item.title)
-                        .setSubtitle(item.artist)
-                        .setIconUri(android.net.Uri.parse("https://i.ytimg.com/vi/${item.id}/hqdefault.jpg"))
-                        .build(),
-                    i.toLong(),
-                )
-            }
-            session.setQueue(entries)
-            session.setQueueTitle("Up next")
-            notifyChildrenChanged(ROOT)
-            notifyChildrenChanged("queue")
         }
         if (s.id.isNotBlank()) {
             if (s.playing && lastRecentId != s.id) {

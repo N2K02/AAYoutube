@@ -225,3 +225,13 @@ callback. Pure queue navigation tests cover boundaries and missing items. The
 notification's standard Previous/Play-Pause/Next controls now agree with the
 media-session capabilities. CI does not prove the video launch failure is fixed:
 check CAR logs for service requested, activity resolved and activity launched.
+
+## Log-based media reconnection refinement
+
+The 09:00:00/09:00:37 logs show repeated WebHost OPEN commands for the same
+video. The web handler now reuses an existing matching watch-page player
+instead of navigating and reloading the decoder. It seeks only if a requested
+restore timestamp actually differs, and resumes only if the surviving video
+was paused. Android Auto's Native queue is published before evaluating the
+available playback actions, and an active queue-item change forces a playback
+state refresh even if the position/speed remain unchanged.
