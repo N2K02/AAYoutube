@@ -22,6 +22,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
@@ -376,7 +378,13 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         controlsVersion++
                     },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
-                )
+                ) {
+                    BarIcon(
+                        Icons.Rounded.PowerSettingsNew,
+                        "Quit AAYoutube", BarSize.Car,
+                        onClick = { quitFromCar() },
+                    )
+                }
             }
         }
     }
@@ -413,6 +421,22 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         playerContainer?.let { frame ->
             if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
         }
+    }
+
+    /**
+     * Same Quit as the phone: the media process stops playback, its session and
+     * notification, then tells the :web process to pause and release the
+     * WebViews. The intent is a fallback while MediaBrowser is reconnecting.
+     */
+    private fun quitFromCar() {
+        AppLog.add("CAR", "Quit from car controls")
+        mediaController?.command(Commands.EXIT)
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                this, android.content.Intent(this, PlaybackService::class.java)
+                    .setAction(PlaybackService.ACTION_QUIT)
+            )
+        }.onFailure { AppLog.add("CAR", "Quit intent failed: " + it.javaClass.simpleName) }
     }
 
     /** The native media process remains the sole owner of Android Auto media commands. */

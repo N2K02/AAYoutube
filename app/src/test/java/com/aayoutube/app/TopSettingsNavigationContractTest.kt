@@ -13,20 +13,14 @@ class TopSettingsNavigationContractTest {
             .firstOrNull { it.isFile }?.readText() ?: error("Missing $relative")
     }
 
-    @Test fun headerOwnsCompactSettingsAndTheMainScreenHasNoAppBottomBar() {
+    @Test fun headerHasNoGearAndTheMainScreenHasNoAppBottomBar() {
         val text = source()
         val header = text.substringAfter("private fun AAYoutubePageHeader(")
             .substringBefore("fun AppRoot(")
         val root = text.substringAfter("fun AppRoot(")
             .substringBefore("// ---------------------------------------------------------------------------- web")
-        assertTrue(header.contains("Box(modifier = Modifier.size(width = 56.dp, height = 48.dp))"))
-        assertTrue(header.contains("onClick = onSettings"))
-        assertTrue(header.contains("modifier = Modifier.align(Alignment.CenterStart).size(40.dp)"))
-        assertTrue(header.contains("modifier = Modifier.size(20.dp)"))
-        assertTrue(header.contains("N2K02UpdateBadge("))
         assertFalse(header.contains("FilledTonalIconButton(onClick = onSettings)"))
         assertTrue(header.contains("N2K02AppIcon"))
-        assertTrue(root.contains("onSettings = {"))
         assertFalse(root.contains("NavigationBar("))
         assertFalse(root.contains("NavigationBarItem("))
         assertFalse(root.contains("ModalBottomSheet("))
@@ -38,21 +32,14 @@ class TopSettingsNavigationContractTest {
         assertFalse(text.contains("autoHideMenu"))
     }
 
-    @Test fun homeBackQuitAreInsideExistingSettingsNotInAnotherMenu() {
+    @Test fun settingsKeepItsSubmenusWithoutABottomBar() {
         val text = source()
         val settings = text.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
         assertTrue(settings.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update)"))
-        val quit = settings.indexOf("Triple(\"Quit\",")
-        val home = settings.indexOf("Triple(\"Home\",")
-        val back = settings.indexOf("Triple(\"Back\",")
-        assertTrue("Navigation must be Quit, Home, Back", quit >= 0 && quit < home && home < back)
         assertTrue(settings.contains("Modifier.weight(1f).fillMaxWidth().verticalScroll"))
-        assertTrue(settings.contains("NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer)"))
-        assertTrue(settings.contains("NavigationBarItem("))
-        assertTrue(settings.indexOf("NavigationBar(") > settings.indexOf("verticalScroll"))
-        assertTrue(settings.contains("alwaysShowLabel = true"))
-        assertTrue(text.contains("onBack = goBack"))
-        assertTrue(text.contains("onQuit = { activity.quit() }"))
+        assertFalse(settings.contains("NavigationBar("))
+        assertFalse(settings.contains("NavigationBarItem("))
+        assertTrue(text.contains("BackHandler(enabled = true) { goBack() }"))
     }
 }

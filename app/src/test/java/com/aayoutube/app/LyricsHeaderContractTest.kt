@@ -16,7 +16,10 @@ class LyricsHeaderContractTest {
         assertTrue(header.contains("Icons.Filled.MusicNote"))
         assertTrue(header.contains("enabled = lyricsAvailable"))
         assertTrue(header.contains("onClick = onLyrics"))
-        assertTrue(header.indexOf("onClick = onLyrics") < header.indexOf("onClick = onSettings"))
+        // On the video rail, Lyrics comes before Settings and Quit.
+        val rail = ui.substringAfter("// App-owned watch header overlays the WebView").substringBefore("if (lyricsOnScreen) {")
+        assertTrue(rail.indexOf("Icons.Filled.MusicNote") in 0 until rail.indexOf("Icons.Filled.Settings"))
+        assertTrue(rail.indexOf("Icons.Filled.Settings") < rail.indexOf("Icons.Rounded.PowerSettingsNew"))
         assertTrue(header.contains("contentDescription = if (lyricsAvailable)"))
         assertFalse(ui.contains("LyricsFloatingButton("))
     }

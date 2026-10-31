@@ -155,9 +155,7 @@ private fun AAYoutubePageHeader(
     lyricsAvailable: Boolean,
     lyricsShown: Boolean,
     onLyrics: () -> Unit,
-    onSettings: () -> Unit,
 ) {
-    val updateStatus by LiveUpdater.controller.status.collectAsState()
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
             modifier = Modifier.fillMaxWidth().statusBarsPadding()
@@ -205,24 +203,6 @@ private fun AAYoutubePageHeader(
                             modifier = Modifier.size(20.dp),
                         )
                     }
-                }
-                // Keep the entire "New" label inside a reserved header area. A badge
-                // attached directly to a compact icon can be clipped by the IconButton.
-                Box(modifier = Modifier.size(width = 56.dp, height = 48.dp)) {
-                    IconButton(
-                        onClick = onSettings,
-                        modifier = Modifier.align(Alignment.CenterStart).size(40.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Settings,
-                            contentDescription = "Settings",
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    dev.n2k02.updater.N2K02UpdateBadge(
-                        updateStatus,
-                        modifier = Modifier.align(Alignment.TopEnd),
-                    )
                 }
                 dev.n2k02.updater.N2K02AppIcon(Modifier.size(28.dp))
                 Text(
@@ -384,7 +364,6 @@ fun AppRoot(activity: MainActivity) {
                         lyricsAvailable = false,
                         lyricsShown = false,
                         onLyrics = {},
-                        onSettings = { tab = Tab.Watch.ordinal },
                     )
                 }
             },
@@ -405,9 +384,6 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Info -> InfoPage()
                             Tab.Settings -> AAYoutubeSettingsMenu(
                                 onSelect = { tab = it.ordinal },
-                                onHome = goYouTubeHome,
-                                onBack = goBack,
-                                onQuit = { activity.quit() },
                             )
                         }
                     }
@@ -457,6 +433,9 @@ fun AppRoot(activity: MainActivity) {
                             modifier = Modifier.align(Alignment.TopEnd),
                         )
                     }
+                    // Quit stops playback, services and the WebViews, then closes AAYoutube.
+                    BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", BarSize.Phone,
+                        onClick = { activity.quit() })
                 }
             }
         }
@@ -692,13 +671,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 @Composable
 private fun AAYoutubeSettingsMenu(
     onSelect: (Tab) -> Unit,
-    onHome: () -> Unit,
-    onBack: () -> Unit,
-    onQuit: () -> Unit,
 ) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Column(Modifier.fillMaxSize()) {
-        // Only Settings owns this fixed navigation bar; its submenu content scrolls above it.
+        // No bottom bar: system Back returns to the video, Quit is on the floating rail.
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -731,22 +707,6 @@ private fun AAYoutubeSettingsMenu(
                             dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
                     },
                     modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
-                )
-            }
-        }
-        HorizontalDivider()
-        NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-            listOf(
-                Triple("Quit", Icons.Rounded.PowerSettingsNew, onQuit),
-                Triple("Home", Icons.Filled.PlayArrow, onHome),
-                Triple("Back", Icons.AutoMirrored.Filled.ArrowBack, onBack),
-            ).forEach { (label, icon, action) ->
-                NavigationBarItem(
-                    selected = false,
-                    onClick = action,
-                    icon = { Icon(icon, contentDescription = label) },
-                    label = { Text(label) },
-                    alwaysShowLabel = true,
                 )
             }
         }

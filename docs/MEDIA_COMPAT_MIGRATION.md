@@ -504,3 +504,17 @@ the standard single mRadio-style header.
   64 dp strip reserved for the rail on its side (`MiniPlayerBounds`).
 - `AppLog` Logcat calls are wrapped in `runCatching`: JVM unit tests have no
   `android.util.Log` implementation (the Logcat-only `AppLog` failed CI there).
+
+## Settings clean-up and Quit on the floating rail
+
+- The Settings gear in the page header is removed (with its update badge). The
+  badge stays on the video rail's Settings icon and on **About & updates**.
+- The Settings bottom bar (Quit / Home / Back) is removed. System Back returns to
+  the video, Home is on the rail.
+- The floating side rail ends with a **Quit AAYoutube** icon on both the phone
+  and Android Auto. The phone uses `MainActivity.quit()`. The car sends the same
+  `Commands.EXIT` through its media connection, with the `ACTION_QUIT` intent as
+  a fallback. The media process then stops playback, the session and the
+  notification, and the `:web` process pauses and releases the WebViews. After
+  Quit the car window holds no player (no car host remains registered), so it
+  cannot recreate one.

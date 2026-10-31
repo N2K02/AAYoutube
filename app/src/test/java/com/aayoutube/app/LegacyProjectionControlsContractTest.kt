@@ -59,6 +59,6 @@ class LegacyProjectionControlsContractTest {
         assertTrue(watch.contains("onHome = { goYouTubeHome(); topMenuEpoch++ }"))
         // Non-video pages keep the single standard header.
         assertTrue(phone.contains("if (!watchTab && headerAllowed) {"))
-        assertTrue(phone.contains("onHome = goYouTubeHome,"))
+        assertFalse("Settings has no Home bottom bar any more", phone.contains("onHome = goYouTubeHome,"))
     }
 }
