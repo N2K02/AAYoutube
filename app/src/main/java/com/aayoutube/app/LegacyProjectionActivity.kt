@@ -94,9 +94,18 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private val carToken = "legacy-projection@" + Integer.toHexString(System.identityHashCode(this))
     private var inactiveLogged = false
     private val rebindWhenActive = Runnable {
+        if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable
+        // A fallback instance can have been started while a newer car window
+        // owned the player. Restore every active-host responsibility, not only
+        // the view: otherwise music/media callbacks remain attached to a
+        // stopped instance until another lifecycle event happens.
+        WebHost.showOnCar(true, carToken)
+        WebHost.prepareForCarProjection()
+        WebHost.setHold(false)
+        WebHost.requestLink = relink
+        connectMedia()
         val frame = playerContainer ?: return@Runnable
-        if (carStarted && WebHost.isActiveCarHost(carToken) && WebHost.fullscreenView.value == null)
-            bindVideoToCarFrame(frame)
+        if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
     }
     private val onBecameActive: () -> Unit = {
         handler.removeCallbacks(rebindWhenActive)
@@ -396,9 +405,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carStarted = true
         configureLegacyCarInput()
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
-        if (!registered) return
+        if (!registered || !WebHost.isActiveCarHost(carToken)) return
         WebHost.showOnCar(true, carToken)
-        if (!WebHost.isActiveCarHost(carToken)) return
         WebHost.prepareForCarProjection()
         WebHost.setHold(false)
         WebHost.requestLink = relink

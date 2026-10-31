@@ -424,3 +424,9 @@ an old instance's teardown from restoring a phone callback before the
 new host starts. Unit tests cover delayed onStart, duplicate claims,
 stopped-host reentry and last-host resume. These guard against another
 black-screen ownership race but do not substitute for head-unit tests.
+
+- Restored-host callback now performs the full active-host recovery
+  (projection state, full layout, playback hold, media-process callback,
+  media connection and WebView bind) rather than only reparenting a
+  WebView. An old instance's late onStart returns before shared
+  projection or media work when another instance is active.
