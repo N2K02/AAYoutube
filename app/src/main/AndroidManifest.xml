@@ -99,7 +99,7 @@
             android:process=":web"
             android:enabled="true"
             android:exported="true"
-            android:label="AaYT Video">
+            android:label="AAYT Video">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION" />
@@ -116,7 +116,7 @@
              renders the host-owned playback template; it never creates or moves
              the video WebView owned by the legacy car projection. -->
         <service android:name=".PlaybackService" android:exported="true"
-            android:label="AAYouTube Music"
+            android:label="AAYT Music"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
