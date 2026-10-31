@@ -91,6 +91,27 @@
             </intent-filter>
         </activity>
 
+        <!-- Restore the distinct Android Auto car-launcher entry that main
+             previously exposed with CAR_LAUNCHER on MainActivity. PR #22
+             removed that filter while migrating to LegacyProjectionService,
+             and the video icon stopped appearing in Customize launcher.
+             An alias gives Android Auto its own label without renaming the
+             phone's MainActivity/LAUNCHER entry. Direct activities are for
+             supported parked use; the legacy projection service remains
+             available for hosts that support that integration. -->
+        <activity-alias
+            android:name=".AutoVideoLauncher"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="AAYT Video"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
         <!-- Exact AABrowser legacy CarActivityService entry, backed by the pinned aauto.aar.
              CarActivity is instantiated by the projection SDK; it is NOT a manifest Activity. -->

@@ -25,6 +25,18 @@ class AndroidAutoIntegrationContractTest {
         // must not change the phone launcher name.
         assertTrue(video.contains("android:label=\"AAYT Video\""))
         assertTrue(music.contains("android:label=\"AAYT Music\""))
+        val phone = manifest.substringAfter("android:name=\".MainActivity\"").substringBefore("</activity>")
+        val videoLauncher = manifest.substringAfter("android:name=\".AutoVideoLauncher\"").substringBefore("</activity-alias>")
+        assertTrue(videoLauncher.contains("android:targetActivity=\".MainActivity\""))
+        assertTrue(videoLauncher.contains("android:label=\"AAYT Video\""))
+        assertTrue(videoLauncher.contains("android.intent.category.CAR_LAUNCHER"))
+        assertTrue(videoLauncher.contains("android.intent.action.MAIN"))
+        assertTrue(videoLauncher.contains("android:exported=\"true\""))
+        assertFalse("Phone launcher must not be listed directly as a car launcher",
+            phone.contains("android.intent.category.CAR_LAUNCHER"))
+        assertTrue(phone.contains("android.intent.category.LAUNCHER"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
+            .contains("Video car-launcher alias discoverable="))
         assertTrue(manifest.contains("android:label=\"AAYoutube\""))
         assertFalse(manifest.contains("android:label=\"AaYT Video\""))
         assertFalse(manifest.contains("android:label=\"AAYouTube Music\""))
