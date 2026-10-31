@@ -243,3 +243,32 @@ state refresh even if the position/speed remain unchanged.
   `Android Auto requested legacy projection service` logs after selecting
   the Video icon. This distinguishes a manifest registration issue from a
   projection-host dispatch failure without requiring guesswork.
+
+## Android Auto legacy projection startup crash — verified stack trace
+
+**Device evidence (2026-10-31):** Android Auto successfully discovers
+`LegacyProjectionService`, invokes its `getCarActivity()`, then the host
+fails before `LegacyProjectionActivity.onCreate()`:
+`NoClassDefFoundError: android.support.v4.app.FragmentManager` at
+`com.google.android.gms.car.e.<clinit>` / `CarActivityHostImpl.T`.
+
+**Difference from working AABrowser 2.4:** AABrowser uses the identical
+pinned `browser/libs/v4/aauto.aar`, **enables Jetifier**, includes
+`androidx.appcompat` (and its AndroidX Fragment dependency), and **does not
+minify** its release APK. AAYouTube had disabled Jetifier implicitly, omitted
+AppCompat, and applied R8/shrinking to release.
+
+**Correction:** enable `android.enableJetifier=true` so Android Gradle's
+AAR transform rewrites the archived support-library references; depend on
+`androidx.appcompat:appcompat:1.8.0` for Fragment/Activity compatibility;
+temporarily disable release code/resource shrinking to match the proven
+reference while the projection reflection calls are validated on hardware.
+No old `com.android.support` dependency or fake FragmentManager shim is
+included, avoiding mixing duplicate framework namespaces.
+
+**Regression:** `LegacyProjectionContractTest` asserts Jetifier,
+AppCompat, the pinned projection SDK and no R8 shrinking. The prior
+service/host logs will show whether execution reaches
+`Video CarActivity launching` with the new APK. Compilation and CI cannot
+prove runtime linkage into the proprietary car host: verify with parked-car
+video startup and check logcat for this exact missing-class exception.

@@ -16,6 +16,7 @@ val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt()
 val v = mapOf(
     "material3" to "1.5.0-beta01",
     "mediaCompat" to "1.7.1",
+    "appCompat" to "1.8.0",
     "webkit" to "1.14.0",
     "activityCompose" to "1.11.0",
     "coroutines" to "1.10.2",
@@ -38,9 +39,12 @@ android {
     buildTypes {
         getByName("debug") { versionNameSuffix = "-debug" }
         getByName("release") {
-            // R8 removes unused code (most of Compose and the icon set) and resources.
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Match working AABrowser's unminified legacy projection build.
+            // The proprietary car SDK uses reflection into Activity/Fragment APIs;
+            // R8 reachability cannot establish those dynamic callbacks safely.
+            // Re-enable only after projected runtime smoke tests establish keep rules.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Left unsigned here: CI signs it with the private key (see .github/workflows/build.yml).
         }
@@ -99,6 +103,9 @@ val aabrowserProjectionSdk = files(legacySdkFile).builtBy(fetchLegacySdk)
 dependencies {
     // AABrowser's exact legacy Android Auto projection integration (CarActivityService).
     implementation(aabrowserProjectionSdk)
+    // AABrowser's androidx.fragment stack is transitively supplied by AppCompat;
+    // Jetifier rewrites old android.support.v4.app.FragmentManager references.
+    implementation("androidx.appcompat:appcompat:${v["appCompat"]}")
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
     implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")

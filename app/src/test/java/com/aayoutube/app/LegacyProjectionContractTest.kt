@@ -77,6 +77,25 @@ class LegacyProjectionContractTest {
         assertTrue(main.contains("!WebHost.carShown) WebHost.setHold(true)"))
     }
 
+    @Test fun legacyProjectionSdkAndRuntimeHaveAndroidXCompatibility() {
+        // Real crash: CarActivityHostImpl -> com.google.android.gms.car.e
+        // NoClassDefFoundError android.support.v4.app.FragmentManager.
+        val properties = source("gradle.properties")
+        assertTrue("Legacy aauto.aar must be jetified",
+            properties.contains("android.enableJetifier=true"))
+        assertTrue(properties.contains("android.useAndroidX=true"))
+        val gradle = source("app/build.gradle.kts")
+        assertTrue("AppCompat supplies AndroidX FragmentManager at runtime",
+            gradle.contains("androidx.appcompat:appcompat:"))
+        assertTrue("Do not strip dynamically used legacy projection classes",
+            gradle.contains("isMinifyEnabled = false"))
+        assertTrue(gradle.contains("isShrinkResources = false"))
+        assertTrue(gradle.contains("implementation(aabrowserProjectionSdk)"))
+        assertTrue("Legacy projection remains separate from native music",
+            source("app/src/main/AndroidManifest.xml")
+                .contains("android:name=\".LegacyProjectionService\""))
+    }
+
     @Test fun noUnrequestedAABrowserFeaturesWereAdded() {
         val activity = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         assertFalse(activity.contains("SpotifyService("))
