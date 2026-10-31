@@ -235,3 +235,11 @@ restore timestamp actually differs, and resumes only if the surviving video
 was paused. Android Auto's Native queue is published before evaluating the
 available playback actions, and an active queue-item change forces a playback
 state refresh even if the position/speed remain unchanged.
+
+- `CarMode.resetToCarScreen()` now emits a phone-side PackageManager
+  self-check for the legacy projection service's MAIN + PROJECTION intent filter,
+  even when Android Auto never calls the service. Compare the
+  `Video projection manifest discoverable=` result to subsequent
+  `Android Auto requested legacy projection service` logs after selecting
+  the Video icon. This distinguishes a manifest registration issue from a
+  projection-host dispatch failure without requiring guesswork.

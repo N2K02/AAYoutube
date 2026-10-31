@@ -15,6 +15,8 @@ class AndroidAutoIntegrationContractTest {
         val music = manifest.substringAfter("android:name=\".PlaybackService\"").substringBefore("</service>")
         assertTrue(video.contains("CATEGORY_PROJECTION"))
         assertTrue(video.contains("CATEGORY_PROJECTION_OEM"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
+            .contains("Video projection manifest discoverable="))
         val service = src("app/src/main/java/com/aayoutube/app/LegacyProjectionService.kt")
         assertTrue(service.contains("Android Auto requested legacy projection service"))
         assertTrue(service.contains("Android Auto resolving projected video activity"))
