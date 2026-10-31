@@ -87,7 +87,7 @@ class LegacyProjectionContractTest {
         assertTrue(activity.contains("if (!registered || !WebHost.isActiveCarHost(carToken)) return"))
         assertTrue(activity.contains("WebHost.requestLink = relink\n        connectMedia()"))
         assertTrue(activity.contains("if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable"))
-        assertTrue(activity.contains("if (!WebHost.isActiveCarHost(carToken)) return"))
+        assertTrue(activity.contains("if (!registered || !WebHost.isActiveCarHost(carToken)) return"))
         assertTrue(activity.contains("WebHost.requestLink = relink"))
         assertTrue(activity.contains("WebHost.requestReattachment()"))
         assertTrue(activity.contains("mediaController?.disconnect()"))

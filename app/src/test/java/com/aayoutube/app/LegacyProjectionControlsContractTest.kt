@@ -32,7 +32,9 @@ class LegacyProjectionControlsContractTest {
         val manifest = source("app/src/main/AndroidManifest.xml")
         assertTrue(manifest.contains("android:name=\".LegacyProjectionService\""))
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
-        assertTrue(manifest.contains("android:label=\"AAYouTube Music\""))
+        assertTrue(manifest.contains("android:label=\"AAYT Video\""))
+        assertTrue(manifest.contains("android:label=\"AAYT Music\""))
+        assertTrue(manifest.contains("android:label=\"AAYoutube\""))
         assertFalse(manifest.contains("android:name=\".CarVideoService\""))
     }
 }

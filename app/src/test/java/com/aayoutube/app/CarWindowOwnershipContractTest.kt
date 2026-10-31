@@ -28,8 +28,10 @@ class CarWindowOwnershipContractTest {
         assertTrue("inactive car host check must precede binding", gate in 0 until attach)
         assertFalse("car path must not use the phone attach", bind.contains("WebHost.attach("))
         assertTrue(activity.contains("WebHost.claimCarHost(carToken, onBecameActive)"))
-        // Claimed in onCreate and again in onStart (host may bring an instance back).
-        assertEquals(2, Regex("WebHost\\.claimCarHost\\(carToken, onBecameActive\\)").findAll(activity).count())
+        // Only onCreate claims new ownership; a late onStart must never
+        // promote a replaced activity over the new one.
+        assertEquals(1, Regex("WebHost\\\\.claimCarHost\\\\(carToken, onBecameActive\\\\)").findAll(activity).count())
+        assertEquals(1, Regex("WebHost\\\\.resumeCarHost\\\\(carToken, onBecameActive\\\\)").findAll(activity).count())
         // Released by both onStop and onDestroy, never by a shared literal key.
         assertEquals(2, Regex("WebHost\\.releaseCarHost\\(carToken\\)").findAll(activity).count())
         val stop = activity.substringAfter("override fun onStop() {").substringBefore("override fun onDestroy()")
@@ -41,7 +43,9 @@ class CarWindowOwnershipContractTest {
     @Test fun becomingActiveAgainRebindsAfterHostSettles() {
         val activity = car
         assertTrue(activity.contains("handler.postDelayed(rebindWhenActive, 1_200L)"))
-        assertTrue(activity.contains("if (carStarted && WebHost.isActiveCarHost(carToken) && WebHost.fullscreenView.value == null)"))
+        assertTrue(activity.contains("if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable"))
+        assertTrue(activity.contains("if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)"))
+        assertTrue(activity.contains("WebHost.requestLink = relink\n        connectMedia()"))
         // onStop/onDestroy cancel it via removeCallbacksAndMessages before releasing.
         val destroy = activity.substringAfter("override fun onDestroy() {")
         assertTrue(destroy.indexOf("handler.removeCallbacksAndMessages(null)") <
