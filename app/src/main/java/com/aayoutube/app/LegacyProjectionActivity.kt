@@ -365,36 +365,20 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 exit = fadeOut(),
                 modifier = Modifier.align(Alignment.TopCenter),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp)
-                        .background(Color(0xCC252525)).padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CarControl("‹ Back") { WebHost.goBack(); controlsVersion++ }
-                    Spacer(Modifier.width(8.dp))
-                    CarControl("⌂ Home") { WebHost.openUrl("https://m.youtube.com/"); controlsVersion++ }
-                    Spacer(Modifier.width(8.dp))
-                    CarControl(if (playing.playing) "Ⅱ Pause" else "▶ Play") {
+                // Floating, centred, icons-only pill (same control bar as the phone).
+                FloatingVideoBar(
+                    playing = playing.playing,
+                    large = true,
+                    modifier = Modifier.padding(top = 12.dp),
+                    onBack = { WebHost.goBack(); controlsVersion++ },
+                    onHome = { WebHost.openUrl("https://m.youtube.com/"); controlsVersion++ },
+                    onPlayPause = {
                         WebHost.cmd(if (playing.playing) "pause" else "play")
                         controlsVersion++
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    CarControl("⏭ Next") { WebHost.cmd("next"); controlsVersion++ }
-                }
+                    },
+                    onNext = { WebHost.cmd("next"); controlsVersion++ },
+                )
             }
-        }
-    }
-
-    @Composable
-    private fun CarControl(label: String, action: () -> Unit) {
-        Box(
-            modifier = Modifier.background(Color(0xFF383838), RoundedCornerShape(24.dp))
-                .clickable(onClick = action)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(label, color = Color.White, fontWeight = FontWeight.Medium)
         }
     }
 

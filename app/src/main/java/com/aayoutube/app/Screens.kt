@@ -330,6 +330,15 @@ fun AppRoot(activity: MainActivity) {
     // Back (system or Settings action): close fullscreen, then other tabs, then the
     // page's own history (asked live from the WebView, because YouTube changes pages without
     // reloading), then YouTube home. On the home page the app goes to the background (it keeps playing).
+    // YouTube Home: a playing video shrinks to the mini player instead of stopping.
+    val goYouTubeHome: () -> Unit = {
+        tab = Tab.Watch.ordinal
+        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
+            WebHost.enterMini()
+        else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
+            BrowseHost.navigate(WebHost.home())
+        else WebHost.openUrl(WebHost.home())
+    }
     val goBack: () -> Unit = {
         when {
             fullscreen != null -> WebHost.exitFullscreen()
@@ -391,14 +400,7 @@ fun AppRoot(activity: MainActivity) {
                             Tab.Info -> InfoPage()
                             Tab.Settings -> AAYoutubeSettingsMenu(
                                 onSelect = { tab = it.ordinal },
-                                onHome = {
-                                    tab = Tab.Watch.ordinal
-                                    if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
-                                        WebHost.enterMini()
-                                    else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
-                                        BrowseHost.navigate(WebHost.home())
-                                    else WebHost.openUrl(WebHost.home())
-                                },
+                                onHome = goYouTubeHome,
                                 onBack = goBack,
                                 onQuit = { activity.quit() },
                             )
@@ -426,16 +428,42 @@ fun AppRoot(activity: MainActivity) {
                 exit = fadeOut() + slideOutVertically { -it },
                 modifier = Modifier.align(Alignment.TopCenter),
             ) {
-                AAYoutubePageHeader(
-                    Tab.entries[tab],
-                    lyricsAvailable = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL,
-                    lyricsShown = lyricsShown,
-                    onLyrics = {
-                        if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
+                // Same floating, centred, icons-only pill as Android Auto, plus
+                // the phone's Lyrics and Settings actions (Settings pages keep
+                // the standard mRadio-style header).
+                val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
+                val updateStatus by LiveUpdater.controller.status.collectAsState()
+                FloatingVideoBar(
+                    playing = snap.playing,
+                    modifier = Modifier.statusBarsPadding().padding(top = 8.dp),
+                    onBack = { goBack(); topMenuEpoch++ },
+                    onHome = { goYouTubeHome(); topMenuEpoch++ },
+                    onPlayPause = {
+                        WebHost.cmd(if (snap.playing) "pause" else "play")
                         topMenuEpoch++
                     },
-                    onSettings = { tab = Tab.Settings.ordinal },
-                )
+                    onNext = { WebHost.cmd("next"); topMenuEpoch++ },
+                ) {
+                    BarIcon(
+                        Icons.Filled.MusicNote,
+                        if (canLyrics) { if (lyricsShown) "Hide lyrics" else "Show lyrics" } else "Lyrics unavailable",
+                        48.dp, 24.dp,
+                        onClick = {
+                            if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
+                            topMenuEpoch++
+                        },
+                        enabled = canLyrics,
+                        tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
+                    )
+                    Box {
+                        BarIcon(Icons.Filled.Settings, "Settings", 48.dp, 24.dp,
+                            onClick = { tab = Tab.Settings.ordinal })
+                        dev.n2k02.updater.N2K02UpdateBadge(
+                            updateStatus,
+                            modifier = Modifier.align(Alignment.TopEnd),
+                        )
+                    }
+                }
             }
         }
         if (lyricsOnScreen) {

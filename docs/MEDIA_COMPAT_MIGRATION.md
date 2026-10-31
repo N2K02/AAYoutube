@@ -472,3 +472,17 @@ cases apart. A `covers=`/stack entry above the `<video>` means another page
 overlay. A clean stack while frames advance means Chromium composited the video
 outside the car window (an Android video overlay on the virtual display). That
 case needs a compositing fix, not CSS.
+
+## Floating icon-only video controls on Android Auto and phone (21:25)
+
+The emulator confirms the projected video now plays. The full-width text bar
+(`‹ Back`, `⌂ Home`, `▶ Play`, `⏭ Next`) is replaced on both screens by
+`FloatingVideoBar`: a rounded floating pill, centred at the top, icons only. Each
+icon has a content description for accessibility. Car: Back, YouTube home,
+Play/Pause, Next with 60dp touch targets. Phone video page: the same four icons
+plus Lyrics (enabled only when lyrics were found) and Settings (with the update
+badge). Home on the phone keeps the existing mini-player behaviour. The pill
+overlays the WebView, so it never resizes the video. It still follows the shared
+**Top menu auto-hide** setting (choose **Never** to keep it always visible) and
+reappears with a downward swipe from the top edge. Settings and subpages keep
+the standard single mRadio-style header.
