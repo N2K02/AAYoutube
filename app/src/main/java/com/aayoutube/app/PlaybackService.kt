@@ -279,7 +279,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 .setActions(actions)
                 .setState(state, position, speed)
                 .setActiveQueueItemId(if (activeIndex >= 0) activeIndex.toLong()
-                    else android.support.v4.media.session.MediaSessionCompat.QueueItem.UNKNOWN_ID)
+                    else MediaSessionCompat.QueueItem.UNKNOWN_ID.toLong())
                 .build())
         }
         val artwork = MediaArtworkLoader.urlFor(s.art, s.id)
