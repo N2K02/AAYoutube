@@ -30,8 +30,8 @@ class CarWindowOwnershipContractTest {
         assertTrue(activity.contains("WebHost.claimCarHost(carToken, onBecameActive)"))
         // Only onCreate claims new ownership; a late onStart must never
         // promote a replaced activity over the new one.
-        assertEquals(1, Regex("WebHost\\\\.claimCarHost\\\\(carToken, onBecameActive\\\\)").findAll(activity).count())
-        assertEquals(1, Regex("WebHost\\\\.resumeCarHost\\\\(carToken, onBecameActive\\\\)").findAll(activity).count())
+        assertEquals(1, activity.split("WebHost.claimCarHost(carToken, onBecameActive)").size - 1)
+        assertEquals(1, activity.split("WebHost.resumeCarHost(carToken, onBecameActive)").size - 1)
         // Released by both onStop and onDestroy, never by a shared literal key.
         assertEquals(2, Regex("WebHost\\.releaseCarHost\\(carToken\\)").findAll(activity).count())
         val stop = activity.substringAfter("override fun onStop() {").substringBefore("override fun onDestroy()")
