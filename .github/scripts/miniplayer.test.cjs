@@ -57,10 +57,12 @@ function playerPage(options = {}) {
     }
     querySelector(selector) {
       if (selector.includes('ProgressBarDragContainer')) return seekBar;
-      return selector === 'video.html5-main-video' || selector === 'video' ? video : null;
+      if (selector === 'video.html5-main-video' || selector === 'video') return video;
+      return dom ? dom.querySelectorAll(selector)[0] || null : null;
     }
-    querySelectorAll() { return []; }
+    querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
     getElementById(id) {
+      if (dom && dom.byId(id)) return dom.byId(id);
       if (options.quality && id === 'movie_player') {
         return { setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); } };
       }
@@ -75,6 +77,7 @@ function playerPage(options = {}) {
   Object.defineProperty(Doc.prototype, 'hidden', { configurable: true, get() { return false; } });
 
   const video = new Media();
+  const dom = options.dom ? options.dom(video) : null;
   const document = new Doc();
   document.title = 'Test video - YouTube';
   document.readyState = 'loading';
@@ -137,6 +140,7 @@ function playerPage(options = {}) {
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
   return {
+    domNodes: dom ? dom.nodes : null,
     window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
@@ -152,6 +156,62 @@ function playerPage(options = {}) {
       assert.ok(budget > 0, 'page script scheduled an endless timer chain');
     },
   };
+}
+
+// Minimal element tree for the car layout guard (simple #id / .class / tag selectors).
+function fakeDom(build) {
+  return (video) => {
+    const all = [];
+    const el = (tag, attrs = {}, children = []) => {
+      const classes = new Set(attrs.cls || []);
+      const node = {
+        tagName: tag.toUpperCase(), id: attrs.id || '', parentElement: null,
+        style: { setProperty() {}, removeProperty() {} },
+        classList: {
+          contains: (n) => classes.has(n),
+          toggle: (n, on) => { if (on) classes.add(n); else classes.delete(n); },
+          add: (n) => classes.add(n),
+          remove: (n) => classes.delete(n),
+        },
+        contains(other) {
+          for (let x = other; x; x = x.parentElement) if (x === node) return true;
+          return false;
+        },
+      };
+      for (const c of children) c.parentElement = node;
+      all.push(node);
+      return node;
+    };
+    const nodes = build(el, video);
+    const matches = (n, sel) => sel.startsWith('#') ? n.id === sel.slice(1)
+      : sel.startsWith('.') ? n.classList.contains(sel.slice(1))
+      : n.tagName === sel.toUpperCase();
+    return {
+      nodes,
+      byId: (id) => all.find((n) => n.id === id) || null,
+      querySelectorAll: (selector) => {
+        const parts = selector.split(',').map((x) => x.trim());
+        return all.filter((n) => parts.some((sel) => matches(n, sel)));
+      },
+    };
+  };
+}
+
+// m.youtube.com watch page: fixed player first, its flow spacer later in the DOM.
+function watchPageDom() {
+  return fakeDom((el, video) => {
+    const videoBox = el('div', { cls: ['html5-video-container'] });
+    video.parentElement = videoBox;
+    const moviePlayer = el('div', { id: 'movie_player', cls: ['html5-video-player'] }, [videoBox]);
+    const player = el('div', { id: 'player' }, [moviePlayer]);
+    const controls = el('div', { id: 'player-control-container' });
+    const container = el('div', { id: 'player-container-id', cls: ['player-container'] }, [player, controls]);
+    const placeholder = el('div', { cls: ['player-size', 'player-placeholder'] });
+    const metadata = el('ytm-watch-metadata');
+    const watch = el('ytm-watch', {}, [placeholder, metadata]);
+    el('ytm-app', {}, [container, watch]);
+    return { videoBox, moviePlayer, player, controls, container, placeholder, watch };
+  });
 }
 
 test('document-start script initializes the player and its native bridge', () => {
@@ -391,4 +451,59 @@ test('lyrics sync stops reporting when hidden and never runs in the browse page'
   browse.window.__aay.lyricsSync(true);
   browse.runIntervals();
   assert.equal(browse.lyricReports.length, 0);
+});
+
+test('car layout never lets a wrapper without the video cover it', () => {
+  const p = playerPage({ car: true, dom: watchPageDom() });
+  p.window.__aay.car(true);
+  const n = p.domNodes;
+  assert.ok(p.classNames.has('aay-car'));
+  assert.ok(n.placeholder.classList.contains('aay-car-off'),
+    'the spacer after the player must not become a black full-screen box over the video');
+  assert.equal(n.container.classList.contains('aay-car-off'), false);
+  assert.equal(n.container.classList.contains('aay-car-clear'), false);
+  for (const ancestor of [n.videoBox, n.moviePlayer, n.player, n.container])
+    assert.ok(ancestor.classList.contains('aay-car-chain'), 'video ancestors stay visible');
+  const css = p.styleElements.map((e) => e.textContent).join('');
+  assert.ok(css.includes('html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){'));
+  assert.ok(/aay-car-off:not\(#aay-x\):not\(#aay-y\)\{[^}]*visibility:hidden!important/.test(css));
+  assert.ok(css.indexOf('html.aay-car .aay-car-off') > css.indexOf('html.aay-car .player-placeholder'),
+    'guard rules must come after the car wrapper rules');
+});
+
+test('car guard clears only the background of a wrapper that holds just the controls', () => {
+  const p = playerPage({
+    car: true,
+    dom: fakeDom((el, video) => {
+      const videoBox = el('div', { cls: ['html5-video-container'] });
+      video.parentElement = videoBox;
+      const container = el('div', { id: 'player-container-id', cls: ['player-container'] }, [videoBox]);
+      const controls = el('div', { id: 'player-control-container' });
+      const controlsHost = el('ytm-player-container', {}, [controls]);
+      el('ytm-app', {}, [container, controlsHost]);
+      return { container, controlsHost };
+    }),
+  });
+  p.window.__aay.car(true);
+  assert.ok(p.domNodes.controlsHost.classList.contains('aay-car-clear'));
+  assert.equal(p.domNodes.controlsHost.classList.contains('aay-car-off'), false);
+});
+
+test('leaving the car layout removes every guard mark', () => {
+  const p = playerPage({ car: true, dom: watchPageDom() });
+  p.window.__aay.car(true);
+  p.window.__aay.car(false);
+  const n = p.domNodes;
+  assert.equal(p.classNames.has('aay-car'), false);
+  for (const node of Object.values(n)) {
+    assert.equal(node.classList.contains('aay-car-off'), false);
+    assert.equal(node.classList.contains('aay-car-clear'), false);
+    assert.equal(node.classList.contains('aay-car-chain'), false);
+  }
+});
+
+test('phone layout never marks car guard classes', () => {
+  const p = playerPage({ dom: watchPageDom() });
+  p.flush();
+  assert.equal(p.domNodes.placeholder.classList.contains('aay-car-off'), false);
 });

@@ -462,10 +462,22 @@
     'html.aay-car ytm-watch-metadata,html.aay-car ytm-watch-next-feed,' +
     'html.aay-car ytm-item-section-renderer,html.aay-car ytm-playlist-panel-renderer{' +
     'visibility:hidden!important}';
+  // The rules above turn every player-like wrapper into a full-screen black box at the
+  // same z-index. A wrapper WITHOUT the video (m.youtube.com spacers such as
+  // .player-placeholder/.player-size come after the player in the DOM) then paints over
+  // the video: Android Auto showed black while the video decoded and played audio.
+  // carGuard() marks those wrappers; the :not(#id) chain outranks the #id rules above.
+  var CSS_CAR_GUARD =
+    'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;' +
+    'background:transparent!important;visibility:hidden!important;width:0!important;height:0!important;' +
+    'min-height:0!important;overflow:hidden!important;pointer-events:none!important}' +
+    'html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){background:transparent!important}' +
+    'html.aay-car .aay-car-chain:not(#aay-x):not(#aay-y),' +
+    'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
   var styleEl = null;
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_UNMUTE;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
@@ -1011,19 +1023,70 @@
   function liftAncestors(v, on) { lifted = lift(lifted, v, on); }
 
   // Car screen: the video fills the screen on a watch page (not in the mini player).
-  var carOn = false, carBox = null, carLifted = [];
+  var carOn = false, carBox = null, carLifted = [], carVideo = null, carGuarded = -1;
   function playerBox() {
     return document.getElementById('player-container-id') || document.querySelector('.player-container') ||
       document.getElementById('player-container') || document.getElementById('movie_player');
   }
+  // Same wrappers the car CSS makes full-screen black boxes.
+  var CAR_WRAPPERS = '#player-container-id,.player-container,#player-container,ytm-watch-player,' +
+    'ytm-player,ytm-player-component,ytm-watch-player-component,ytm-player-container,' +
+    '.player-size,.player-placeholder';
+  function mark(el, name, on) {
+    if (!el || !el.classList || el.classList.contains(name) === !!on) return;
+    el.classList.toggle(name, !!on);
+  }
+  function unmarkAll(name) {
+    var list = document.querySelectorAll('.' + name);
+    for (var i = 0; i < list.length; i++) mark(list[i], name, false);
+  }
+  // Only wrappers that contain the video stay black full-screen boxes. One holding just
+  // YouTube's controls loses its background; one holding neither is hidden.
+  function carGuard(v) {
+    if (!v) {
+      unmarkAll('aay-car-off'); unmarkAll('aay-car-clear'); unmarkAll('aay-car-chain');
+      return 0;
+    }
+    var chain = [];
+    for (var el = v.parentElement; el && el !== document.body && el !== document.documentElement; el = el.parentElement)
+      chain.push(el);
+    var old = document.querySelectorAll('.aay-car-chain');
+    for (var i = 0; i < old.length; i++) if (chain.indexOf(old[i]) < 0) mark(old[i], 'aay-car-chain', false);
+    chain.forEach(function (c) { mark(c, 'aay-car-chain', true); });
+    var ctl = document.getElementById('player-control-container');
+    var list = document.querySelectorAll(CAR_WRAPPERS), off = 0;
+    for (var j = 0; j < list.length; j++) {
+      var w = list[j];
+      var hasVideo = w.contains(v), hasControls = !!(ctl && w !== ctl && w.contains(ctl));
+      mark(w, 'aay-car-off', !hasVideo && !hasControls);
+      mark(w, 'aay-car-clear', !hasVideo && hasControls);
+      if (!hasVideo) off++;
+    }
+    return off;
+  }
   function carLayout() {
     var on = !!A.isCar && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
-    if (on === carOn && box === carBox) return;
+    var v = on ? getVideo() : null;
+    var guarded;
+    if (on === carOn && box === carBox && v === carVideo) {
+      // YouTube adds wrappers after the player: guard them on every DOM change.
+      guarded = carGuard(on ? v : null);
+      if (on && guarded !== carGuarded) {
+        carGuarded = guarded;
+        console.log('[aay] car guard: ' + guarded + ' wrapper(s) without the video neutralised');
+      }
+      return;
+    }
     var changed = on !== carOn;
-    carOn = on; carBox = box;
+    carOn = on; carBox = box; carVideo = v;
     carLifted = lift(carLifted, box, on);
     if (document.documentElement) document.documentElement.classList.toggle('aay-car', on);
+    guarded = carGuard(on ? v : null);
+    if (on && guarded !== carGuarded) {
+      carGuarded = guarded;
+      console.log('[aay] car guard: ' + guarded + ' wrapper(s) without the video neutralised');
+    }
     if (changed) {
       console.log('[aay] car screen: video fills the screen=' + on);
       fixLayout();

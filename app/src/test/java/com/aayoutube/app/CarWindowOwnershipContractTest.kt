@@ -117,4 +117,32 @@ class CarWindowOwnershipContractTest {
         assertTrue(probe.contains("classList.contains('aay-car')"))
         assertTrue(car.contains("longArrayOf(2_000L, 6_000L, 12_000L).forEach { handler.postDelayed(renderProbe, it) }"))
     }
+
+    /**
+     * 31_10-19-25-05 log: the car home page draws, but opening a video gives
+     * black while it decodes (28 frames, playing, visible, car layout on).
+     * The car CSS made non-video wrappers full-screen black boxes over it.
+     */
+    @Test fun carVideoPageIsNotCoveredByWrapperBoxes() {
+        val js = source("app/src/main/assets/aay.js")
+        assertTrue(js.contains("var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;"))
+        assertTrue(js.contains("'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;'"))
+        assertTrue(js.contains("mark(w, 'aay-car-off', !hasVideo && !hasControls);"))
+        assertTrue(js.contains("mark(w, 'aay-car-clear', !hasVideo && hasControls);"))
+        val layout = js.substringAfter("function carLayout() {").substringBefore("A.car = function")
+        // Re-guard on every DOM change: YouTube inserts wrappers after the player.
+        assertTrue(layout.contains("guarded = carGuard(on ? v : null);"))
+        assertTrue(layout.indexOf("guarded = carGuard(on ? v : null);") < layout.indexOf("return;"))
+    }
+
+    @Test fun paintProbeRunsWhenTheCarPageOpensAVideo() {
+        val probe = web.substringAfter("fun logCarRenderProbe()").substringBefore("fun detach(")
+        assertTrue(probe.contains("document.elementsFromPoint(innerWidth/2,innerHeight/2)"))
+        assertTrue(probe.contains("Chromium paint probe="))
+        assertTrue(probe.contains("document.querySelectorAll('.aay-car-off,.aay-car-clear').length"))
+        val history = web.substringAfter("override fun doUpdateVisitedHistory(").substringBefore("override fun onReceivedError(")
+        assertTrue(history.contains("if (carShown && onWatchPage.value && !wasWatch) {"))
+        assertTrue(history.contains("main.postDelayed(carWatchProbe, 3_000L)"))
+        assertTrue(history.contains("main.postDelayed(carWatchProbe, 9_000L)"))
+    }
 }

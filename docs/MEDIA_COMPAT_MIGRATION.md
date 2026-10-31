@@ -430,3 +430,45 @@ black-screen ownership race but do not substitute for head-unit tests.
   media connection and WebView bind) rather than only reparenting a
   WebView. An old instance's late onStart returns before shared
   projection or media work when another instance is active.
+
+## Car home works, video page black — car CSS wrapper boxes over the video (19:25 test)
+
+After the per-window renderer fix the car screen shows YouTube Home and browsing
+(screenshot, 19:24). Opening a video turns the screen black while the video plays
+and touches still work. In `31_10-19-25-05_357.log` the 2 s probe shows Home
+painting. The 6 s probe on the watch page shows `hasVideo:true`, 256×144,
+`frames:28`, `paused:false`, `vis:"visible"`, `hidden:false`, `car:true`,
+`bounds:[975,696]` (the whole viewport), and the top element
+`div.player-controls-background`. So the renderer, the decoder and the `<video>`
+element are all fine. The black comes from the page layer.
+
+AABrowser does not restyle YouTube's player. AAYouTube's `CSS_CAR` gives a
+dozen player-like wrappers `position:fixed; inset:0; z-index:2147483000;
+background:#000`, including m.youtube.com's flow spacers `.player-placeholder` /
+`.player-size`. Those come after the player in the DOM and hold no video. At the
+same z-index, a later sibling paints above the player: a full-screen black box
+under YouTube's controls.
+
+**Correction**
+
+- `carGuard()` (run on every car-layout tick, because YouTube adds wrappers late)
+  marks each matched wrapper. One that contains the `<video>` keeps the car box.
+  One holding only `#player-control-container` loses its background
+  (`aay-car-clear`). One holding neither is hidden and has no z-index
+  (`aay-car-off`). Video ancestors stay `visible`. The guard rules use
+  `:not(#id)` specificity so they also win over the `#player-container-id` rules.
+  All marks are removed when the car layout ends.
+- New `Chromium paint probe` (logcat `AAYouTube-CAR`). It lists the hit-test stack
+  at the screen centre down to the `<video>` (position, z-index, opacity,
+  visibility, background) and any full-screen opaque fixed/absolute box that does
+  not contain the video (this catches `pointer-events:none` covers), plus the
+  number of guarded wrappers. Probes now also run 3 s and 9 s after the car page
+  opens a video.
+- JS tests (m.youtube.com-like DOM): the spacer is neutralised, controls-only
+  wrapper cleared, ancestors visible, marks removed on exit, phone untouched.
+
+If a video is still black on the car, the paint probe now tells the remaining
+cases apart. A `covers=`/stack entry above the `<video>` means another page
+overlay. A clean stack while frames advance means Chromium composited the video
+outside the car window (an Android video overlay on the virtual display). That
+case needs a compositing fix, not CSS.

@@ -451,7 +451,41 @@ object WebHost {
         ) { result ->
             AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
         }
+        // What is painted over the video: the hit-test stack at the centre down to
+        // the <video>, plus any full-screen opaque fixed/absolute box that does not
+        // contain it (hit-testing skips pointer-events:none covers). No page text.
+        w.evaluateJavascript(
+            """(function(){
+                function d(n){if(!n)return '?';var c=(typeof n.className==='string'?n.className:'')
+                    .trim().split(/\s+/).slice(0,2).join('.');
+                    return (n.tagName||'').toLowerCase()+(n.id?'#'+n.id:'')+(c?'.'+c:'');}
+                function bg(c){var b=c.backgroundColor;
+                    return (b==='rgba(0, 0, 0, 0)'||b==='transparent')?'':' bg='+b.replace(/rgba?\(|\)|\s/g,'');}
+                function info(n,c){return d(n)+(c.position!=='static'?' '+c.position:'')+
+                    (c.zIndex!=='auto'?' z'+c.zIndex:'')+(c.opacity!=='1'?' op'+c.opacity:'')+
+                    (c.visibility!=='visible'?' '+c.visibility:'')+bg(c);}
+                var v=document.querySelector('video.html5-main-video')||document.querySelector('video');
+                var out=[],s=[];
+                try{s=document.elementsFromPoint(innerWidth/2,innerHeight/2);}catch(x){}
+                for(var i=0;i<s.length&&out.length<8;i++){out.push(info(s[i],getComputedStyle(s[i])));if(s[i]===v)break;}
+                var covers=[],all=document.querySelectorAll('body *');
+                for(var j=0;j<all.length&&covers.length<4;j++){var e=all[j];
+                    if(e===v||(v&&e.contains(v)))continue;
+                    var c=getComputedStyle(e);
+                    if((c.position!=='fixed'&&c.position!=='absolute')||c.display==='none'||c.visibility!=='visible'||!bg(c))continue;
+                    var r=e.getBoundingClientRect();
+                    if(r.width<innerWidth*0.9||r.height<innerHeight*0.9)continue;
+                    covers.push(info(e,c));}
+                return 'stack='+out.join(' > ')+' | covers='+(covers.join(' ; ')||'none')+
+                    ' | guarded='+document.querySelectorAll('.aay-car-off,.aay-car-clear').length;
+            })()""".trimIndent()
+        ) { result ->
+            AppLog.add("CAR", "Chromium paint probe=" + result.take(900))
+        }
     }
+
+    // Also probe after the car page navigates to a video, not only after a bind.
+    private val carWatchProbe = Runnable { logCarRenderProbe() }
 
     fun detach(container: ViewGroup) {
         val mine = web?.parent === container
@@ -1077,8 +1111,14 @@ object WebHost {
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             if (view !== web) return
             canGoBack.value = view.canGoBack()
+            val wasWatch = onWatchPage.value
             onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
                 .let { it.startsWith("/watch") || it.startsWith("/live/") }
+            if (carShown && onWatchPage.value && !wasWatch) {
+                main.removeCallbacks(carWatchProbe)
+                main.postDelayed(carWatchProbe, 3_000L)
+                main.postDelayed(carWatchProbe, 9_000L)
+            }
             if (!url.isNullOrEmpty() && url != "about:blank") {
                 lastUrl = url
                 saveUrl(url)
