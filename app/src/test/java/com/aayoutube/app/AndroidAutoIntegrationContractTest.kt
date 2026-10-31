@@ -21,6 +21,11 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(service.contains("Android Auto requested legacy projection service"))
         assertTrue(service.contains("Android Auto resolving projected video activity"))
         assertTrue(video.contains("android:process=\":web\""))
+        // The shortened label is exclusive to Android Auto's video entry:
+        // neither phone launcher nor Android Auto Music is renamed.
+        assertTrue(video.contains("android:label=\"AaYT Video\""))
+        assertTrue(manifest.contains("android:label=\"AAYoutube\""))
+        assertFalse(manifest.contains("android:label=\"AAYouTube Video\""))
         assertTrue(music.contains("android:label=\"AAYouTube Music\""))
         assertTrue(music.contains("android:exported=\"true\""))
         assertTrue(music.contains("android.media.browse.MediaBrowserService"))

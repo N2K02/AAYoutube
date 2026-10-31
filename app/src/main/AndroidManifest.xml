@@ -99,7 +99,7 @@
             android:process=":web"
             android:enabled="true"
             android:exported="true"
-            android:label="AAYouTube Video">
+            android:label="AaYT Video">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION" />
