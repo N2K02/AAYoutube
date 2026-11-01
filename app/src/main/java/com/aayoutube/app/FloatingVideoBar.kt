@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,7 @@ internal fun FloatingVideoBar(
     onBack: () -> Unit,
     onHome: () -> Unit,
     onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
     onNext: () -> Unit,
     modifier: Modifier = Modifier,
     car: Boolean = false,
@@ -68,6 +70,7 @@ internal fun FloatingVideoBar(
                 if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 if (playing) "Pause" else "Play", size, onPlayPause,
             )
+            BarIcon(Icons.Filled.SkipPrevious, "Previous video", size, onPrevious)
             BarIcon(Icons.Filled.SkipNext, "Next video", size, onNext)
             extra()
         }
