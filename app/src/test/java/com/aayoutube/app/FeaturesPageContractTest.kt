@@ -62,6 +62,11 @@ class FeaturesPageContractTest {
         assertTrue(script.contains("oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra"))
         assertTrue(script.contains("request !== sb.request"))
         assertTrue(script.contains("document.querySelectorAll('.aay-ryd')"))
-        assertTrue(script.contains("CFG.backgroundPlay !== false && !lowered"))
+        // A one-time 144p background cap is replaced with the persisted 720p
+        // policy. An explicitly enabled saver is still honored off-screen.
+        assertTrue(script.contains("CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality()"))
+        assertTrue(script.contains("A.setBg = function (on)"))
+        assertTrue(script.contains("applyPreferredQuality();"))
+        assertTrue(script.contains("writeYouTubeQuality(CFG.preferredQuality || 'hd720')"))
     }
 }

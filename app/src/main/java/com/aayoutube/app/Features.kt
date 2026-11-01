@@ -6,13 +6,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 
+/** Saved quality values use YouTube's player codes, not display-dependent pixel sizes. */
+internal object VideoQualityPolicy {
+    private val levels = setOf("auto", "tiny", "small", "medium", "large",
+        "hd720", "hd1080", "hd1440", "hd2160", "highres")
+    fun isSupported(value: String): Boolean = value in levels
+    fun normalize(value: String?): String = value?.takeIf(::isSupported) ?: "hd720"
+}
+
 /** The switches on the Features page. Part of them is read by the page script (see aay.js). */
 data class FeatureFlags(
     val blockAds: Boolean = true,
     val hideShorts: Boolean = true,
     val hidePromos: Boolean = true,
     val backgroundPlay: Boolean = true,
-    val lowQualityInBackground: Boolean = true,
+    val lowQualityInBackground: Boolean = false,
+    /** 720p initially; manual quality picks become the default for subsequent videos. */
+    val preferredQuality: String = "hd720",
     val autoPip: Boolean = true,
     val autoContinue: Boolean = true,
     val sponsorBlock: Boolean = true,
@@ -34,6 +44,7 @@ data class FeatureFlags(
         .put("hidePromos", hidePromos)
         .put("backgroundPlay", backgroundPlay)
         .put("lowQuality", lowQualityInBackground)
+        .put("preferredQuality", preferredQuality)
         .put("autoContinue", autoContinue)
         .put("sponsorBlock", sponsorBlock)
         .put("sbExtra", sponsorExtra)
@@ -51,12 +62,19 @@ object Features {
         if (::prefs.isInitialized) return
         prefs = context.applicationContext.getSharedPreferences("aay_features", Context.MODE_PRIVATE)
         val d = FeatureFlags()
+        // Old installs had background tiny (144p) enabled by default. Migrate once
+        // to 720p continuity; users may deliberately re-enable the battery saver.
+        val previousQualityPolicy = prefs.getBoolean("qualityPolicyV2", false)
+        val lowQuality = if (previousQualityPolicy) prefs.getBoolean("lowQuality", false) else false
+        if (!previousQualityPolicy) prefs.edit()
+            .putBoolean("lowQuality", false).putBoolean("qualityPolicyV2", true).apply()
         _state.value = FeatureFlags(
             blockAds = prefs.getBoolean("blockAds", d.blockAds),
             hideShorts = prefs.getBoolean("hideShorts", d.hideShorts),
             hidePromos = prefs.getBoolean("hidePromos", d.hidePromos),
             backgroundPlay = prefs.getBoolean("backgroundPlay", d.backgroundPlay),
-            lowQualityInBackground = prefs.getBoolean("lowQuality", d.lowQualityInBackground),
+            lowQualityInBackground = lowQuality,
+            preferredQuality = VideoQualityPolicy.normalize(prefs.getString("preferredQuality", d.preferredQuality)),
             autoPip = prefs.getBoolean("autoPip", d.autoPip),
             autoContinue = prefs.getBoolean("autoContinue", d.autoContinue),
             sponsorBlock = prefs.getBoolean("sponsorBlock", d.sponsorBlock),
@@ -74,7 +92,8 @@ object Features {
 
     fun update(change: (FeatureFlags) -> FeatureFlags) {
         val n = change(_state.value).let {
-            it.copy(topMenuTimeoutSeconds = TopMenuPolicy.normalize(it.topMenuTimeoutSeconds))
+            it.copy(topMenuTimeoutSeconds = TopMenuPolicy.normalize(it.topMenuTimeoutSeconds),
+                preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality))
         }
         _state.value = n
         prefs.edit()
@@ -83,6 +102,7 @@ object Features {
             .putBoolean("hidePromos", n.hidePromos)
             .putBoolean("backgroundPlay", n.backgroundPlay)
             .putBoolean("lowQuality", n.lowQualityInBackground)
+            .putString("preferredQuality", n.preferredQuality)
             .putBoolean("autoPip", n.autoPip)
             .putBoolean("autoContinue", n.autoContinue)
             .putBoolean("sponsorBlock", n.sponsorBlock)

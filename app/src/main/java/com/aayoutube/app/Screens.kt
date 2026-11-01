@@ -90,6 +90,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -221,6 +222,9 @@ private fun AAYoutubePageHeader(
 fun AppRoot(activity: MainActivity) {
     val context = LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // Keep the departing settings panel mounted until its fade-out completes.
+    var lastPanel by remember { mutableStateOf(Tab.Settings) }
+    LaunchedEffect(tab) { if (tab != Tab.Watch.ordinal) lastPanel = Tab.entries[tab] }
     val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
     val providerVersion by LyricsPrefs.providersVersion.collectAsState()
@@ -355,38 +359,42 @@ fun AppRoot(activity: MainActivity) {
             } else Modifier
         )
     ) {
-        Scaffold(
-            topBar = {
-                // Non-video pages keep the same single header. The watch
-                // header is an overlay so auto-hide never resizes the WebView
-                // or interrupts its hardware-decoded video surface.
-                if (!watchTab && headerAllowed) {
-                    AAYoutubePageHeader(
-                        Tab.entries[tab],
-                        lyricsAvailable = false,
-                        lyricsShown = false,
-                        onLyrics = {},
-                    )
-                }
-            },
-        ) { padding ->
-            Box(Modifier.padding(padding).fillMaxSize()) {
-                // The page stays in place under the other tabs, so playback carries on while you look at them.
-                WebPane(Modifier.fillMaxSize())
-                if (tab != 0 && !inPip) {
-                    Surface(
-                        Modifier.fillMaxSize().pointerInput(Unit) { },
-                        color = MaterialTheme.colorScheme.background,
-                    ) {
-                        when (Tab.entries[tab]) {
-                            Tab.Watch -> Unit
-                            Tab.Features -> FeaturesPage()
-                            Tab.Lyrics -> LyricsSettingsPage()
-                            Tab.Update -> UpdatePage()
-                            Tab.Info -> InfoPage()
-                            Tab.Settings -> AAYoutubeSettingsMenu(
-                                onSelect = { tab = it.ordinal },
-                            )
+        // Keep the video WebView at a constant native size while opening a menu.
+        // Changing Scaffold.topBar padding used to resize the decoder and cause stalls.
+        Box(Modifier.fillMaxSize()) {
+            WebPane(Modifier.fillMaxSize())
+            val panel = if (tab != Tab.Watch.ordinal) Tab.entries[tab] else lastPanel
+            AnimatedVisibility(
+                visible = tab != Tab.Watch.ordinal && !inPip,
+                enter = fadeIn(animationSpec = tween(180)),
+                exit = fadeOut(animationSpec = tween(120)),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize().pointerInput(Unit) { },
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        // Single header belongs to the overlay, not to the WebView's layout.
+                        AAYoutubePageHeader(
+                            panel, lyricsAvailable = false, lyricsShown = false, onLyrics = {},
+                        )
+                        Crossfade(
+                            targetState = panel,
+                            animationSpec = tween(160),
+                            modifier = Modifier.weight(1f),
+                            label = "Settings navigation",
+                        ) { page ->
+                            when (page) {
+                                Tab.Watch -> Unit
+                                Tab.Features -> FeaturesPage()
+                                Tab.Lyrics -> LyricsSettingsPage()
+                                Tab.Update -> UpdatePage()
+                                Tab.Info -> InfoPage()
+                                Tab.Settings -> AAYoutubeSettingsMenu(
+                                    onSelect = { tab = it.ordinal },
+                                )
+                            }
                         }
                     }
                 }
@@ -742,7 +750,10 @@ fun FeaturesPage() {
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
             Toggle("Background play", "Prevents YouTube pausing when the screen is hidden. Android Auto playback also uses the media service.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
-            Toggle("Low quality in background", "Lower video resolution while playing with the screen hidden. Saves data and battery.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
+            Toggle("Low quality in background", "Optional 144p saving only with the screen off. Mini-player, PiP and Android Auto retain your saved quality.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
+            ListItem(headlineContent = { Text("Video quality") },
+                supportingContent = { Text("Starts at 720p; choosing another resolution in YouTube’s quality menu saves it for future videos. Current: " + f.preferredQuality) },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer))
             Toggle("Picture in picture", "Shrink to a floating player when you leave the app.", f.autoPip) { s, v -> s.copy(autoPip = v) }
             Toggle("Keep watching", "Attempts to dismiss YouTube's inactivity prompts.", f.autoContinue) { s, v -> s.copy(autoContinue = v) }
         }

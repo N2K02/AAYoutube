@@ -513,7 +513,8 @@ object WebHost {
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
-        // Hidden screen = background mode: lowest video quality saves data and battery.
+        // Preserve the user's saved playback resolution; only an explicit battery-saving
+        // setting may lower quality while fully backgrounded (never mini-player or PiP).
         refreshBackgroundQuality()
     }
 
@@ -616,6 +617,16 @@ object WebHost {
         // The media snapshot is authoritative during that brief navigation gap.
         return route.startsWith("/watch") || route.startsWith("/live/") ||
             onWatchPage.value || (snapshot.value.playing && snapshot.value.id.isNotBlank())
+    }
+
+    /** Called only for explicit player-quality menu picks, never for adaptive playback changes. */
+    fun requestQualityFromBridge(quality: String, generation: Int) {
+        if (!VideoQualityPolicy.isSupported(quality)) return
+        main.post {
+            if (generation != webGeneration || quality == Features.current.preferredQuality) return@post
+            AppLog.add("PLAY", "Remember user-selected video quality=$quality")
+            Features.update { it.copy(preferredQuality = quality) }
+        }
     }
 
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
@@ -1322,6 +1333,12 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
         WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
+    }
+
+    /** Persist only explicit quality menu selections (not YouTube's adaptive downgrades). */
+    @JavascriptInterface
+    fun quality(value: String) {
+        WebHost.requestQualityFromBridge(value, generation)
     }
 
     /** Swipe down on the playing video. */

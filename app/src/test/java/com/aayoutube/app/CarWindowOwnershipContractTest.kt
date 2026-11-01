@@ -130,9 +130,17 @@ class CarWindowOwnershipContractTest {
         assertTrue(js.contains("mark(w, 'aay-car-off', !hasVideo && !hasControls);"))
         assertTrue(js.contains("mark(w, 'aay-car-clear', !hasVideo && hasControls);"))
         val layout = js.substringAfter("function carLayout() {").substringBefore("A.car = function")
-        // Re-guard on every DOM change: YouTube inserts wrappers after the player.
-        assertTrue(layout.contains("guarded = carGuard(on ? v : null);"))
-        assertTrue(layout.indexOf("guarded = carGuard(on ? v : null);") < layout.indexOf("return;"))
+        // Skip a costly DOM-wide scan when the phone is not in car mode.
+        // Once the car renderer is active, new YouTube wrappers must still
+        // be re-guarded on every relevant DOM mutation before the early return.
+        val skipIdle = layout.indexOf("if (!on && !carOn && !carBox && !carVideo) return;")
+        val unchanged = layout.indexOf("if (on === carOn && box === carBox && v === carVideo)")
+        val guard = layout.indexOf("guarded = carGuard(on ? v : null);", unchanged)
+        val exitUnchanged = layout.indexOf("return;", unchanged)
+        assertTrue("idle non-car layout must skip unnecessary work", skipIdle in 0 until unchanged)
+        assertTrue("active car layout must recalculate the wrapper guard", unchanged >= 0 && guard > unchanged)
+        assertTrue("active car DOM guard must run before returning", guard in (unchanged + 1) until exitUnchanged)
+        assertTrue("new car layouts must still guard wrappers", layout.indexOf("guarded = carGuard(on ? v : null);", exitUnchanged) > exitUnchanged)
     }
 
     @Test fun paintProbeRunsWhenTheCarPageOpensAVideo() {
