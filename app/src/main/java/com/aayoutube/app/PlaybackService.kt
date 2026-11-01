@@ -28,6 +28,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    // A transient WebView pause must not immediately drop foreground-media priority.
+    // Android may throttle/kill the :web process before JS gets a chance to resume.
+    private val demoteForeground = Runnable {
+        if (foreground && !snapshot.playing && !recoveringPlayback) {
+            AppLog.add("MEDIA", "Foreground grace period expired; playback still paused")
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foreground = false
+        }
+    }
     private val notifications = CarMediaNotificationManager(this)
     private val updateGate = MediaUpdateGate()
     private val artworkLoader = MediaArtworkLoader {
@@ -434,6 +443,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         handler.removeCallbacks(registrationTimeout)
         handler.removeCallbacks(freeze)
         handler.removeCallbacks(idleStop)
+        handler.removeCallbacks(demoteForeground)
         snapshot = snapshot.copy(playing = false, buffering = false)
         publish(snapshot)
         if (outgoing == null) ensureWeb()
@@ -531,11 +541,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     private fun updateNotification(s: Snap) {
+        handler.removeCallbacks(demoteForeground)
         if (!s.playing) {
             lastNotification = null
-            if (foreground) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                foreground = false
+            if (foreground && !recoveringPlayback) {
+                // Explicit pause is still reflected immediately in MediaSession state.
+                // Hold the foreground briefly for an unexpected background pause.
+                handler.postDelayed(demoteForeground, 8_000L)
             }
             return
         }
