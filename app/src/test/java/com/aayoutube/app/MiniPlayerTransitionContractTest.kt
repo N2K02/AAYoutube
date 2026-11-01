@@ -22,6 +22,11 @@ class MiniPlayerTransitionContractTest {
         assertFalse(pane.contains("animateFloatAsState("))
         assertTrue(pane.contains("if (browseOn && !inPip)"))
         assertTrue(pane.contains("if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause()"))
+        // A mini video can move beneath either controls rail; no reserved side strip.
+        assertTrue(pane.contains("val minX = edge"))
+        assertTrue(pane.contains("val maxX = (constraints.maxWidth.toFloat() - wPx - edge)"))
+        assertFalse(pane.contains("MiniPlayerBounds.RAIL_RESERVE_DP"))
+        assertTrue(pane.contains("detectDragGestures("))
     }
 
     @Test fun pipUsesNativeVideoSourceAndDisablesWebViewUnsafeSeamlessResize() {
