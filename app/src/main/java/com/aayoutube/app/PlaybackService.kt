@@ -453,16 +453,33 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // A startForegroundService caller must be promoted before WebView IPC responds.
+        // A MediaBrowserService can be BOUND without ever being STARTED.
+        // Explicitly start it when WebHost first reports playback, so the OS grants
+        // foreground-media priority to both the service and its bound WebView process.
+        val startingPlayback = intent?.action == ACTION_PLAYBACK
+        val incoming = if (startingPlayback) intent?.getBundleExtra(EXTRA_PLAYBACK)?.let(Snap::from)
+            else null
+        val initial = incoming?.takeIf { it.playing && snapshot.id.isBlank() }
+        if (initial != null) snapshot = initial
+        // startForegroundService callers must be promoted promptly, before WebView IPC.
         if (!foreground) {
             runCatching {
-                startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notifications.placeholder())
+                val notification = if (snapshot.playing) {
+                    notifications.playback(snapshot, session.sessionToken,
+                        artworkLoader.bitmapFor(MediaArtworkLoader.urlFor(snapshot.art, snapshot.id)))
+                } else notifications.placeholder()
+                startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notification)
                 foreground = true
                 lastNotification = null
-            }.onFailure { AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}") }
+                AppLog.add("MEDIA", "Foreground media service started; playing=${snapshot.playing}")
+            }.onFailure {
+                AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}: ${it.message}")
+            }
         }
         if (intent?.action == ACTION_QUIT) requestQuit()
-        // The placeholder is only a startup requirement, not an idle media card.
+        // Publish the initial playing state even when the WebView Messenger has
+        // not registered yet; future IPC reports will update position and metadata.
+        if (initial != null && !quitRequested) publish(snapshot)
         handler.post { if (!shuttingDown) updateNotification(snapshot) }
         return super.onStartCommand(intent, flags, startId)
     }
@@ -560,8 +577,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover)))
             foreground = true
             lastNotification = key
+            AppLog.add("MEDIA", "Playback notification foreground=true id=${s.id} " +
+                "channel=${notifications.channelStatus()}")
         }.onFailure {
-            AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}")
+            AppLog.add("MEDIA", "Foreground playback notification failed: ${it.javaClass.simpleName}: ${it.message}")
         }
     }
 
@@ -585,6 +604,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     companion object {
+        const val ACTION_PLAYBACK = "com.aayoutube.app.action.PLAYBACK"
+        const val EXTRA_PLAYBACK = "com.aayoutube.app.extra.PLAYBACK"
         const val ACTION_QUIT = "com.aayoutube.app.action.QUIT"
         private const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
