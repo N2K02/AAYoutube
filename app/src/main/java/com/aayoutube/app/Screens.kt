@@ -331,8 +331,9 @@ fun AppRoot(activity: MainActivity) {
             // Car screen: back from a video always shrinks it into the mini player with YouTube
             // Home underneath, like the YouTube app (playing or paused).
             WebHost.carDisplay && WebHost.isOnWatchPage() -> WebHost.enterMini()
-            // Watching: back shrinks the video into the mini player, like the YouTube app.
-            snap.playing && WebHost.isOnWatchPage() -> WebHost.enterMini()
+            // Even a paused video goes to mini-player. A stale MediaSession snapshot or
+            // YouTube SPA history must never make Back navigate the main player to Home.
+            WebHost.isOnWatchPage() -> WebHost.enterMini()
             WebHost.goBack() -> Unit
             WebHost.carDisplay -> AppLog.add("UI", "Back on YouTube home (car screen): nothing to go back to")
             else -> {
