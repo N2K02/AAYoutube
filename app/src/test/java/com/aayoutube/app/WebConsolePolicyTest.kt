@@ -11,6 +11,16 @@ class WebConsolePolicyTest {
         assertNull(WebConsolePolicy.clean("Loading the image 'data:image/png;base64,abcdef123456'"))
         assertEquals("asset [INLINE_IMAGE]", WebConsolePolicy.clean("asset data:image/png;base64,abcdef123456"))
     }
+    @Test fun trackingOnlyCorsWarningsAreIgnoredButRealApiFailuresRemainVisible() {
+        assertNull(WebConsolePolicy.clean(
+            "Access to XMLHttpRequest at https://m.youtube.com/ptracking blocked by CORS policy"
+        ))
+        assertNull(WebConsolePolicy.clean(
+            "Access to XMLHttpRequest at https://googleads.g.doubleclick.net/pagead/id blocked by CORS policy"
+        ))
+        val genuine = "Access to XMLHttpRequest at https://m.youtube.com/youtubei/v1/player blocked by CORS policy"
+        assertEquals(genuine, WebConsolePolicy.clean(genuine))
+    }
     @Test fun preservePlaybackAndNetworkDiagnostics() {
         assertEquals("net::ERR_NAME_NOT_RESOLVED", WebConsolePolicy.clean("net::ERR_NAME_NOT_RESOLVED"))
         assertEquals("video waiting ready=0", WebConsolePolicy.clean("video waiting ready=0"))
