@@ -173,6 +173,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 BrowseHost.resume()
             }
         }
+        frame.onVideoTap = {
+            if (WebHost.isActiveCarHost(carToken) &&
+                WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
+                WebHost.showCarControls()
+            }
+        }
         val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
@@ -406,6 +412,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     },
                     onRelease = { frame ->
                         frame.onSwipeDown = null
+                        frame.onVideoTap = null
                         WebHost.detach(frame)
                         if (playerContainer === frame) playerContainer = null
                     },
