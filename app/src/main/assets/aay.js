@@ -471,7 +471,14 @@
     'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;' +
     'background:transparent!important;visibility:hidden!important;width:0!important;height:0!important;' +
     'min-height:0!important;overflow:hidden!important;pointer-events:none!important}' +
-    'html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){background:transparent!important}' +
+    // YouTube's full-screen controls backdrop must not swallow taps to native
+    // settings/quality or the video. Keep only its actual buttons interactive.
+    'html.aay-car #player-control-container,html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){' +
+    'background:transparent!important;pointer-events:none!important}' +
+    'html.aay-car #player-control-container button,html.aay-car #player-control-container a,' +
+    'html.aay-car #player-control-container [role="button"],' +
+    'html.aay-car .aay-car-clear button,html.aay-car .aay-car-clear a,' +
+    'html.aay-car .aay-car-clear [role="button"]{pointer-events:auto!important}' +
     'html.aay-car .aay-car-chain:not(#aay-x):not(#aay-y),' +
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
@@ -912,7 +919,7 @@
       bgWatch.wanted = true;
       return;
     }
-    if ((!A.isBg && !A.hold) || bgWatch.explicitPause || !bgWatch.wanted) return;
+    if ((!A.isBg && !A.hold && !A.isMini) || bgWatch.explicitPause || !bgWatch.wanted) return;
     var now = Date.now();
     if (now - bgWatch.windowAt > 60000) { bgWatch.windowAt = now; bgWatch.attempts = 0; }
     if (bgWatch.attempts >= 3) return;
@@ -941,7 +948,7 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') { bgWatch.wanted = true; bgWatch.explicitPause = false; }
-        if (ev === 'pause' && !A.isBg && !A.hold && !A.inPip) bgWatch.wanted = false;
+        if (ev === 'pause' && !A.isBg && !A.hold && !A.inPip && !A.isMini) bgWatch.wanted = false;
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
           else notePosition(v);
