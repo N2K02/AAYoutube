@@ -90,7 +90,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     override val savedStateRegistry: SavedStateRegistry get() = savedController.savedStateRegistry
 
     private var mediaController: CompatMediaConnection? = null
-    private var playerContainer: FrameLayout? = null
+    private var playerContainer: CarFrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
     private var carInput: LegacyCarInput? = null
@@ -150,7 +150,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }
     }
 
-    private fun bindVideoToCarFrame(frame: FrameLayout) {
+    private fun bindVideoToCarFrame(frame: CarFrameLayout) {
         // AndroidView.factory runs before the ViewRoot is attached. Do not
         // create Chromium on phone display 0 and then immediately transfer its
         // GPU surface to Android Auto display 420.
