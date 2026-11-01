@@ -423,6 +423,9 @@ object WebHost {
         // keep decoding, so a black car screen can be classified from logcat.
         w.evaluateJavascript(
             """(function(){
+                // Reconnects and SPA navigation can drop the document's car class.
+                // Repair that state on the attached car renderer before probing.
+                if(window.__aay && !window.__aay.isCar) window.__aay.car(true);
                 function d(n){if(!n)return null;var c=(typeof n.className==='string'?n.className:'')
                     .trim().split(/\s+/).slice(0,2).join('.');
                     return (n.tagName||'').toLowerCase()+(n.id?'#'+n.id:'')+(c?'.'+c:'');}
@@ -447,6 +450,10 @@ object WebHost {
                     vis:v?getComputedStyle(v).visibility:null,
                     hidden:hidden,
                     car:document.documentElement.classList.contains('aay-car'),
+                    carRequested:!!(window.__aay&&window.__aay.isCar),
+                    mini:!!(window.__aay&&window.__aay.isMini),
+                    quality:(function(){var p=document.getElementById('movie_player')||document.querySelector('.html5-video-player');
+                        try{return p&&p.getPlaybackQuality?p.getPlaybackQuality():null}catch(e){return null}})(),
                     top:top,
                     inPlayer:inPlayer
                 });
@@ -636,7 +643,15 @@ object WebHost {
     }
 
     fun refitCarViewport() {
-        if (carShown) js("window.__aay&&window.__aay.refitCar&&window.__aay.refitCar()")
+        if (!carShown) return
+        // Android Auto sometimes replaces its window while the Chromium document
+        // still believes it is on the phone. Reassert the car owner without a reload.
+        // Never let a host resize turn the user's mini player back into fullscreen.
+        if (mode.value == PlayerMode.MINI) {
+            js("window.__aay&&(window.__aay.car(true),window.__aay.mini(true))")
+        } else if (mode.value == PlayerMode.FULL) {
+            js("window.__aay&&(window.__aay.car(true),window.__aay.refitCar&&window.__aay.refitCar())")
+        }
     }
 
     fun expandPlayer() {
