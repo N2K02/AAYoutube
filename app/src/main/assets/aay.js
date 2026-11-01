@@ -917,6 +917,12 @@
   function bind(v) {
     if (!v || v.__aay) return;
     trackNewVideoElement(v);
+    if (bgWatch.id !== qualityVideoId()) {
+      bgWatch.id = qualityVideoId();
+      bgWatch.wanted = !v.paused;
+      bgWatch.explicitPause = false;
+      bgWatch.attempts = 0;
+    }
     v.__aay = 1;
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
       'durationchange', 'emptied', 'loadstart'].forEach(function (ev) {
