@@ -164,6 +164,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         inactiveLogged = false
         // Never move a live renderer into a replacement car window: it decodes
         // and plays audio but paints black. A different window gets a new one.
+        frame.onSwipeDown = {
+            if (WebHost.isActiveCarHost(carToken) &&
+                WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
+                AppLog.add("CAR", "Swipe down on video: mini player")
+                WebHost.enterMini()
+                BrowseHost.resume()
+            }
+        }
         val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
@@ -325,10 +333,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             var miniY by remember { mutableStateOf(miniPrefs.getFloat("y", 1f).coerceIn(0f, 1f)) }
             val miniWidth = minOf(240.dp, (maxWidth - 24.dp) * 0.8f)
             val miniHeight = miniWidth * (9f / 16f)
-            val minX = with(density) { 12.dp.toPx() }
-            val minY = with(density) { 12.dp.toPx() }
-            val maxX = with(density) { (maxWidth - miniWidth - 12.dp).toPx() }.coerceAtLeast(minX)
-            val maxY = with(density) { (maxHeight - miniHeight - 12.dp).toPx() }.coerceAtLeast(minY)
+            // Only the actual controls rail intercepts touches. The video can be
+            // dragged to every screen edge, including behind either rail.
+            val minX = 0f
+            val minY = 0f
+            val maxX = with(density) { (maxWidth - miniWidth).toPx() }.coerceAtLeast(minX)
+            val maxY = with(density) { (maxHeight - miniHeight).toPx() }.coerceAtLeast(minY)
             val playerX = minX + (maxX - minX) * miniX
             val playerY = minY + (maxY - minY) * miniY
             val miniVideoModifier = Modifier.offset {
@@ -394,6 +404,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
                     },
                     onRelease = { frame ->
+                        frame.onSwipeDown = null
                         WebHost.detach(frame)
                         if (playerContainer === frame) playerContainer = null
                     },
