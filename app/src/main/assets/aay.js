@@ -266,6 +266,24 @@
     }, true);
   }
 
+  // Some Android Auto hosts inject touch events straight into Chromium, bypassing
+  // CarFrameLayout.dispatchTouchEvent. Observe them inside the page as well.
+  // Neither listener consumes the gesture: settings taps and seeker taps remain native.
+  if (!BROWSE) {
+    var carControlsTap = null;
+    window.addEventListener('pointerdown', function (e) {
+      carControlsTap = A.isCar && !A.isMini && !A.inPip && e.isPrimary !== false ?
+        { id: e.pointerId, x: e.clientX, y: e.clientY, at: Date.now() } : null;
+    }, true);
+    window.addEventListener('pointerup', function (e) {
+      var t = carControlsTap; carControlsTap = null;
+      if (!t || t.id !== e.pointerId || !A.isCar || A.isMini || A.inPip ||
+          Math.hypot(e.clientX - t.x, e.clientY - t.y) > 18 || Date.now() - t.at > 700) return;
+      if (A.showCarControls) A.showCarControls();
+    }, true);
+    window.addEventListener('pointercancel', function () { carControlsTap = null; }, true);
+  }
+
   /* ---------- 2. Ads: remove ad data from YouTube's responses before the player sees it ---------- */
   var AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
   function strip(o, depth) {
@@ -1257,7 +1275,10 @@
     var changed = on !== carOn;
     carOn = on; carBox = box; carVideo = v;
     carLifted = lift(carLifted, box, on);
-    if (document.documentElement) document.documentElement.classList.toggle('aay-car', on);
+    if (document.documentElement) {
+      document.documentElement.classList.toggle('aay-car', on);
+      if (!on) document.documentElement.classList.remove('aay-car-controls');
+    }
     guarded = carGuard(on ? v : null);
     if (on && guarded !== carGuarded) {
       carGuarded = guarded;
