@@ -297,6 +297,29 @@ test('unmute overlay is hidden but video itself is not suppressed', () => {
   assert.ok(!css.includes('body *{visibility:hidden'));
 });
 
+test('car quality menu remains tappable without re-enabling the full-screen controls backdrop', () => {
+  const p = playerPage({ car: true });
+  const css = p.styleElements.map(e => e.textContent).join('');
+  assert.ok(css.includes('html.aay-car #player-control-container,html.aay-car .aay-car-clear'));
+  assert.ok(css.includes('background:transparent!important;pointer-events:none!important'));
+  for (const selector of [
+    '#player-control-container button',
+    '#player-control-container [role="button"]',
+    '#player-control-container .ytp-settings-button',
+    '#player-control-container .ytp-popup',
+    '#player-control-container .ytp-menuitem',
+    '#player-control-container [role="menuitem"]',
+    '#player-control-container ytm-icon-button',
+    '#player-control-container ytm-menu-item-renderer',
+    '.aay-car-clear .ytp-popup',
+    '.aay-car-clear ytm-menu-popup-renderer',
+  ]) {
+    assert.ok(css.includes('html.aay-car ' + selector), 'missing interactive menu target ' + selector);
+  }
+  // Never give the entire black frame a pointer-events:auto override.
+  assert.ok(!css.includes('html.aay-car .aay-car-clear{pointer-events:auto'));
+});
+
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
