@@ -37,21 +37,16 @@ class TopMenuSwipeGestureTest {
         assertTrue(phone.contains("Features.update { it.copy(controlsOnLeft = left) }"))
     }
 
-    @Test fun miniPlayerNeverEntersTheRailStrip() {
-        val edge = 12f; val rail = 64f; val width = 400f; val mini = 200f
-        // Rail on the right (default): mini player stops before the rail strip.
-        assertEquals(edge, MiniPlayerBounds.minX(edge, rail, railOnLeft = false))
-        val maxRight = MiniPlayerBounds.maxX(width, mini, edge, rail, railOnLeft = false)
-        assertEquals(width - mini - edge - rail, maxRight)
-        assertTrue(maxRight + mini <= width - rail)
-        // Rail on the left: mini player starts after the rail strip.
-        assertEquals(edge + rail, MiniPlayerBounds.minX(edge, rail, railOnLeft = true))
-        assertEquals(width - mini - edge, MiniPlayerBounds.maxX(width, mini, edge, rail, railOnLeft = true))
-        // Too narrow: never inverted bounds.
-        assertTrue(MiniPlayerBounds.maxX(100f, 90f, edge, rail, false) >= MiniPlayerBounds.minX(edge, rail, false))
+    @Test fun miniPlayerCanUseTheSpaceOutsideTheActualControlsRail() {
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        assertTrue(phone.contains("val minX = MiniPlayerBounds.minX(edge, rail, railOnLeft)"))
-        assertTrue(phone.contains("MiniPlayerBounds.maxX(constraints.maxWidth.toFloat(), wPx, edge, rail, railOnLeft)"))
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        // Do not reserve a whole dead strip along the menu side.
+        assertTrue(phone.contains("val minX = edge"))
+        assertTrue(phone.contains("(constraints.maxWidth.toFloat() - wPx - edge)"))
+        assertTrue(car.contains("val minX = 0f"))
+        assertTrue(car.contains("val minY = 0f"))
+        assertTrue(car.contains("(maxWidth - miniWidth).toPx()"))
+        assertTrue(car.contains("(maxHeight - miniHeight).toPx()"))
     }
 
     @Test fun autoHideSettingsRemainConfigurable() {
