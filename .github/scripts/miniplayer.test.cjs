@@ -259,6 +259,20 @@ test('mini layout exposes the video surface and preserves play until explicitly 
   assert.equal(p.classNames.has('aay-mini'), false);
 });
 
+test('car mini player recovers an unexpected pause but honours explicit pause', () => {
+  const p = playerPage({ car: true });
+  p.window.__aay.mini(true);
+  // Simulate a Chromium pause that bypasses HTMLMediaElement.pause(), such
+  // as an audio focus handoff when the browse WebView becomes visible.
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'mini player must resume an unsolicited pause');
+  p.window.__aay.cmd('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'mini player must honour the user pause');
+});
+
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
   const p = playerPage();
   p.window.__aay.mini(true);
