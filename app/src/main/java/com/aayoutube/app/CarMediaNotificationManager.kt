@@ -24,6 +24,14 @@ internal class CarMediaNotificationManager(
         service.getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "AAYoutube playback", NotificationManager.IMPORTANCE_LOW)
         )
+        AppLog.add("MEDIA", "Notification channel: " + channelStatus())
+    }
+
+    fun channelStatus(): String {
+        val manager = service.getSystemService(NotificationManager::class.java)
+        val channel = manager.getNotificationChannel(CHANNEL_ID)
+        return "appEnabled=${manager.areNotificationsEnabled()} " +
+            "importance=${channel?.importance ?: -1}"
     }
 
     private fun launchIntent(): PendingIntent = PendingIntent.getActivity(
@@ -36,6 +44,8 @@ internal class CarMediaNotificationManager(
         .setContentTitle("AAYoutube")
         .setContentText("Preparing playback")
         .setOnlyAlertOnce(true)
+        .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+        .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         .setContentIntent(launchIntent())
         .build()
 
@@ -50,6 +60,8 @@ internal class CarMediaNotificationManager(
             .setLargeIcon(artwork)
             .setContentIntent(launchIntent())
             .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setOngoing(snapshot.playing)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 
