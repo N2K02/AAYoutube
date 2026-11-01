@@ -94,16 +94,17 @@
   try {
     var origPause = HTMLMediaElement.prototype.pause;
     HTMLMediaElement.prototype.pause = function () {
-      var stack = '';
-      try { stack = String(new Error().stack).split('\n').slice(2, 5).join(' | '); } catch (e) {}
       if (!allowPause && holding() && !this.ended) {
         ignored++;
-        if (ignored <= 3 || ignored % 40 === 0) {
-          console.log('[aay] pause() ignored x' + ignored + ' (bg=' + A.isBg + ' pip=' + A.inPip + ' hold=' + A.hold + ') from ' + stack);
+        // Some YouTube builds request hundreds of pauses during a PiP resize.
+        // Capturing an Error stack on every intercepted call causes real UI jank.
+        if (ignored <= 2 || ignored % 250 === 0) {
+          console.log('[aay] pause() ignored x' + ignored +
+            ' (bg=' + A.isBg + ' pip=' + A.inPip + ' hold=' + A.hold + ')');
         }
         return;
       }
-      console.log('[aay] pause() called, allowed=' + allowPause + ' from ' + stack);
+      if (allowPause) console.log('[aay] user pause accepted');
       return origPause.apply(this, arguments);
     };
     window.addEventListener('pause', function (e) {
@@ -872,7 +873,12 @@
     var id = urlId();
     sbLoad(id);
     rydLoad(id);
-    if (A.isBg) later(function () { A.setBg(true); }, 1200);
+    // Apply the saved resolution as soon as the player initializes. Re-run once
+    // after YouTube has attached its player API; neither path reloads the page.
+    if (!BROWSE) {
+      A.applyQuality();
+      later(function () { A.applyQuality(); }, 900);
+    }
     if (AUTO) tryPlay(v);
   }
 
@@ -1056,6 +1062,9 @@
     try {
       var v = getVideo();
       if (v) bind(v);
+      // A playlist may reuse the <video> and player objects for a new media ID.
+      // A changed ID needs a new quality decision but the same video does not.
+      if (v && !BROWSE && A.applyQuality) A.applyQuality();
       skipAd();
       dialogs();
       rydApply();
@@ -1394,24 +1403,82 @@
     window.dispatchEvent(new Event('resize'));
   };
 
-  // Screen hidden = background: ask for the lowest video quality (less data, less decoding, less battery).
-  var lowered = false;
+  /* ---------- 11. Video quality preference ----------
+   * Request 720p on first play and retain deliberate YouTube quality-menu choices.
+   * YouTube may temporarily lower the decoded stream for bandwidth/device limits;
+   * never mistake its adaptive changes for a user's preference.
+   */
+  var qualityLabels = {
+    '144': 'tiny', '240': 'small', '360': 'medium', '480': 'large',
+    '720': 'hd720', '1080': 'hd1080', '1440': 'hd1440',
+    '2160': 'hd2160', '4320': 'highres'
+  };
+  var qualityApply = { player: null, key: '', last: '' };
+  function savedQuality() {
+    var q = CFG.preferredQuality || 'hd720';
+    return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
+  }
+  function desiredQuality() {
+    // Audio-only background may use 144p only when the user enables the setting.
+    // PiP, draggable mini and car video always retain the selected picture quality.
+    return A.isBg && !A.isCar && !A.inPip && !A.isMini &&
+      CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality();
+  }
+  function applyPreferredQuality() {
+    if (BROWSE) return;
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!p) return;
+    var chosen = desiredQuality();
+    var key = qualityVideoId() + ':' + chosen;
+    if (qualityApply.player === p && qualityApply.key === key) return;
+    try {
+      if (typeof p.setPlaybackQualityRange === 'function') {
+        p.setPlaybackQualityRange(chosen === 'auto' ? 'tiny' : chosen,
+          chosen === 'auto' ? 'highres' : chosen);
+      } else if (typeof p.setPlaybackQuality === 'function') {
+        p.setPlaybackQuality(chosen === 'auto' ? 'default' : chosen);
+      } else return; // YouTube's API is not ready; the next DOM tick will retry.
+      qualityApply.player = p;
+      qualityApply.key = key;
+      if (qualityApply.last !== key) {
+        qualityApply.last = key;
+        console.log('[aay] preferred video quality=' + chosen +
+          ' (video=' + qualityVideoId() + ')');
+      }
+    } catch (e) {
+      // Player API is private/unstable; never interrupt playback when unavailable.
+    }
+  }
+  A.applyQuality = applyPreferredQuality;
+  function menuQuality(text) {
+    var label = String(text || '').trim();
+    // Do not interpret the parent "Quality 720p" settings button as a pick.
+    if (/quality/i.test(label) || label.length > 36) return null;
+    if (/^auto(?:\\s*\\([^)]*\\))?$/i.test(label)) return 'auto';
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\\s*(?:60|HDR|HD|4K|8K))*$/i.exec(label);
+    return m ? qualityLabels[m[1]] : null;
+  }
+  document.addEventListener('click', function (event) {
+    if (BROWSE || !event.target || !event.target.closest) return;
+    var item = event.target.closest(
+      '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
+      'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
+      '[role="menuitemradio"], [role="option"]');
+    if (!item) return;
+    var q = menuQuality(item.textContent || item.getAttribute('aria-label'));
+    if (!q) return;
+    CFG.preferredQuality = q;
+    qualityApply.key = ''; // release the old range after the user's new choice
+    if (N && typeof N.quality === 'function') {
+      try { N.quality(q); } catch (e) {}
+    }
+    console.log('[aay] user selected video quality=' + q);
+    later(applyPreferredQuality, 500); // allow YouTube's menu handler to finish first
+  }, true);
+
   A.setBg = function (on) {
     A.isBg = !!on;
-    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    if (!p || !p.setPlaybackQualityRange) return;
-    try {
-      if (on && !A.isCar && !A.inPip && !A.isMini && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
-        lowered = true;
-        console.log('[aay] background: lowest video quality');
-        p.setPlaybackQualityRange('tiny', 'tiny');
-      } else if ((!on || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
-        // Only undo our own change; a quality the user picked in the player is left alone.
-        lowered = false;
-        console.log('[aay] foreground: video quality back to automatic');
-        p.setPlaybackQualityRange('tiny', 'highres');
-      }
-    } catch (e) {}
+    applyPreferredQuality();
   };
 
 })();
