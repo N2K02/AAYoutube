@@ -982,24 +982,36 @@ object WebHost {
     private var visibilityChangedAt = 0L
     private var userPausedAt = 0L
     private var resumeTries = 0
+    private var resumeWindowAt = 0L
 
     /** The screen went to the background, into picture in picture, or came back. */
     fun noteVisibilityChange() {
-        resumeTries = 0
+        // Keep the retry budget across layout transitions; it is reset by elapsed time.
         visibilityChangedAt = SystemClock.elapsedRealtime()
     }
 
-    // The page sometimes pauses by itself when the screen changes state. If that happens right
-    // after such a change, and nobody asked for a pause, carry on playing.
+    // YouTube/Chromium may drop playback long AFTER the screen was turned off.
+    // A user pause delivered via the media session is authoritative; do not fight it.
+    // Bound retries to prevent repeated play requests for an unavailable stream.
     private fun resumeIfDropped(old: Snap, new: Snap) {
         if (!Features.current.backgroundPlay) return
-        if (!old.playing || new.playing || new.ended || new.id != old.id) return
+        if (!old.playing || new.playing || new.ended || new.id != old.id || new.id.isBlank()) return
         val now = SystemClock.elapsedRealtime()
-        if (now - visibilityChangedAt < 4_000 && now - userPausedAt > 4_000 && resumeTries < 2) {
-            resumeTries++
-            AppLog.add("PLAY", "Paused by the page right after a screen change: resuming ($resumeTries/2)")
-            cmd("play")
+        val background = !shown && !inPip.value
+        val visibilityTransition = now - visibilityChangedAt < 4_000L
+        if (!background && !visibilityTransition) return
+        if (now - userPausedAt <= 5_000L) return
+        if (now - resumeWindowAt > 60_000L) {
+            resumeWindowAt = now
+            resumeTries = 0
         }
+        if (resumeTries >= 2) {
+            AppLog.add("PLAY", "Unexpected pause: native recovery budget exhausted")
+            return
+        }
+        resumeTries++
+        AppLog.add("PLAY", "Unexpected pause in background=$background: native resume $resumeTries/2")
+        cmd("play")
     }
 
     private fun publish(s: Snap) {
