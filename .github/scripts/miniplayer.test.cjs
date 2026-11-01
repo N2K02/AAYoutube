@@ -384,7 +384,13 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   const p = playerPage({ quality: true });
   p.flush();
   function option(label) {
-    return { textContent: label, closest() { return this; } };
+    return {
+      tagName: 'BUTTON', textContent: label,
+      closest(selector) {
+        return selector === 'a[href]' || selector === '[class*="renderer"],[class*="lockup"]'
+          ? null : this;
+      },
+    };
   }
   p.emit('click', { target: option('1080p') });
   assert.deepEqual(p.selectedQualities, ['hd1080']);
