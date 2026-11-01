@@ -6,6 +6,11 @@ internal object WebConsolePolicy {
     fun clean(message: String): String? {
         if (message.contains("was preloaded using link preload but not used")) return null
         if (message.contains("Loading the image 'data:image/")) return null
+        // Expected CORS noise from blocked tracking is not an application/network
+        // failure. Do not suppress real YouTube or provider CORS errors.
+        if (message.contains("blocked by CORS policy", ignoreCase = true) &&
+            listOf("doubleclick.net", "/ptracking", "/pagead/", "googleads.g.doubleclick.net")
+                .any { message.contains(it, ignoreCase = true) }) return null
         return inlineImage.replace(message, "[INLINE_IMAGE]").take(600)
     }
 }
