@@ -73,6 +73,8 @@ object WebHost {
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private var pendingUrl: String? = null
     private var lastUrl: String? = null
+    // Quality changes can reload a watch document; preserve its video position.
+    private var sameVideoReloadPosition: Pair<String, Long>? = null
     private var lastDesktop = false
     private var jsSource: String? = null
     private var lastLinkRequest = 0L
@@ -788,6 +790,7 @@ object WebHost {
         val w = web
         web = null
         webGeneration++ // Ignore already-queued bridge reports from the disposed renderer.
+        sameVideoReloadPosition = null
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
         (w?.parent as? ViewGroup)?.removeView(w)
@@ -1096,7 +1099,14 @@ object WebHost {
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             if (view !== web) return
-            AppLog.add("PAGE", "Started $url")
+            val incomingId = runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull()
+            val outgoingId = runCatching { Uri.parse(lastUrl).getQueryParameter("v") }.getOrNull()
+            val previous = snapshot.value
+            sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
+                incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
+                incomingId to previous.posMs else null
+            AppLog.add("PAGE", "Started $url" +
+                if (sameVideoReloadPosition != null) " (same-video position retained)" else "")
             lyricsClock.value = LyricsClock()
             youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
@@ -1111,6 +1121,16 @@ object WebHost {
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
+            sameVideoReloadPosition?.let { (videoId, positionMs) ->
+                if (runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull() == videoId) {
+                    val seconds = positionMs / 1000.0
+                    view.evaluateJavascript(
+                        "window.__aay&&window.__aay.restoreAt&&window.__aay.restoreAt(" +
+                            JSONObject.quote(videoId) + ",$seconds)", null)
+                    AppLog.add("PLAY", "Restoring same-video document position=" + (positionMs / 1000) + "s")
+                }
+            }
+            sameVideoReloadPosition = null
             AppLog.add("PAGE", "Finished $url")
             progress.value = 100
             CookieManager.getInstance().flush()
