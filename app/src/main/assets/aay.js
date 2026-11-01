@@ -634,6 +634,7 @@
     var v = getVideo();
     var pv = playerVideo();
     var id = (pv && pv.video_id) || urlId();
+    if (v && !qualityState.reset) notePosition(v);
     if (id) lastId = id; else if (v && !v.paused) id = lastId; else id = '';
     if (!v || !id) return;
     var mi = metaInfo(id);
@@ -816,16 +817,133 @@
     if (AUTO) tryPlay(v);
   }
 
+  /* Preserve playback across a YouTube quality/source replacement.
+   * Unlike an ordinary seek, a quality change empties/replaces the media resource.
+   * Never restore after a seek gesture, a different video, or genuine completion.
+   */
+  var qualityState = { id: '', position: 0, element: null, reset: null, seekAt: 0 };
+  function qualityVideoId() {
+    var pv = playerVideo();
+    return (pv && pv.video_id) || urlId();
+  }
+  function notePosition(v) {
+    var id = qualityVideoId();
+    if (!id || !v || !isFinite(v.currentTime)) return;
+    if (qualityState.id !== id) {
+      qualityState.id = id;
+      qualityState.position = 0;
+      qualityState.reset = null;
+      qualityState.element = v;
+    }
+    if (v.ended) { qualityState.reset = null; return; }
+    if (!qualityState.reset || v.currentTime > qualityState.reset.seconds - 4) {
+      qualityState.position = Math.max(0, v.currentTime);
+    }
+  }
+  function rememberSourceChange(v, reason) {
+    var id = qualityVideoId();
+    if (BROWSE || !id || id !== qualityState.id || v.ended ||
+        qualityState.position < 10 || Date.now() - qualityState.seekAt < 3500) return;
+    qualityState.reset = { id: id, seconds: qualityState.position, started: Date.now(), tries: 0 };
+    console.log('[aay] video source ' + reason + ': preserving ' + Math.round(qualityState.position) + 's');
+  }
+  function restoreAfterSourceChange(v) {
+    var pending = qualityState.reset;
+    if (!pending || !v || v.readyState < 1) return;
+    if (Date.now() - pending.started > 12000 || pending.id !== qualityVideoId() ||
+        v.ended || Date.now() - qualityState.seekAt < 3500) {
+      qualityState.reset = null;
+      return;
+    }
+    if (v.currentTime >= pending.seconds - 4) {
+      qualityState.reset = null;
+      return;
+    }
+    if (pending.tries++ >= 3) { qualityState.reset = null; return; }
+    try {
+      v.currentTime = Math.min(pending.seconds, isFinite(v.duration) && v.duration > 0
+        ? Math.max(0, v.duration - 0.5) : pending.seconds);
+      console.log('[aay] video source restored to ' + Math.round(v.currentTime) + 's');
+      schedReport(120);
+    } catch (e) {
+      console.log('[aay] restore position deferred: ' + e);
+    }
+  }
+  function trackNewVideoElement(v) {
+    if (!v || qualityState.element === v) return;
+    if (qualityState.element && qualityVideoId() === qualityState.id)
+      rememberSourceChange(qualityState.element, 'replaced');
+    qualityState.element = v;
+  }
+  // A human seeking to 0 is not a resolution change and must never be undone.
+  document.addEventListener('pointerdown', function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest('.ytp-progress-bar,.ytp-progress-bar-container,.ytPlayerProgressBarDragContainer'))
+      { qualityState.seekAt = Date.now(); qualityState.reset = null; }
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (/^(ArrowLeft|ArrowRight|Home|End|[0-9]|j|l)$/i.test(e.key || ''))
+      { qualityState.seekAt = Date.now(); qualityState.reset = null; }
+  }, true);
+
+  /* WebView timers may be throttled with the screen off. Check only when the
+   * user's last intent was to play; explicit media pauses and completed videos win.
+   */
+  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, windowAt: 0 };
+  function backgroundWatchdog() {
+    var v = getVideo(), id = qualityVideoId();
+    if (BROWSE || !v || !id || !CFG.backgroundPlay || v.ended) return;
+    if (bgWatch.id !== id) {
+      bgWatch.id = id; bgWatch.wanted = !v.paused;
+      bgWatch.explicitPause = false; bgWatch.attempts = 0;
+    }
+    if (!v.paused) {
+      bgWatch.wanted = true;
+      return;
+    }
+    if ((!A.isBg && !A.hold) || bgWatch.explicitPause || !bgWatch.wanted) return;
+    var now = Date.now();
+    if (now - bgWatch.windowAt > 60000) { bgWatch.windowAt = now; bgWatch.attempts = 0; }
+    if (bgWatch.attempts >= 3) return;
+    bgWatch.attempts++;
+    console.log('[aay] background: unexpected pause, recovery ' + bgWatch.attempts + '/3');
+    try { var p = v.play(); if (p && p.catch) p.catch(function (e) {
+      console.log('[aay] background resume rejected: ' + (e && e.name || 'unknown'));
+    }); } catch (e) { console.log('[aay] background resume failed: ' + e); }
+    schedReport(150);
+  }
+  setInterval(backgroundWatchdog, 5000);
+
   function bind(v) {
     if (!v || v.__aay) return;
+    trackNewVideoElement(v);
     v.__aay = 1;
-    ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange', 'durationchange', 'emptied'].forEach(function (ev) {
-      v.addEventListener(ev, function () { schedReport(ev === 'seeked' ? 250 : 120); }, true);
+    ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
+      'durationchange', 'emptied', 'loadstart'].forEach(function (ev) {
+      v.addEventListener(ev, function () {
+        if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
+        if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
+        if (ev === 'play') { bgWatch.wanted = true; bgWatch.explicitPause = false; }
+        if (ev === 'pause' && !A.isBg && !A.hold && !A.inPip) bgWatch.wanted = false;
+        if (ev === 'seeked') {
+          if (qualityState.reset) restoreAfterSourceChange(v);
+          else notePosition(v);
+        }
+        schedReport(ev === 'seeked' ? 250 : 120);
+      }, true);
     });
     v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
-    v.addEventListener('loadedmetadata', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } onLoaded(v); schedReport(120); }, true);
+    v.addEventListener('loadedmetadata', function () {
+      if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} }
+      onLoaded(v);
+      restoreAfterSourceChange(v);
+      later(function () { restoreAfterSourceChange(v); }, 300);
+      schedReport(120);
+    }, true);
     var lastProgressReportAt = 0;
     v.addEventListener('timeupdate', function () {
+      if (qualityState.reset) restoreAfterSourceChange(v);
+      else notePosition(v);
       sbTick(v);
       // This also notices a new video playing in an existing element (Mix/Autoplay)
       // without waiting for the 30-second heartbeat. Limit cross-process traffic.
@@ -838,7 +956,7 @@
     // Ads are detected from the player's class, not by polling.
     var p = document.querySelector('.html5-video-player');
     if (p) new MutationObserver(function () { skipAd(); }).observe(p, { attributes: true, attributeFilter: ['class'] });
-    if (v.readyState >= 1) onLoaded(v);
+    if (v.readyState >= 1) { onLoaded(v); restoreAfterSourceChange(v); }
     // If the script attaches after YouTube's initial play event, report immediately rather
     // than waiting for the 30-second heartbeat. The media service needs the active state.
     schedReport(120);
@@ -926,8 +1044,8 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
-        case 'pause': if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
+        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
+        case 'pause': bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
         case 'next': next(); break;
@@ -955,7 +1073,7 @@
         rydLoad(urlId());
       }
     }
-    if (A.isBg) A.setBg(true);
+    A.setBg(A.isBg);
     skipAd();
     schedTick();
   };
