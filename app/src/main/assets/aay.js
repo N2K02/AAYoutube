@@ -471,9 +471,13 @@
     'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;' +
     'background:transparent!important;visibility:hidden!important;width:0!important;height:0!important;' +
     'min-height:0!important;overflow:hidden!important;pointer-events:none!important}' +
-    // YouTube's full-screen controls backdrop must not swallow taps to native
-    // settings/quality or the video. Keep only its actual buttons interactive.
-    'html.aay-car #player-control-container,html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){' +
+    // On the FULL car player, YouTube's control surface MUST receive video taps:
+    // its click handler opens the top quality menu and bottom progress bar.
+    // Car MINI has no aay-car class; native Compose only intercepts the small rail.
+    'html.aay-car #player-control-container{' +
+    'background:transparent!important;pointer-events:auto!important}' +
+    // Only video-free wrappers should pass touches through to the actual player.
+    'html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y){' +
     'background:transparent!important;pointer-events:none!important}' +
     'html.aay-car #player-control-container button,html.aay-car #player-control-container a,' +
     'html.aay-car #player-control-container [role="button"],' +
@@ -497,6 +501,18 @@
     'html.aay-car .aay-car-clear ytm-icon-button,' +
     'html.aay-car .aay-car-clear ytm-menu-item-renderer,' +
     'html.aay-car .aay-car-clear ytm-menu-popup-renderer{pointer-events:auto!important}' +
+    // During a car tap, briefly expose the native YouTube top/bottom controls.
+    // Do not create a fake seeker or move the controls outside the YouTube player.
+    'html.aay-car.aay-car-controls .ytp-chrome-top,' +
+    'html.aay-car.aay-car-controls .ytp-chrome-bottom,' +
+    'html.aay-car.aay-car-controls .ytp-progress-bar-container,' +
+    'html.aay-car.aay-car-controls .ytp-gradient-top,' +
+    'html.aay-car.aay-car-controls .ytp-gradient-bottom,' +
+    'html.aay-car.aay-car-controls #player-control-container,' +
+    'html.aay-car.aay-car-controls ytm-player-controls,' +
+    'html.aay-car.aay-car-controls .player-controls-top,' +
+    'html.aay-car.aay-car-controls .player-controls-bottom{' +
+    'opacity:1!important;visibility:visible!important}' +
     'html.aay-car .aay-car-chain:not(#aay-x):not(#aay-y),' +
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
@@ -1252,8 +1268,26 @@
       fixLayout();
     }
   }
+  // Native car surfaces sometimes deliver taps to WebView without triggering
+  // YouTube's mobile overlay click. Reveal the existing YouTube controls,
+  // preserving its real quality picker, seeker and other button handlers.
+  var carControlsTimer = 0;
+  A.showCarControls = function () {
+    if (BROWSE || !carOn || A.isMini || A.inPip) return;
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && typeof p.showControls === 'function') p.showControls(); } catch (e) {}
+    try { if (p && p.classList) p.classList.remove('ytp-autohide'); } catch (e) {}
+    if (!document.documentElement) return;
+    document.documentElement.classList.add('aay-car-controls');
+    if (carControlsTimer) clearTimeout(carControlsTimer);
+    carControlsTimer = setTimeout(function () {
+      carControlsTimer = 0;
+      if (document.documentElement) document.documentElement.classList.remove('aay-car-controls');
+    }, 6500);
+  };
   A.car = function (on) {
     A.isCar = !!on;
+    if (!A.isCar && document.documentElement) document.documentElement.classList.remove('aay-car-controls');
     carLayout();
     // Android Auto can take over an existing background-audio WebView.
     // Undo our own tiny-only quality cap before the projected video is shown.
