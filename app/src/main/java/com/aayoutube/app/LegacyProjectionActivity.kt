@@ -7,6 +7,7 @@ import android.os.Looper
 import android.view.Window
 import android.view.View
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.BaseInputConnection
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
@@ -102,7 +104,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // the view: otherwise music/media callbacks remain attached to a
         // stopped instance until another lifecycle event happens.
         WebHost.showOnCar(true, carToken)
-        WebHost.prepareForCarProjection()
+        if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
+        else BrowseHost.resume()
         WebHost.setHold(false)
         WebHost.requestLink = relink
         connectMedia()
@@ -186,9 +189,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
         // The newest car activity instance is the one Android Auto shows.
+        val wasAlreadyProjected = WebHost.carShown
         WebHost.claimCarHost(carToken, onBecameActive)
         WebHost.showOnCar(true, carToken)
-        WebHost.prepareForCarProjection()
+        // Preserve a car mini-player across host window replacement.
+        if (!wasAlreadyProjected || WebHost.mode.value != WebHost.PlayerMode.MINI)
+            WebHost.prepareForCarProjection()
         // Immediately transfer the web-process callback; an old activity
         // can stop before this new instance reaches onStart.
         WebHost.requestLink = relink
@@ -282,6 +288,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     @Composable
     private fun LegacyProjectionScreen() {
         val version by WebHost.webVersion.collectAsState()
+        val mode by WebHost.mode.collectAsState()
+        val browsing by BrowseHost.created.collectAsState()
+        val browseRevision by BrowseHost.revision.collectAsState()
+        val mini = mode == WebHost.PlayerMode.MINI
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
@@ -299,9 +309,24 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             Modifier.fillMaxSize().background(Color.Black)
                 .revealControlsOnTouch { controlsVisible = true; controlsVersion++ }
         ) {
-            key(version) {
+            // Show YouTube Home in a second, muted WebView while keeping the active player.
+            if (mini && browsing) key(browseRevision) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        FrameLayout(ctx).also { frame ->
+                            frame.addView(BrowseHost.attach(projectionContext(ctx)),
+                                FrameLayout.LayoutParams(-1, -1))
+                        }
+                    },
+                    onRelease = { BrowseHost.detach(it) },
+                )
+            }
+            key(version) {
+                AndroidView(
+                    modifier = if (mini) Modifier.align(Alignment.BottomEnd)
+                        .padding(end = 72.dp, bottom = 24.dp).size(240.dp, 135.dp)
+                    else Modifier.fillMaxSize(),
                     factory = { context ->
                         CarFrameLayout(context).also { frame ->
                             playerContainer = frame
@@ -343,6 +368,17 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     },
                 )
             }
+            if (mini) {
+                Text(
+                    "Expand video",
+                    Modifier.align(Alignment.BottomEnd).padding(end = 80.dp, bottom = 160.dp)
+                        .clickable { WebHost.expandPlayer(); BrowseHost.pause() }
+                        .background(Color(0xCC111111), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             val fullscreenView = full
             // An inactive (being replaced) car window must not take the
             // fullscreen video view away from the window on the car screen.
@@ -371,8 +407,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 FloatingVideoBar(
                     playing = playing.playing,
                     car = true,
-                    onBack = { WebHost.goBack(); controlsVersion++ },
-                    onHome = { WebHost.openUrl("https://m.youtube.com/"); controlsVersion++ },
+                    onBack = { carBackToMini(); controlsVersion++ },
+                    onHome = { carHomeToMini(); controlsVersion++ },
                     onPlayPause = {
                         WebHost.cmd(if (playing.playing) "pause" else "play")
                         controlsVersion++
@@ -389,6 +425,45 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }
     }
 
+    /** A car Back/Home action must not navigate away from the playing WebView. */
+    private fun carBackToMini(): Boolean {
+        if (!WebHost.isActiveCarHost(carToken)) return false
+        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
+            AppLog.add("CAR", "Back: video retained in mini player")
+            WebHost.enterMini()
+            BrowseHost.resume()
+            return true
+        }
+        if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
+            if (!BrowseHost.goBack()) AppLog.add("CAR", "Back: already on browse Home")
+            return true
+        }
+        return false
+    }
+
+    private fun carHomeToMini() {
+        if (!WebHost.isActiveCarHost(carToken)) return
+        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
+            AppLog.add("CAR", "Home: video retained in mini player")
+            WebHost.enterMini()
+            BrowseHost.resume()
+        } else if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
+            BrowseHost.navigate(WebHost.home())
+        } else {
+            WebHost.openUrl(WebHost.home())
+        }
+    }
+
+    @Deprecated("Use car host Back dispatcher when available")
+    override fun onBackPressed() {
+        if (!carBackToMini()) super.onBackPressed()
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && carBackToMini()) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
     override fun onStart() {
         super.onStart()
         AppLog.add("CAR", "Video projection onStart")
@@ -398,7 +473,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
         if (!registered || !WebHost.isActiveCarHost(carToken)) return
         WebHost.showOnCar(true, carToken)
-        WebHost.prepareForCarProjection()
+        if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
+        else BrowseHost.resume()
         WebHost.setHold(false)
         WebHost.requestLink = relink
         connectMedia()
