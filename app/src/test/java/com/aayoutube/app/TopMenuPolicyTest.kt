@@ -28,7 +28,13 @@ class TopMenuPolicyTest {
         assertTrue(watchHeader.contains("visible = topMenuVisible"))
         assertTrue(watchHeader.contains("FloatingVideoBar("))
         assertTrue(watchHeader.contains("topMenuEpoch++"))
-        assertTrue(screen.contains("if (!watchTab && headerAllowed) {"))
+        // Page-specific header remains visible on Settings without
+        // introducing a Scaffold relayout of the native video surface.
+        val root = screen.substringAfter("fun AppRoot(").substringBefore("// ---------------------------------------------------------------------------- web")
+        assertTrue(root.contains("visible = tab != Tab.Watch.ordinal && !inPip"))
+        assertTrue(root.contains("AAYoutubePageHeader("))
+        assertTrue(root.contains("Crossfade("))
+        assertFalse(root.contains("Scaffold("))
         assertTrue(screen.contains("delay(timeout)"))
         assertTrue(screen.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
         assertTrue(screen.contains("WebPane(Modifier.fillMaxSize())"))
