@@ -28,6 +28,8 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +54,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.viewinterop.AndroidView
@@ -305,10 +313,35 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 controlsVisible = false
             }
         }
-        Box(
+        BoxWithConstraints(
             Modifier.fillMaxSize().background(Color.Black)
                 .revealControlsOnTouch { controlsVisible = true; controlsVersion++ }
         ) {
+            // Allow the mini player behind either side rail. The rail is always on
+            // top (z-index 20), regardless of car controls side or playback mode.
+            val density = LocalDensity.current
+            val miniPrefs = remember { getSharedPreferences("car_mini", android.content.Context.MODE_PRIVATE) }
+            var miniX by remember { mutableStateOf(miniPrefs.getFloat("x", 1f).coerceIn(0f, 1f)) }
+            var miniY by remember { mutableStateOf(miniPrefs.getFloat("y", 1f).coerceIn(0f, 1f)) }
+            val miniWidth = minOf(240.dp, (maxWidth - 24.dp) * 0.8f)
+            val miniHeight = miniWidth * (9f / 16f)
+            val minX = with(density) { 12.dp.toPx() }
+            val minY = with(density) { 12.dp.toPx() }
+            val maxX = with(density) { (maxWidth - miniWidth - 12.dp).toPx() }.coerceAtLeast(minX)
+            val maxY = with(density) { (maxHeight - miniHeight - 12.dp).toPx() }.coerceAtLeast(minY)
+            val playerX = minX + (maxX - minX) * miniX
+            val playerY = minY + (maxY - minY) * miniY
+            val miniVideoModifier = Modifier.offset {
+                IntOffset(playerX.roundToInt(), playerY.roundToInt())
+            }.size(miniWidth, miniHeight).pointerInput(maxX, maxY) {
+                detectDragGestures(onDragEnd = {
+                    miniPrefs.edit().putFloat("x", miniX).putFloat("y", miniY).apply()
+                }) { change, drag ->
+                    change.consume()
+                    miniX = (miniX + drag.x / (maxX - minX).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    miniY = (miniY + drag.y / (maxY - minY).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                }
+            }
             // Show YouTube Home in a second, muted WebView while keeping the active player.
             if (mini && browsing) key(browseRevision) {
                 AndroidView(
@@ -324,9 +357,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             }
             key(version) {
                 AndroidView(
-                    modifier = if (mini) Modifier.align(Alignment.BottomEnd)
-                        .padding(end = 72.dp, bottom = 24.dp).size(240.dp, 135.dp)
-                    else Modifier.fillMaxSize(),
+                    modifier = if (mini) miniVideoModifier else Modifier.fillMaxSize(),
                     factory = { context ->
                         CarFrameLayout(context).also { frame ->
                             playerContainer = frame
@@ -371,8 +402,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             if (mini) {
                 Text(
                     "Expand video",
-                    Modifier.align(Alignment.BottomEnd).padding(end = 80.dp, bottom = 160.dp)
-                        .clickable { WebHost.expandPlayer(); BrowseHost.pause() }
+                    Modifier.offset {
+                        val labelY = if (playerY > with(density) { 48.dp.toPx() })
+                            playerY - with(density) { 42.dp.toPx() }
+                        else playerY + with(density) { miniHeight.toPx() } + with(density) { 4.dp.toPx() }
+                        IntOffset(playerX.roundToInt(), labelY.roundToInt())
+                    }.clickable { WebHost.expandPlayer(); BrowseHost.pause() }
                         .background(Color(0xCC111111), RoundedCornerShape(12.dp))
                         .padding(horizontal = 14.dp, vertical = 9.dp),
                     color = Color.White,
@@ -402,7 +437,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = 12.dp).zIndex(20f),
             ) {
                 FloatingVideoBar(
                     playing = playing.playing,
@@ -413,6 +448,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         WebHost.cmd(if (playing.playing) "pause" else "play")
                         controlsVersion++
                     },
+                    onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
                 ) {
                     BarIcon(
