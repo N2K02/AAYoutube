@@ -67,7 +67,8 @@
   if (!BROWSE) {
     window.addEventListener('yt-navigate-finish', reportAccount);
     window.addEventListener('pageshow', reportAccount);
-    setInterval(reportAccount, 5000);
+    // Navigation/events handle normal updates; use a slow fallback while a tab stays open.
+    setInterval(reportAccount, 30000);
   }
 
   function later(fn, ms) { return setTimeout(function () { try { fn(); } catch (e) {} }, ms || 0); }
@@ -1088,7 +1089,13 @@
       reportAccount();
     } catch (e) {}
   }
-  function schedTick() { if (!tickTimer) tickTimer = setTimeout(tick, 300); }
+  // YouTube mutates the page continuously, even when the player is unchanged.
+  // Coalesce those mutations to avoid repeated DOM traversal and layout work.
+  // Playback, source and route event listeners remain immediate.
+  function schedTick() {
+    if (tickTimer) return;
+    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isMini) ? 2500 : 900);
+  }
 
   whenRoot(function () {
     new MutationObserver(schedTick).observe(document.documentElement, { childList: true, subtree: true });

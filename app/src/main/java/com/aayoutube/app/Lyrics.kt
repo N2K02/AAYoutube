@@ -231,6 +231,8 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
     val context = androidx.compose.ui.platform.LocalContext.current
     val lines = content.lines
     val plain = content.plain
+    // Do not start a 100 ms UI clock when there are no lyrics to display.
+    if (!content.foundFor(LyricsCache.key(snap))) return
     val liveClock by WebHost.lyricsClock.collectAsState()
     // Keep one clock loop alive while samples arrive; restarting it for every sample
     // caused flickering and sometimes prevented a line transition from completing.
@@ -249,10 +251,10 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
             now = latestClock.positionFor(snap.id, tickAt, offsetMs)
                 ?: LyricsSync.position(fallback.posMs, fallback.playing, fallback.buffering,
                     fallback.rate, tickAt - sampleAt, offsetMs)
-            delay(100)
+            // Paused/buffering lyrics only need event-driven clock samples.
+            delay(if (latestClock.playing && !latestClock.buffering) 100L else 1_000L)
         }
     }
-    if (!content.foundFor(LyricsCache.key(snap))) return
     Column(
         Modifier.fillMaxWidth().offset { IntOffset(0, verticalOffset.roundToInt()) }
             .padding(horizontal = 24.dp, vertical = 16.dp)
