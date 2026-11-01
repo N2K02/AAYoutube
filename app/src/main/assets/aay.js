@@ -1454,8 +1454,8 @@
     var label = String(text || '').trim();
     // Do not interpret the parent "Quality 720p" settings button as a pick.
     if (/quality/i.test(label) || label.length > 36) return null;
-    if (/^auto(?:\\s*\\([^)]*\\))?$/i.test(label)) return 'auto';
-    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\\s*(?:60|HDR|HD|4K|8K))*$/i.exec(label);
+    if (/^auto(?:\s*\([^)]*\))?$/i.test(label)) return 'auto';
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:60|HDR|HD|4K|8K))*$/i.exec(label);
     return m ? qualityLabels[m[1]] : null;
   }
   document.addEventListener('click', function (event) {
