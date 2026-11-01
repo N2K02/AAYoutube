@@ -1234,11 +1234,17 @@
       fixLayout();
     }
   }
-  A.car = function (on) { A.isCar = !!on; carLayout(); };
+  A.car = function (on) {
+    A.isCar = !!on;
+    carLayout();
+    // Android Auto can take over an existing background-audio WebView.
+    // Undo our own tiny-only quality cap before the projected video is shown.
+    A.setBg(A.isBg);
+  };
   // Reflow against measured car dimensions after transferring a mini WebView.
   A.refitCar = function () {
-    if (!A.isCar || BROWSE) return;
-    if (A.isMini) A.mini(false);
+    if (!A.isCar || BROWSE || A.isMini) return;
+    // A viewport resize must never silently expand a car mini player.
     carLayout();
     window.dispatchEvent(new Event('resize'));
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
@@ -1322,11 +1328,11 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p || !p.setPlaybackQualityRange) return;
     try {
-      if (on && !A.inPip && !A.isMini && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
+      if (on && !A.isCar && !A.inPip && !A.isMini && CFG.lowQuality && CFG.backgroundPlay !== false && !lowered) {
         lowered = true;
         console.log('[aay] background: lowest video quality');
         p.setPlaybackQualityRange('tiny', 'tiny');
-      } else if ((!on || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
+      } else if ((!on || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) && lowered) {
         // Only undo our own change; a quality the user picked in the player is left alone.
         lowered = false;
         console.log('[aay] foreground: video quality back to automatic');
