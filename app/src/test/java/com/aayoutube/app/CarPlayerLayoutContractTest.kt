@@ -44,8 +44,13 @@ class CarPlayerLayoutContractTest {
         val js = source("app/src/main/assets/aay.js")
         val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(js.contains("if (!A.isCar || BROWSE || A.isMini) return;"))
-        assertTrue(js.contains("on && !A.isCar && !A.inPip && !A.isMini"))
-        assertTrue(js.contains("!on || A.isCar || A.inPip || A.isMini"))
+        // Explicit battery saver is limited to fully hidden background audio.
+        // Car, PiP, and draggable mini video must keep the saved user quality.
+        assertTrue(js.contains("A.isBg && !A.isCar && !A.inPip && !A.isMini &&"))
+        assertTrue(js.contains("CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality()"))
+        assertTrue(js.contains("A.setBg = function (on)"))
+        assertTrue(js.contains("applyPreferredQuality();"))
+        assertTrue(js.contains("qualityApply.player === p && qualityApply.key === key"))
         assertTrue(host.contains("if (mode.value == PlayerMode.MINI) {"))
         assertTrue(host.contains("window.__aay.car(true),window.__aay.mini(true)"))
         assertTrue(host.contains("window.__aay.car(true),window.__aay.refitCar"))
