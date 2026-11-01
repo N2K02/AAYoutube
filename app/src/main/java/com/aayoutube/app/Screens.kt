@@ -43,6 +43,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.IntOffset
 import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Pause
@@ -401,7 +402,7 @@ fun AppRoot(activity: MainActivity) {
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = 8.dp).zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
@@ -413,6 +414,7 @@ fun AppRoot(activity: MainActivity) {
                         WebHost.cmd(if (snap.playing) "pause" else "play")
                         topMenuEpoch++
                     },
+                    onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
                 ) {
                     BarIcon(
@@ -516,7 +518,6 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
-    val railOnLeft = Features.state.collectAsState().value.controlsOnLeft
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
@@ -552,17 +553,16 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         var mx by remember { mutableStateOf(prefs.getFloat("miniX", 1f)) }
         var my by remember { mutableStateOf(prefs.getFloat("miniY", 1f)) }
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val miniW = minOf(224.dp, (maxWidth - MiniPlayerBounds.RAIL_RESERVE_DP.dp) * 0.8f)
+            val miniW = minOf(224.dp, (maxWidth - 24.dp) * 0.8f)
             val miniH = miniW * (9f / 16f)
             val edge = with(density) { 12.dp.toPx() }
             val ytMenu = with(density) { 64.dp.toPx() } // YouTube's bottom menu (Home, Subscriptions, You)
             val wPx = with(density) { miniW.toPx() }
             val hPx = with(density) { miniH.toPx() }
-            // The floating controls rail owns a strip on its side (it can
-            // reappear on any touch): the mini player never goes under or over it.
-            val rail = with(density) { MiniPlayerBounds.RAIL_RESERVE_DP.dp.toPx() }
-            val minX = MiniPlayerBounds.minX(edge, rail, railOnLeft)
-            val maxX = MiniPlayerBounds.maxX(constraints.maxWidth.toFloat(), wPx, edge, rail, railOnLeft)
+            // Let the mini-player reach both screen edges, including behind the menu.
+            // The menu itself has the higher z-index and remains fully clickable.
+            val minX = edge
+            val maxX = (constraints.maxWidth.toFloat() - wPx - edge).coerceAtLeast(minX)
             val minY = edge
             val maxY = (constraints.maxHeight - hPx - edge - ytMenu).coerceAtLeast(minY)
             val px = minX + (maxX - minX) * mx
