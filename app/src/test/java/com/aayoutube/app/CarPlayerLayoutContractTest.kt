@@ -29,6 +29,19 @@ class CarPlayerLayoutContractTest {
         assertTrue(js.contains("!A.isBg && !A.hold && !A.isMini"))
     }
 
+    @Test fun carReattachmentPreservesMiniAndForegroundVideoQuality() {
+        val js = source("app/src/main/assets/aay.js")
+        val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(js.contains("if (!A.isCar || BROWSE || A.isMini) return;"))
+        assertTrue(js.contains("on && !A.isCar && !A.inPip && !A.isMini"))
+        assertTrue(js.contains("!on || A.isCar || A.inPip || A.isMini"))
+        assertTrue(host.contains("if (mode.value == PlayerMode.MINI) {"))
+        assertTrue(host.contains("window.__aay.car(true),window.__aay.mini(true)"))
+        assertTrue(host.contains("window.__aay.car(true),window.__aay.refitCar"))
+        assertTrue(host.contains("carRequested:!!(window.__aay&&window.__aay.isCar)"))
+        assertTrue(host.contains("getPlaybackQuality()"))
+    }
+
     @Test fun youtubeMobilePlayerFillsCarViewportWithoutCroppingVideo() {
         val js = source("app/src/main/assets/aay.js")
         assertTrue(js.contains("html.aay-car ytm-watch-player"))
