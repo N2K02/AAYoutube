@@ -136,6 +136,7 @@ function playerPage(options = {}) {
     setTimeout(fn) { timers.push(fn); return timers.length; },
     setInterval(fn) { intervals.push(fn); return intervals.length; },
     clearInterval(id) { intervals[id - 1] = null; },
+    clearTimeout(id) { timers[id - 1] = null; },
   };
   vm.runInNewContext(source, context, { filename: 'aay.js', timeout: 1000 });
 
@@ -152,7 +153,7 @@ function playerPage(options = {}) {
     },
     flush() {
       let budget = 100;
-      while (timers.length && budget-- > 0) timers.shift()();
+      while (timers.length && budget-- > 0) { const fn = timers.shift(); if (fn) fn(); }
       assert.ok(budget > 0, 'page script scheduled an endless timer chain');
     },
   };
@@ -297,11 +298,16 @@ test('unmute overlay is hidden but video itself is not suppressed', () => {
   assert.ok(!css.includes('body *{visibility:hidden'));
 });
 
-test('car quality menu remains tappable without re-enabling the full-screen controls backdrop', () => {
+test('fullscreen car video taps reach YouTube control surface while mini stays touch-through', () => {
   const p = playerPage({ car: true });
   const css = p.styleElements.map(e => e.textContent).join('');
-  assert.ok(css.includes('html.aay-car #player-control-container,html.aay-car .aay-car-clear'));
-  assert.ok(css.includes('background:transparent!important;pointer-events:none!important'));
+  assert.ok(css.includes('html.aay-car #player-control-container{'));
+  assert.ok(css.includes('background:transparent!important;pointer-events:auto!important'),
+    'fullscreen YouTube controls must receive the tap that reveals quality/seeker');
+  assert.ok(css.includes('html.aay-car .aay-car-clear:not(#aay-x):not(#aay-y)'));
+  assert.ok(css.includes('background:transparent!important;pointer-events:none!important'),
+    'unused player wrappers must stay touch-through');
+  assert.ok(!css.includes('html.aay-mini #player-control-container{pointer-events:auto'));
   for (const selector of [
     '#player-control-container button',
     '#player-control-container [role="button"]',
@@ -318,6 +324,19 @@ test('car quality menu remains tappable without re-enabling the full-screen cont
   }
   // Never give the entire black frame a pointer-events:auto override.
   assert.ok(!css.includes('html.aay-car .aay-car-clear{pointer-events:auto'));
+  assert.ok(css.includes('html.aay-car.aay-car-controls .ytp-chrome-top'));
+  assert.ok(css.includes('html.aay-car.aay-car-controls .ytp-chrome-bottom'));
+  assert.ok(css.includes('html.aay-car.aay-car-controls .ytp-progress-bar-container'));
+  p.window.__aay.car(true);
+  p.window.__aay.showCarControls();
+  assert.ok(p.classNames.has('aay-car-controls'), 'native car tap makes native controls visible');
+  p.window.__aay.showCarControls();
+  assert.ok(p.classNames.has('aay-car-controls'), 'repeated tap extends visibility');
+  p.window.__aay.mini(true);
+  p.window.__aay.showCarControls();
+  assert.ok(!p.classNames.has('aay-car'), 'mini player must not use fullscreen hit targets');
+  p.window.__aay.car(false);
+  assert.ok(!p.classNames.has('aay-car-controls'), 'leaving car removes reveal mode');
 });
 
 test('background quality policy restores visible PiP frames', () => {
