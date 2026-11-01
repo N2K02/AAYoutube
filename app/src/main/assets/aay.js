@@ -13,6 +13,21 @@
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
+  // YouTube reads this preference during player creation. Persist it before
+  // its scripts run so initial playback need not start at adaptive 144p.
+  function writeYouTubeQuality(q) {
+    if (BROWSE) return;
+    try {
+      if (q === 'auto') localStorage.removeItem('yt-player-quality');
+      else if (/^(tiny|small|medium|large|hd720|hd1080|hd1440|hd2160|highres)$/.test(q)) {
+        var now = Date.now();
+        localStorage.setItem('yt-player-quality', JSON.stringify({
+          data: q, creation: now, expiration: now + 2419200000
+        }));
+      }
+    } catch (e) {} // Storage can be disabled by a WebView profile.
+  }
+  if (!BROWSE) writeYouTubeQuality(CFG.preferredQuality || 'hd720');
   // The secondary browse WebView is never allowed competing audible playback.
   if (BROWSE) {
     try {
@@ -1158,6 +1173,7 @@
         rydLoad(urlId());
       }
     }
+    writeYouTubeQuality(savedQuality());
     A.setBg(A.isBg);
     skipAd();
     schedTick();
@@ -1272,6 +1288,9 @@
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
+    // On phones this runs after many YouTube DOM mutations; avoid three
+    // document-wide car-guard queries when car mode has never been active.
+    if (!on && !carOn && !carBox && !carVideo) return;
     if (on === carOn && box === carBox && v === carVideo) {
       // YouTube adds wrappers after the player: guard them on every DOM change.
       guarded = carGuard(on ? v : null);
@@ -1343,9 +1362,13 @@
   // After the small layout ends, YouTube keeps the small video size it measured (black border
   // around a small picture). Tell it the size changed a few times while the window grows back,
   // and if the picture still does not fill the player, stretch it ourselves.
+  var layoutRevision = 0;
   function fixLayout() {
+    var revision = ++layoutRevision;
     [150, 500, 1000, 2000].forEach(function (ms) {
       later(function () {
+        // A later mini/PiP transition supersedes this delayed fullscreen resize.
+        if (revision !== layoutRevision || A.isMini || A.inPip) return;
         window.dispatchEvent(new Event('resize'));
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
@@ -1364,6 +1387,7 @@
   }
   function smallLayout() {
     var on = !!(A.inPip || A.isMini);
+    var revision = ++layoutRevision;
     liftAncestors(getVideo(), on);
     document.documentElement.classList.toggle('aay-video-only', on);
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
@@ -1373,6 +1397,7 @@
       document.documentElement.classList.remove('aay-fit');
       // Recalculate YouTube's internal player size after native WebView resizes.
       [0, 150, 450].forEach(function (ms) { later(function () {
+        if (revision !== layoutRevision) return;
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
         window.dispatchEvent(new Event('resize'));
@@ -1440,6 +1465,14 @@
       } else return; // YouTube's API is not ready; the next DOM tick will retry.
       qualityApply.player = p;
       qualityApply.key = key;
+      // Record actual vs requested quality for diagnosis, without forcing more
+      // source changes when the server/device cannot serve the requested tier.
+      later(function () {
+        try {
+          if (qualityApply.key === key && typeof p.getPlaybackQuality === 'function')
+            console.log('[aay] quality requested=' + chosen + ' actual=' + p.getPlaybackQuality());
+        } catch (e) {}
+      }, 1500);
       if (qualityApply.last !== key) {
         qualityApply.last = key;
         console.log('[aay] preferred video quality=' + chosen +
@@ -1468,6 +1501,7 @@
     var q = menuQuality(item.textContent || item.getAttribute('aria-label'));
     if (!q) return;
     CFG.preferredQuality = q;
+    writeYouTubeQuality(q);
     qualityApply.key = ''; // release the old range after the user's new choice
     if (N && typeof N.quality === 'function') {
       try { N.quality(q); } catch (e) {}
