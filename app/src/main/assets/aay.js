@@ -478,7 +478,25 @@
     'html.aay-car #player-control-container button,html.aay-car #player-control-container a,' +
     'html.aay-car #player-control-container [role="button"],' +
     'html.aay-car .aay-car-clear button,html.aay-car .aay-car-clear a,' +
-    'html.aay-car .aay-car-clear [role="button"]{pointer-events:auto!important}' +
+    'html.aay-car .aay-car-clear [role="button"],' +
+    // YouTube renders settings/quality as custom menu elements, not always <button>.
+    // Only real controls and their open menus accept taps; the large backdrop stays transparent.
+    'html.aay-car #player-control-container .ytp-settings-button,' +
+    'html.aay-car #player-control-container .ytp-popup,' +
+    'html.aay-car #player-control-container .ytp-menuitem,' +
+    'html.aay-car #player-control-container [role="menuitem"],' +
+    'html.aay-car #player-control-container [role="option"],' +
+    'html.aay-car #player-control-container ytm-icon-button,' +
+    'html.aay-car #player-control-container ytm-menu-item-renderer,' +
+    'html.aay-car #player-control-container ytm-menu-popup-renderer,' +
+    'html.aay-car .aay-car-clear .ytp-settings-button,' +
+    'html.aay-car .aay-car-clear .ytp-popup,' +
+    'html.aay-car .aay-car-clear .ytp-menuitem,' +
+    'html.aay-car .aay-car-clear [role="menuitem"],' +
+    'html.aay-car .aay-car-clear [role="option"],' +
+    'html.aay-car .aay-car-clear ytm-icon-button,' +
+    'html.aay-car .aay-car-clear ytm-menu-item-renderer,' +
+    'html.aay-car .aay-car-clear ytm-menu-popup-renderer{pointer-events:auto!important}' +
     'html.aay-car .aay-car-chain:not(#aay-x):not(#aay-y),' +
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
