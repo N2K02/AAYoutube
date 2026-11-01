@@ -141,7 +141,7 @@ function playerPage(options = {}) {
 
   return {
     domNodes: dom ? dom.nodes : null,
-    window, navigator, video, seekBar, document, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls,
+    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
@@ -506,4 +506,41 @@ test('phone layout never marks car guard classes', () => {
   const p = playerPage({ dom: watchPageDom() });
   p.flush();
   assert.equal(p.domNodes.placeholder.classList.contains('aay-car-off'), false);
+});
+
+test('resolution source reset keeps current video at its old position', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 137;
+  p.video.trigger('timeupdate');
+  p.video.trigger('emptied'); // YouTube swaps its media source on quality change
+  p.video.currentTime = 0;
+  p.video.readyState = 1;
+  p.video.trigger('loadedmetadata');
+  assert.ok(p.video.currentTime >= 136, 'switching quality must not restart at 0');
+  assert.equal(p.location.pathname, '/watch', 'no page navigation is necessary');
+});
+
+test('an intentional seek to zero is never undone by the quality guard', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 125;
+  p.video.trigger('timeupdate');
+  p.video.currentTime = 0;
+  p.video.trigger('seeked');
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.currentTime, 0, 'ordinary seek must remain authoritative');
+});
+
+test('background watchdog resumes an unexpected pause, but not an explicit media pause', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.setBg(true);
+  p.video.paused = true; // WebView/YouTube native pause, not user action
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'background video should resume when intent is playing');
+  p.window.__aay.cmd('pause');
+  assert.equal(p.video.paused, true);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'a media pause must not be overridden');
 });
