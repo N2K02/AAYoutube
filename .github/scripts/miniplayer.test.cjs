@@ -311,7 +311,8 @@ test('background quality policy restores visible PiP frames', () => {
 });
 
 test('car handoff removes background-only quality cap and preserves mini layout on viewport refit', () => {
-  const p = playerPage({ car: true, quality: true });
+  // Start on the phone in hidden/background mode, THEN connect Android Auto.
+  const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.window.__aay.setBg(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
