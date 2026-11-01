@@ -569,6 +569,13 @@ object WebHost {
         js("window.__aay&&window.__aay.setHold($on)")
     }
 
+    /** A car video tap must surface YouTube's native quality menu and seeker.
+     * Only act in the full-size projected player; never disturb a mini video. */
+    fun showCarControls() {
+        if (!carShown || mode.value != PlayerMode.FULL || !isOnWatchPage()) return
+        js("window.__aay&&window.__aay.showCarControls&&window.__aay.showCarControls()")
+    }
+
     fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
