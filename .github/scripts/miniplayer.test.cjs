@@ -310,6 +310,22 @@ test('background quality policy restores visible PiP frames', () => {
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
 });
 
+test('car handoff removes background-only quality cap and preserves mini layout on viewport refit', () => {
+  const p = playerPage({ car: true, quality: true });
+  p.window.__aay.config({ lowQuality: true });
+  p.window.__aay.setBg(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  p.window.__aay.car(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  p.window.__aay.mini(true);
+  p.window.__aay.refitCar();
+  assert.equal(p.classNames.has('aay-mini'), true, 'refit must preserve mini player');
+  p.window.__aay.car(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'still-visible mini has no background quality cap');
+  p.window.__aay.mini(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
+});
+
 test('video state reaches the media process after initialization', () => {
   const p = playerPage();
   // Script can attach after YouTube's original playing event; the first report
