@@ -1013,8 +1013,11 @@ object WebHost {
         if (!old.playing || new.playing || new.ended || new.id != old.id || new.id.isBlank()) return
         val now = SystemClock.elapsedRealtime()
         val background = !shown && !inPip.value
+        // The mini player is still foreground, but WebView focus/viewport
+        // handoff can cause the same unrequested media pause as app backgrounding.
+        val mini = mode.value == PlayerMode.MINI && !inPip.value
         val visibilityTransition = now - visibilityChangedAt < 4_000L
-        if (!background && !visibilityTransition) return
+        if (!background && !mini && !visibilityTransition) return
         if (now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
         if (now - resumeWindowAt > 60_000L) {
@@ -1026,7 +1029,7 @@ object WebHost {
             return
         }
         resumeTries++
-        AppLog.add("PLAY", "Unexpected pause in background=$background: native resume $resumeTries/2")
+        AppLog.add("PLAY", "Unexpected pause in background=$background mini=$mini: native resume $resumeTries/2")
         cmd("play")
     }
 
