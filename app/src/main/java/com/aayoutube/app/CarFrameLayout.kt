@@ -10,6 +10,8 @@ import kotlin.math.abs
 class CarFrameLayout(context: Context) : FrameLayout(context) {
     /** Observe, never consume, car touches. Chromium must still receive seek/settings taps. */
     var onSwipeDown: (() -> Unit)? = null
+    /** Called after a quick tap, without consuming the original YouTube event. */
+    var onVideoTap: (() -> Unit)? = null
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var swipeStartAt = 0L
@@ -34,6 +36,11 @@ class CarFrameLayout(context: Context) : FrameLayout(context) {
                         event.eventTime - swipeStartAt < 1_100L) {
                         // Changing Compose/WebView parents in dispatchTouchEvent can lose UP events.
                         post { onSwipeDown?.invoke() }
+                    } else if (abs(dx) < 18f * resources.displayMetrics.density &&
+                        abs(dy) < 18f * resources.displayMetrics.density &&
+                        event.eventTime - swipeStartAt < 700L) {
+                        // Let the WebView handle the same tap and expose native player controls.
+                        post { onVideoTap?.invoke() }
                     }
                 }
                 trackingSwipe = false
