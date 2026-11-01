@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Android 15+: Android Auto shows the real app screen (MainActivity) on the car display. -->
-    <bool name="legacy_car_screen">false</bool>
-</resources>

@@ -17,6 +17,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verify injected JavaScript and mini-player behavior
+        run: |
+          node --check app/src/main/assets/aay.js
+          node --test .github/scripts/miniplayer.test.cjs
       - name: Compile and test without publishing
         env:
           N2K02_PACKAGES_TOKEN: ${{ secrets.N2K02_PACKAGES_TOKEN }}

@@ -1,0 +1,103 @@
+package com.aayoutube.app
+
+import android.content.ComponentName
+import android.content.Context
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.session.MediaControllerCompat
+
+/** Reconnecting MediaCompat client shared by phone and projection screens. */
+class CompatMediaConnection(
+    private val context: Context,
+    private val onConnected: (MediaControllerCompat) -> Unit = {}
+) {
+    private val handler = Handler(Looper.getMainLooper())
+    private var browser: MediaBrowserCompat? = null
+    private var controller: MediaControllerCompat? = null
+    private val queuedActions = ArrayDeque<String>()
+    private var closed = false
+    private var retries = 0
+    private val retry = Runnable { connect() }
+
+    fun connect() {
+        if (browser != null || closed) return
+        var generationBrowser: MediaBrowserCompat? = null
+        val next = MediaBrowserCompat(context,
+            ComponentName(context, PlaybackService::class.java),
+            object : MediaBrowserCompat.ConnectionCallback() {
+                override fun onConnected() {
+                    if (closed || browser !== generationBrowser) return
+                    retries = 0
+                    handler.removeCallbacks(retry)
+                    val active = runCatching {
+                        MediaControllerCompat(context, generationBrowser!!.sessionToken)
+                    }.getOrElse {
+                        reconnect()
+                        return
+                    }
+                    controller = active
+                    runCatching { onConnected(active) }.onFailure {
+                        AppLog.add("MEDIA", "Media connection callback failed: ${it.javaClass.simpleName}")
+                    }
+                    while (!closed && browser === generationBrowser && queuedActions.isNotEmpty()) {
+                        val action = queuedActions.first()
+                        if (runCatching {
+                            active.transportControls.sendCustomAction(action, Bundle.EMPTY)
+                        }.isFailure) {
+                            reconnect()
+                            break
+                        }
+                        queuedActions.removeFirst()
+                    }
+                }
+                override fun onConnectionFailed() { if (browser === generationBrowser) reconnect() }
+                override fun onConnectionSuspended() { if (browser === generationBrowser) reconnect() }
+            }, null)
+        generationBrowser = next
+        browser = next
+        runCatching { next.connect() }.onFailure { reconnect() }
+    }
+
+    private fun reconnect() {
+        if (closed) return
+        controller = null
+        val previous = browser
+        browser = null
+        previous?.let { runCatching { it.disconnect() } }
+        // Keep trying while a phone/car client is alive, but cap the delay.
+        handler.removeCallbacks(retry)
+        handler.postDelayed(retry, MediaRetryPolicy.delayMs(retries))
+        retries = (retries + 1).coerceAtMost(6)
+    }
+
+    fun command(action: String) {
+        if (closed) return
+        val active = controller
+        if (active != null && runCatching {
+                active.transportControls.sendCustomAction(action, Bundle.EMPTY)
+            }.isSuccess) return
+        if (action == Commands.EXIT) {
+            queuedActions.clear()
+            queuedActions.addLast(action)
+        } else {
+            if (queuedActions.contains(Commands.EXIT)) return
+            if (queuedActions.size >= 8) queuedActions.removeFirst()
+            queuedActions.addLast(action)
+        }
+        if (active != null) reconnect() else {
+            // Queued actions flush when the scheduled reconnect succeeds.
+            if (browser == null && retries == 0) connect()
+        }
+    }
+
+    fun disconnect() {
+        closed = true
+        handler.removeCallbacks(retry)
+        controller = null
+        queuedActions.clear()
+        browser?.let { runCatching { it.disconnect() } }
+        browser = null
+    }
+}

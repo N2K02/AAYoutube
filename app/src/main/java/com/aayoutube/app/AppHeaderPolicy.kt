@@ -1,12 +1,12 @@
 package com.aayoutube.app
 
 /**
- * Keep the phone's app identity visible on every page, while leaving video unobstructed
- * in picture-in-picture, fullscreen, and the car's immersive YouTube screen.
+ * Keep the app header and Settings control visible on phones and Android Auto.
+ * Hide the header only for picture-in-picture and fullscreen video.
  */
 internal fun showAAYoutubeHeader(
     onWatchPage: Boolean,
     onCarDisplay: Boolean,
     inPictureInPicture: Boolean,
     fullscreenVideo: Boolean,
-): Boolean = !inPictureInPicture && !fullscreenVideo && !(onCarDisplay && onWatchPage)
+): Boolean = !inPictureInPicture && !fullscreenVideo

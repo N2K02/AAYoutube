@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.MediaDrm
 import android.os.Build
 import android.webkit.WebSettings
-import androidx.media3.common.MediaLibraryInfo
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.util.UUID
@@ -70,9 +69,9 @@ object Versions {
                 "Libraries",
                 listOf(
                     Row("Compose Material 3 (Expressive)", BuildConfig.LIB_MATERIAL3),
-                    Row("Media3 session", MediaLibraryInfo.VERSION),
+                    Row("AndroidX MediaCompat", BuildConfig.LIB_MEDIACOMPAT),
                     Row("AndroidX WebKit", BuildConfig.LIB_WEBKIT),
-                    Row("Car App library", BuildConfig.LIB_CARAPP),
+                    Row("Car projection", "AABrowser legacy SDK"),
                     Row("Activity Compose", BuildConfig.LIB_ACTIVITYCOMPOSE),
                     Row("Kotlin", KotlinVersion.CURRENT.toString()),
                     Row("Coroutines", BuildConfig.LIB_COROUTINES),
