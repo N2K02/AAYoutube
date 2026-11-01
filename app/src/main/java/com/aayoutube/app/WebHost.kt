@@ -279,6 +279,7 @@ object WebHost {
     }
 
     private fun cmd(name: String, arg: String? = null) {
+        if (name == "pause") unexpectedPauseRecoveryUntil = 0L
         js("window.__aay&&window.__aay.cmd('$name'${if (arg == null) "" else ",$arg"})")
     }
 
@@ -511,7 +512,10 @@ object WebHost {
 
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
-        if (name == "pause") userPausedAt = SystemClock.elapsedRealtime()
+        if (name == "pause") {
+            userPausedAt = SystemClock.elapsedRealtime()
+            unexpectedPauseRecoveryUntil = 0L
+        }
         js("window.__aay&&window.__aay.cmd('$name')")
     }
 
@@ -764,7 +768,11 @@ object WebHost {
 
     private fun scheduleFreeze() {
         main.removeCallbacks(freezeSoon)
-        main.postDelayed(freezeSoon, 45_000)
+        // Do not pause the WebView's own timers while it is attempting to recover
+        // a spontaneous background pause. A deliberate user pause remains fast-idle.
+        val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
+            .coerceAtLeast(0L)
+        main.postDelayed(freezeSoon, maxOf(45_000L, recoveryMs))
     }
 
     private fun freeze() {
@@ -989,6 +997,7 @@ object WebHost {
     private var userPausedAt = 0L
     private var resumeTries = 0
     private var resumeWindowAt = 0L
+    private var unexpectedPauseRecoveryUntil = 0L
 
     /** The screen went to the background, into picture in picture, or came back. */
     fun noteVisibilityChange() {
@@ -1007,6 +1016,7 @@ object WebHost {
         val visibilityTransition = now - visibilityChangedAt < 4_000L
         if (!background && !visibilityTransition) return
         if (now - userPausedAt <= 5_000L) return
+        unexpectedPauseRecoveryUntil = now + 120_000L
         if (now - resumeWindowAt > 60_000L) {
             resumeWindowAt = now
             resumeTries = 0
@@ -1058,6 +1068,7 @@ object WebHost {
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
         snapshot.value = s
+        if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
         if (!s.playing && !shown) scheduleFreeze()
         // The media service is not linked (it stopped while a screen was open): ask it to link again.
