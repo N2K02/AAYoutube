@@ -339,6 +339,30 @@ test('fullscreen car video taps reach YouTube control surface while mini stays t
   assert.ok(!p.classNames.has('aay-car-controls'), 'leaving car removes reveal mode');
 });
 
+test('direct Chromium car taps reveal YouTube controls without seeking or reacting to drags', () => {
+  const p = playerPage({ car: true });
+  p.window.__aay.car(true);
+  const point = (x, y) => ({ pointerId: 2, isPrimary: true, clientX: x, clientY: y });
+  p.emitWindow('pointerdown', point(60, 75));
+  p.emitWindow('pointerup', point(60, 75));
+  assert.equal(p.classNames.has('aay-car-controls'), true,
+    'a tap sent directly to Chromium reveals top quality and bottom seek controls');
+  assert.equal(p.video.currentTime, 20, 'an ordinary tap must not seek');
+  p.window.__aay.mini(true);
+  assert.equal(p.classNames.has('aay-car-controls'), false,
+    'minimizing clears fullscreen control visibility');
+  p.emitWindow('pointerdown', point(60, 75));
+  p.emitWindow('pointerup', point(60, 75));
+  assert.equal(p.classNames.has('aay-car-controls'), false, 'mini taps do not trigger fullscreen UI');
+  p.window.__aay.mini(false);
+  p.emitWindow('pointerdown', point(40, 40));
+  p.emitWindow('pointerup', point(120, 120));
+  assert.equal(p.classNames.has('aay-car-controls'), false, 'swipe gesture is not a tap');
+  p.emitWindow('pointerdown', point(60, 75));
+  p.emitWindow('pointerup', point(60, 75));
+  assert.equal(p.classNames.has('aay-car-controls'), true);
+});
+
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
