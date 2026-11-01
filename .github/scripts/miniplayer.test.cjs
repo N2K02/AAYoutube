@@ -18,6 +18,10 @@ function playerPage(options = {}) {
   const intervals = [];
   const requests = [];
   const qualityCalls = [];
+  const selectedQualities = [];
+  const mockPlayer = {
+    setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); },
+  };
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -64,7 +68,7 @@ function playerPage(options = {}) {
     getElementById(id) {
       if (dom && dom.byId(id)) return dom.byId(id);
       if (options.quality && id === 'movie_player') {
-        return { setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); } };
+        return mockPlayer;
       }
       return null;
     }
@@ -104,6 +108,7 @@ function playerPage(options = {}) {
       account(status) { accountReports.push(status); },
       lyricsTime(...args) { lyricReports.push(args); },
       mini() { miniRequests++; },
+      quality(choice) { selectedQualities.push(choice); },
       state(json) { stateReports.push(JSON.parse(json)); },
     },
     addEventListener(type, fn) {
@@ -142,7 +147,7 @@ function playerPage(options = {}) {
 
   return {
     domNodes: dom ? dom.nodes : null,
-    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls,
+    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
@@ -363,17 +368,49 @@ test('direct Chromium car taps reveal YouTube controls without seeking or reacti
   assert.equal(p.classNames.has('aay-car-controls'), true);
 });
 
+test('720p is requested on startup and does not get reset on small-layout toggles', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  const n = p.qualityCalls.length;
+  p.window.__aay.mini(true);
+  p.window.__aay.pip(true);
+  p.window.__aay.pip(false);
+  p.window.__aay.mini(false);
+  assert.equal(p.qualityCalls.length, n, 'mode switches must not force a redundant reload');
+});
+
+test('explicit quality-menu selection is saved; adaptive changes are not', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  function option(label) {
+    return { textContent: label, closest() { return this; } };
+  }
+  p.emit('click', { target: option('1080p') });
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  p.emit('click', { target: option('Quality 144p') }); // parent menu, not a user pick
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  p.emit('click', { target: option('Auto (720p)') });
+  p.flush();
+  assert.deepEqual(p.selectedQualities, ['hd1080', 'auto']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+});
+
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.window.__aay.setBg(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.pip(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'PiP must not use tiny-only quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP restores 720p instead of tiny');
   p.window.__aay.pip(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
   p.window.__aay.setBg(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
 });
 
 test('car handoff removes background-only quality cap and preserves mini layout on viewport refit', () => {
@@ -383,12 +420,12 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   p.window.__aay.setBg(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.car(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
   p.window.__aay.mini(true);
   p.window.__aay.refitCar();
   assert.equal(p.classNames.has('aay-mini'), true, 'refit must preserve mini player');
   p.window.__aay.car(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'still-visible mini has no background quality cap');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'still-visible mini returns to saved HD');
   p.window.__aay.mini(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
 });
