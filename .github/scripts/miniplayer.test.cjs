@@ -18,6 +18,12 @@ function playerPage(options = {}) {
   const intervals = [];
   const requests = [];
   const qualityCalls = [];
+  const qualityStorage = new Map();
+  const localStorage = {
+    getItem(key) { return qualityStorage.get(key) || null; },
+    setItem(key, value) { qualityStorage.set(key, String(value)); },
+    removeItem(key) { qualityStorage.delete(key); },
+  };
   const selectedQualities = [];
   const mockPlayer = {
     setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); },
@@ -125,7 +131,7 @@ function playerPage(options = {}) {
   };
   const context = {
     window, document, location,
-    navigator,
+    navigator, localStorage,
     history: { pushState() {}, replaceState() {} },
     Document: Doc, HTMLMediaElement: Media, MediaSession: class {},
     MutationObserver: class { observe() {} disconnect() {} },
@@ -147,7 +153,7 @@ function playerPage(options = {}) {
 
   return {
     domNodes: dom ? dom.nodes : null,
-    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities,
+    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
@@ -372,6 +378,7 @@ test('720p is requested on startup and does not get reset on small-layout toggle
   const p = playerPage({ quality: true });
   p.flush();
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd720');
   const n = p.qualityCalls.length;
   p.window.__aay.mini(true);
   p.window.__aay.pip(true);
@@ -394,6 +401,7 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   }
   p.emit('click', { target: option('1080p') });
   assert.deepEqual(p.selectedQualities, ['hd1080']);
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd1080');
   p.flush();
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
   p.window.__aay.mini(true);
@@ -403,6 +411,7 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   p.emit('click', { target: option('Auto (720p)') });
   p.flush();
   assert.deepEqual(p.selectedQualities, ['hd1080', 'auto']);
+  assert.equal(p.qualityStorage.has('yt-player-quality'), false);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
 });
 
