@@ -592,10 +592,13 @@ object WebHost {
 
     val mode = MutableStateFlow(PlayerMode.FULL)
 
-    fun isOnWatchPage(): Boolean =
-        runCatching { Uri.parse(web?.url.orEmpty()).path.orEmpty() }.getOrDefault("").let {
-            it.startsWith("/watch") || it.startsWith("/live/")
-        }
+    fun isOnWatchPage(): Boolean {
+        val route = runCatching { Uri.parse(web?.url.orEmpty()).path.orEmpty() }.getOrDefault("")
+        // A YouTube SPA video may already be playing before WebView.url/history changes.
+        // The media snapshot is authoritative during that brief navigation gap.
+        return route.startsWith("/watch") || route.startsWith("/live/") ||
+            onWatchPage.value || (snapshot.value.playing && snapshot.value.id.isNotBlank())
+    }
 
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun requestMiniFromBridge(generation: Int) {
