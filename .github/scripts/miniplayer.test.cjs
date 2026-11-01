@@ -261,6 +261,7 @@ test('mini layout exposes the video surface and preserves play until explicitly 
 
 test('car mini player recovers an unexpected pause but honours explicit pause', () => {
   const p = playerPage({ car: true });
+  p.flush(); // Bind the initially-playing video before simulating the interruption.
   p.window.__aay.mini(true);
   // Simulate a Chromium pause that bypasses HTMLMediaElement.pause(), such
   // as an audio focus handoff when the browse WebView becomes visible.
