@@ -869,6 +869,17 @@
       console.log('[aay] restore position deferred: ' + e);
     }
   }
+  // Android can also reload the entire document when YouTube changes resolution.
+  // Kotlin passes the last known position only when the new document is the SAME video.
+  A.restoreAt = function (id, seconds) {
+    if (BROWSE || !id || id !== qualityVideoId() || !isFinite(seconds) || seconds < 10) return;
+    qualityState.id = id;
+    qualityState.position = Math.max(qualityState.position, seconds);
+    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0 };
+    console.log('[aay] same-video document reload: restoring ' + Math.round(seconds) + 's');
+    restoreAfterSourceChange(getVideo());
+  };
+
   function trackNewVideoElement(v) {
     if (!v || qualityState.element === v) return;
     if (qualityState.element && qualityVideoId() === qualityState.id)
