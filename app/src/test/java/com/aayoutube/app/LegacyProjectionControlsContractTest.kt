@@ -67,8 +67,14 @@ class LegacyProjectionControlsContractTest {
         assertTrue(watch.contains("onHome = { goYouTubeHome(); topMenuEpoch++ }"))
         assertTrue(watch.contains("onPrevious = { WebHost.cmd(\"prev\"); topMenuEpoch++ }"))
         assertTrue(phone.contains(".padding(horizontal = 8.dp).zIndex(20f)"))
-        // Non-video pages keep the single standard header.
-        assertTrue(phone.contains("if (!watchTab && headerAllowed) {"))
+        // Settings keeps its one standard header inside an overlay. The
+        // playing WebView must not move when switching from Watch to Settings.
+        val root = phone.substringAfter("fun AppRoot(").substringBefore("// ---------------------------------------------------------------------------- web")
+        assertTrue(root.contains("WebPane(Modifier.fillMaxSize())"))
+        assertTrue(root.contains("visible = tab != Tab.Watch.ordinal && !inPip"))
+        assertTrue(root.contains("AAYoutubePageHeader("))
+        assertTrue(root.contains("Crossfade("))
+        assertFalse(root.contains("Scaffold("))
         assertFalse("Settings has no Home bottom bar any more", phone.contains("onHome = goYouTubeHome,"))
     }
 }
