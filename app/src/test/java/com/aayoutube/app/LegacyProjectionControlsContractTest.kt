@@ -65,6 +65,8 @@ class LegacyProjectionControlsContractTest {
         assertTrue(watch.contains("BarIcon(Icons.Filled.Settings, \"Settings\""))
         assertTrue(watch.contains("N2K02UpdateBadge("))
         assertTrue(watch.contains("onHome = { goYouTubeHome(); topMenuEpoch++ }"))
+        assertTrue(watch.contains("onPrevious = { WebHost.cmd(\"prev\"); topMenuEpoch++ }"))
+        assertTrue(phone.contains(".padding(horizontal = 8.dp).zIndex(20f)"))
         // Non-video pages keep the single standard header.
         assertTrue(phone.contains("if (!watchTab && headerAllowed) {"))
         assertFalse("Settings has no Home bottom bar any more", phone.contains("onHome = goYouTubeHome,"))
