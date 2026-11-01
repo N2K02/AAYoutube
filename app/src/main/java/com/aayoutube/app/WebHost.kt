@@ -1020,8 +1020,38 @@ object WebHost {
         cmd("play")
     }
 
+    private var lastPlaybackServiceStartAt = 0L
+    private var lastPlaybackServiceStartId = ""
+
+    /** A MediaBrowser binding is not a started foreground service.
+     * Launch it while playback begins from the visible activity/car host so
+     * Android can display the real media notification and prioritize the WebView.
+     */
+    private fun ensurePlaybackService(previous: Snap, current: Snap) {
+        if (!current.playing || current.id.isBlank() ||
+            (previous.playing && previous.id == current.id)) return
+        val now = SystemClock.elapsedRealtime()
+        if (lastPlaybackServiceStartId == current.id &&
+            now - lastPlaybackServiceStartAt < 4_000L) return
+        lastPlaybackServiceStartAt = now
+        lastPlaybackServiceStartId = current.id
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                app, Intent(app, PlaybackService::class.java)
+                    .setAction(PlaybackService.ACTION_PLAYBACK)
+                    .putExtra(PlaybackService.EXTRA_PLAYBACK, current.toBundle())
+            )
+            AppLog.add("MEDIA", "Requested foreground playback notification")
+        }.onFailure {
+            AppLog.add("MEDIA", "Cannot start playback foreground service: " +
+                it.javaClass.simpleName + ": " + it.message)
+        }
+    }
+
     private fun publish(s: Snap) {
-        resumeIfDropped(snapshot.value, s)
+        val previous = snapshot.value
+        resumeIfDropped(previous, s)
+        ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
         if (key != lastLogged) {
             lastLogged = key
