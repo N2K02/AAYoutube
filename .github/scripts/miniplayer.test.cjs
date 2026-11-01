@@ -544,3 +544,15 @@ test('background watchdog resumes an unexpected pause, but not an explicit media
   p.runIntervals();
   assert.equal(p.video.paused, true, 'a media pause must not be overridden');
 });
+
+test('same-video document reload can recover the position through the native bridge', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 0;
+  p.video.readyState = 1;
+  p.window.__aay.restoreAt('86p7SP34qSc', 145.5);
+  assert.ok(p.video.currentTime >= 145, 'same-video document reload should seek back');
+  p.video.currentTime = 0;
+  p.window.__aay.restoreAt('different-video-id', 220);
+  assert.equal(p.video.currentTime, 0, 'never restore a different video ID');
+});
