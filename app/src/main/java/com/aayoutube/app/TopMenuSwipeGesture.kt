@@ -28,18 +28,3 @@ internal object ControlsSidePolicy {
     fun label(left: Boolean): String = if (left) "Left" else "Right"
 }
 
-/**
- * Horizontal limits of the draggable phone mini player. The controls rail
- * (≈44dp buttons + margins) keeps a reserved strip on its side.
- */
-internal object MiniPlayerBounds {
-    const val RAIL_RESERVE_DP = 64
-
-    fun minX(edge: Float, rail: Float, railOnLeft: Boolean): Float =
-        if (railOnLeft) edge + rail else edge
-
-    fun maxX(width: Float, miniWidth: Float, edge: Float, rail: Float, railOnLeft: Boolean): Float {
-        val right = width - miniWidth - edge - (if (railOnLeft) 0f else rail)
-        return right.coerceAtLeast(minX(edge, rail, railOnLeft))
-    }
-}
