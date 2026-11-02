@@ -109,7 +109,7 @@ dependencies {
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
     implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
-    implementation("androidx.graphics:graphics-shapes:1.0.1")
+    implementation("androidx.graphics:graphics-shapes:1.1.0")
     implementation("androidx.activity:activity-compose:${v["activityCompose"]}")
 
     // Media session for the notification, lock screen, Bluetooth and Android Auto
