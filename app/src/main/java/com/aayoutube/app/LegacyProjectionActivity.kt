@@ -10,7 +10,6 @@ import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebView
 import com.google.android.gms.car.input.CarEditable
 import com.google.android.gms.car.input.CarEditableListener
@@ -747,18 +746,22 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
 
     override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
         val web = target ?: return null
+        // Chromium owns text editing. A generic BaseInputConnection consumes car
+        // keyboard characters without forwarding them to the focused HTML field.
+        if (!web.hasFocus()) web.requestFocus()
         web.onCheckIsTextEditor()
-        var connection = web.onCreateInputConnection(editorInfo)
-        if (connection == null) {
-            web.requestFocus()
-            connection = web.onCreateInputConnection(editorInfo)
-        }
+        val connection = web.onCreateInputConnection(editorInfo)
         editorInfo?.apply {
             if (inputType == EditorInfo.TYPE_NULL) inputType =
                 EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_NORMAL
             imeOptions = imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_DONE
         }
-        return connection ?: BaseInputConnection(web, true)
+        if (connection == null) {
+            AppLog.add("CAR", "Search input: Chromium input connection unavailable")
+        } else {
+            AppLog.add("CAR", "Search input: Chromium input connection ready")
+        }
+        return connection
     }
 
     override fun setCarEditableListener(carEditableListener: CarEditableListener?) = Unit
