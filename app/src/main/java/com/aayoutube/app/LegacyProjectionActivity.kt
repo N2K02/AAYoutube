@@ -700,6 +700,9 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     private fun start() {
         if (active) return
         AppLog.add("CAR", "Explicit editable tap: requesting car keyboard")
+        // The car root initially owns focus to avoid opening a keyboard on
+        // video launch. Transfer focus only after a real HTML editable tap.
+        target?.requestFocus()
         runCatching {
             manager.startInput(this)
             active = true
