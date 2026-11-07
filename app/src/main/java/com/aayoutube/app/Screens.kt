@@ -365,13 +365,7 @@ fun AppRoot(activity: MainActivity) {
             // mRadio's status-bar safe area, applied to YouTube content on the
             // phone only. Never inset native fullscreen, PiP or car projection.
             // The app header already has its own statusBarsPadding().
-            WebPane(
-                Modifier.fillMaxSize().then(
-                    if (!onCar && !projectedToCar && !inPip && fullscreen == null)
-                        Modifier.statusBarsPadding()
-                    else Modifier
-                )
-            )
+            WebPane(Modifier.fillMaxSize())
             val panel = if (tab != Tab.Watch.ordinal) Tab.entries[tab] else lastPanel
             AnimatedVisibility(
                 visible = tab != Tab.Watch.ordinal && !inPip,
@@ -544,7 +538,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause() else BrowseHost.resume()
     }
 
-    Box(modifier) {
+    // Keep the WebPane host's dimensions stable across Settings transitions.
+    // Inset only the phone WebView content, never Android Auto, PiP or native fullscreen.
+    val phoneSafeArea = !onCar && !projectedToCar && !inPip &&
+        WebHost.fullscreenView.collectAsState().value == null
+    Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier)) {
         // Browse page (behind): made the first time the mini player opens.
         if (browseOn && !inPip) {
             key(browseRevision) {
