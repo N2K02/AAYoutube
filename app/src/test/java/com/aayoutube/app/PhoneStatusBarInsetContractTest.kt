@@ -14,12 +14,12 @@ class PhoneStatusBarInsetContractTest {
     }
 
     @Test fun phoneWebViewUsesMRadioStatusBarSafeArea() {
-        assertTrue(screen.contains("if (!onCar && !projectedToCar && !inPip && fullscreen == null)"))
-        assertTrue(screen.contains("Modifier.statusBarsPadding()"))
+        assertTrue(screen.contains("val phoneSafeArea = !onCar && !projectedToCar && !inPip &&"))
+        assertTrue(screen.contains("Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier))"))
     }
 
     @Test fun nativeFullscreenAndCarRemainEdgeToEdge() {
-        assertTrue(screen.contains("if (!onCar && !projectedToCar && !inPip && fullscreen == null)"))
+        assertTrue(screen.contains("val phoneSafeArea = !onCar && !projectedToCar && !inPip &&"))
         assertTrue(screen.contains("if (full != null)"))
         assertTrue(screen.contains("modifier = Modifier.fillMaxSize()"))
     }
