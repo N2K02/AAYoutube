@@ -1105,6 +1105,9 @@
 
   // Fresh position now and then while playing, in case an event was missed.
   setInterval(function () {
+    // Media element events and the background watchdog keep audio state
+    // current; a hidden phone does not need periodic UI position reports.
+    if (BROWSE || (A.isBg && !A.inPip && !A.isCar)) return;
     var v = getVideo();
     if (v && !v.paused) schedReport(0);
   }, 10000);
