@@ -1078,9 +1078,10 @@
     try {
       var v = getVideo();
       if (v) bind(v);
-      // A playlist may reuse the <video> and player objects for a new media ID.
-      // A changed ID needs a new quality decision but the same video does not.
+      // Background audio still needs player bindings and quality recovery,
+      // but visual DOM work is unnecessary when the phone is hidden.
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
+      if (A.isBg && !A.inPip && !A.isCar) return;
       skipAd();
       dialogs();
       rydApply();
@@ -1094,7 +1095,7 @@
   // Playback, source and route event listeners remain immediate.
   function schedTick() {
     if (tickTimer) return;
-    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isMini) ? 2500 : 900);
+    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 5000 : 900);
   }
 
   whenRoot(function () {
@@ -1104,6 +1105,9 @@
 
   // Fresh position now and then while playing, in case an event was missed.
   setInterval(function () {
+    // Media element events and the background watchdog keep audio state
+    // current; a hidden phone does not need periodic UI position reports.
+    if (BROWSE || (A.isBg && !A.inPip && !A.isCar)) return;
     var v = getVideo();
     if (v && !v.paused) schedReport(0);
   }, 10000);
@@ -1518,8 +1522,11 @@
   }, true);
 
   A.setBg = function (on) {
+    var wasBg = A.isBg;
     A.isBg = !!on;
     applyPreferredQuality();
+    // Catch up with the DOM once when returning to the foreground.
+    if (wasBg && !A.isBg) schedTick();
   };
 
 })();
