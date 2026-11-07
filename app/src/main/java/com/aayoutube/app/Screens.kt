@@ -362,6 +362,9 @@ fun AppRoot(activity: MainActivity) {
         // Keep the video WebView at a constant native size while opening a menu.
         // Changing Scaffold.topBar padding used to resize the decoder and cause stalls.
         Box(Modifier.fillMaxSize()) {
+            // mRadio's status-bar safe area, applied to YouTube content on the
+            // phone only. Never inset native fullscreen, PiP or car projection.
+            // The app header already has its own statusBarsPadding().
             WebPane(Modifier.fillMaxSize())
             val panel = if (tab != Tab.Watch.ordinal) Tab.entries[tab] else lastPanel
             AnimatedVisibility(
@@ -535,7 +538,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause() else BrowseHost.resume()
     }
 
-    Box(modifier) {
+    // Keep the WebPane host's dimensions stable across Settings transitions.
+    // Inset only the phone WebView content, never Android Auto, PiP or native fullscreen.
+    val phoneSafeArea = !onCar && !projectedToCar && !inPip &&
+        WebHost.fullscreenView.collectAsState().value == null
+    Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier)) {
         // Browse page (behind): made the first time the mini player opens.
         if (browseOn && !inPip) {
             key(browseRevision) {

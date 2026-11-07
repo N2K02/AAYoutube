@@ -241,6 +241,9 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
     val latestSnapshot by rememberUpdatedState(snapshotAnchor)
     var verticalOffset by remember { mutableFloatStateOf(LyricsPrefs.position(context, "panel_y", 0f)) }
     var now by remember { mutableLongStateOf(0L) }
+    // A 100 ms clock updates frequently, but only a change of lyric line
+    // should recompose the text and run its Crossfade.
+    val activeLine by remember(lines) { derivedStateOf { LyricsParser.current(lines, now) } }
     var offsetMs by remember { mutableLongStateOf(LyricsPrefs.position(context, "sync_offset_ms", 0f).toLong()) }
     // The direct WebView clock is authoritative. the media session's snapshot is only a
     // fallback before the first sample arrives or after WebView replacement.
@@ -292,7 +295,7 @@ internal fun LyricsOverlay(snap: Snap, content: LyricsContent, onToggle: () -> U
             }
         }
         Spacer(Modifier.height(12.dp))
-        val index = LyricsParser.current(lines, now)
+        val index = activeLine
         when {
             lines.isNotEmpty() -> {
                 // Animate only when the lyric index changes, not every clock sample.

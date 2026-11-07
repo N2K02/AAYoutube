@@ -10,7 +10,6 @@ import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebView
 import com.google.android.gms.car.input.CarEditable
 import com.google.android.gms.car.input.CarEditableListener
@@ -169,8 +168,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             if (WebHost.isActiveCarHost(carToken) &&
                 WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
                 AppLog.add("CAR", "Swipe down on video: mini player")
-                WebHost.enterMini()
-                BrowseHost.resume()
+                carVideoToMini("Swipe")
             }
         }
         frame.onVideoTap = {
@@ -480,33 +478,61 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }
     }
 
-    /** A car Back/Home action must not navigate away from the playing WebView. */
-    private fun carBackToMini(): Boolean {
-        if (!WebHost.isActiveCarHost(carToken)) return false
-        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
-            AppLog.add("CAR", "Back: video retained in mini player")
-            WebHost.enterMini()
-            BrowseHost.resume()
+    /** Car-only navigation: preserve the playing WebView while showing YouTube Home. */
+    private fun carVideoToMini(action: String): Boolean {
+        if (!WebHost.isActiveCarHost(carToken)) {
+            AppLog.add("CAR", "$action ignored: inactive projection host")
+            return false
+        }
+        if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
+            BrowseHost.navigate(WebHost.home())
+            AppLog.add("CAR", "$action: browse Home with mini player")
             return true
         }
+        if (WebHost.fullscreenView.value != null) {
+            AppLog.add("CAR", "$action: exit native fullscreen before mini transition")
+            WebHost.exitFullscreen()
+            // Chromium's custom-view callback must finish before shrinking the renderer.
+            handler.post {
+                if (WebHost.isActiveCarHost(carToken)) finishCarMiniTransition(action)
+            }
+            return true
+        }
+        return finishCarMiniTransition(action)
+    }
+
+    private fun finishCarMiniTransition(action: String): Boolean {
+        if (!WebHost.isActiveCarHost(carToken)) return false
+        if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
+            BrowseHost.navigate(WebHost.home())
+            return true
+        }
+        if (!WebHost.isOnWatchPage()) {
+            AppLog.add("CAR", "$action: no watch page; navigate Home")
+            WebHost.openUrl(WebHost.home())
+            return true
+        }
+        WebHost.enterMini()
+        val succeeded = WebHost.mode.value == WebHost.PlayerMode.MINI
+        AppLog.add("CAR", "$action: mini transition success=$succeeded")
+        if (succeeded) {
+            BrowseHost.resume()
+            BrowseHost.navigate(WebHost.home())
+        }
+        return succeeded
+    }
+
+    private fun carBackToMini(): Boolean {
+        if (!WebHost.isActiveCarHost(carToken)) return false
         if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
             if (!BrowseHost.goBack()) AppLog.add("CAR", "Back: already on browse Home")
             return true
         }
-        return false
+        return carVideoToMini("Back")
     }
 
     private fun carHomeToMini() {
-        if (!WebHost.isActiveCarHost(carToken)) return
-        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage()) {
-            AppLog.add("CAR", "Home: video retained in mini player")
-            WebHost.enterMini()
-            BrowseHost.resume()
-        } else if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
-            BrowseHost.navigate(WebHost.home())
-        } else {
-            WebHost.openUrl(WebHost.home())
-        }
+        carVideoToMini("Home")
     }
 
     @Deprecated("Use car host Back dispatcher when available")
@@ -674,6 +700,9 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     private fun start() {
         if (active) return
         AppLog.add("CAR", "Explicit editable tap: requesting car keyboard")
+        // The car root initially owns focus to avoid opening a keyboard on
+        // video launch. Transfer focus only after a real HTML editable tap.
+        target?.requestFocus()
         runCatching {
             manager.startInput(this)
             active = true
@@ -720,18 +749,22 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
 
     override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
         val web = target ?: return null
+        // Chromium owns text editing. A generic BaseInputConnection consumes car
+        // keyboard characters without forwarding them to the focused HTML field.
+        if (!web.hasFocus()) web.requestFocus()
         web.onCheckIsTextEditor()
-        var connection = web.onCreateInputConnection(editorInfo)
-        if (connection == null) {
-            web.requestFocus()
-            connection = web.onCreateInputConnection(editorInfo)
-        }
+        val connection = web.onCreateInputConnection(editorInfo)
         editorInfo?.apply {
             if (inputType == EditorInfo.TYPE_NULL) inputType =
                 EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_NORMAL
             imeOptions = imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_DONE
         }
-        return connection ?: BaseInputConnection(web, true)
+        if (connection == null) {
+            AppLog.add("CAR", "Search input: Chromium input connection unavailable")
+        } else {
+            AppLog.add("CAR", "Search input: Chromium input connection ready")
+        }
+        return connection
     }
 
     override fun setCarEditableListener(carEditableListener: CarEditableListener?) = Unit
