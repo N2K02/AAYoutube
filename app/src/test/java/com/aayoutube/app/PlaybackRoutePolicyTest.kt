@@ -6,7 +6,8 @@ import org.junit.Test
 class PlaybackRoutePolicyTest {
     @Test fun watchAndLiveRoutesKeepPlaybackIdentity() {
         assertTrue(PlaybackRoutePolicy.isPlaybackRoute("/watch"))
-        assertTrue(PlaybackRoutePolicy.isPlaybackRoute("/watch?v=sample"))
+        // Uri.path never contains the query string: match exactly /watch.
+        assertFalse(PlaybackRoutePolicy.isPlaybackRoute("/watch?v=sample"))
         assertTrue(PlaybackRoutePolicy.isPlaybackRoute("/live/abc123"))
     }
 
