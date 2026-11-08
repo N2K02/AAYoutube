@@ -44,8 +44,10 @@ internal class TerminalTransportIntent {
         }
     }
 
-    fun onWebState(state: Snap) {
-        if (state.userPaused) pendingCommand = null
+    /** Only the current connection's matching transport ACK confirms delivery.
+     * A page state marked paused may predate STOP, so it is not sufficient. */
+    fun acknowledge(command: Int) {
+        if (pendingCommand == command) pendingCommand = null
     }
 
     fun clear() { pendingCommand = null }

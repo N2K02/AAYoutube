@@ -34,6 +34,7 @@ object Msg {
     const val REGISTER_ACK = 103  // web process confirms the session message channel is ready
     const val PLAYER_MISSING = 104  // the shared WebView is absent
     const val RENDERER_GONE = 105  // previous playback intent before renderer replacement
+    const val TRANSPORT_ACK = 106  // acknowledges the exact PAUSE/STOP command applied by WebHost
 }
 
 /** Custom commands on the media session (app -> service, and notification buttons). */

@@ -923,7 +923,11 @@ object WebHost {
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
             Msg.PLAY -> cmd("play")
-            Msg.PAUSE -> { userPausedAt = SystemClock.elapsedRealtime(); cmd("pause") }
+            Msg.PAUSE -> {
+                userPausedAt = SystemClock.elapsedRealtime()
+                cmd("pause")
+                send(Msg.TRANSPORT_ACK, Bundle().apply { putInt("command", Msg.PAUSE) })
+            }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
             Msg.NEXT -> cmd("next")
             Msg.PREV -> cmd("prev")
@@ -931,6 +935,7 @@ object WebHost {
             Msg.STOP -> {
                 cmd("pause")
                 if (!shown) release()
+                send(Msg.TRANSPORT_ACK, Bundle().apply { putInt("command", Msg.STOP) })
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
@@ -1017,7 +1022,8 @@ object WebHost {
         val l = link ?: return
         try {
             val m = Message.obtain(null, what)
-            if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)
+            if (what == Msg.STATE || what == Msg.PLAYER_MISSING ||
+                what == Msg.RENDERER_GONE || what == Msg.TRANSPORT_ACK)
                 data.putInt("epoch", linkEpoch)
             m.data = data
             l.send(m)

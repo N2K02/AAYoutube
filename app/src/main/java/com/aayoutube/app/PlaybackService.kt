@@ -102,7 +102,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         } else if (message.what == Msg.STATE && !quitRequested && validWebMessage(message)) {
             val fresh = Snap.from(message.data)
-            terminalIntent.onWebState(fresh)
+            // A page-originated user Pause is still authoritative, but a
+            // transport Pause/Stop clears only after its explicit IPC ACK.
+            // Otherwise an old paused snapshot could falsely acknowledge Stop.
             // A user may have pressed Pause on YouTube while the IPC link was
             // unavailable. Do not replay a stale, pre-disconnect play intent.
             if (fresh.userPaused) recovery.cancel()
@@ -111,6 +113,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
             snapshot = fresh
             publish(fresh)
             if (resume) send(Msg.PLAY)
+        } else if (message.what == Msg.TRANSPORT_ACK && !quitRequested && validWebMessage(message)) {
+            terminalIntent.acknowledge(message.data.getInt("command", -1))
         } else if (message.what == Msg.PLAYER_MISSING && !quitRequested && validWebMessage(message)) {
             // OPEN is allowed only when the WebView confirms the player is missing.
             val wanted = recovery.onMissingPlayer()
@@ -551,7 +555,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!snapshot.playing && !snapshot.buffering && !recoveringPlayback) stopSelf()
+        if (!snapshot.playing && !snapshot.buffering && !recoveringPlayback &&
+            terminalIntent.pendingCommand == null) stopSelf()
         super.onTaskRemoved(rootIntent)
     }
 

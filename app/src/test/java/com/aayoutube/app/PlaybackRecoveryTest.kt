@@ -8,13 +8,15 @@ class PlaybackRecoveryTest {
         val intent = TerminalTransportIntent()
         intent.onCommand(Msg.PAUSE)
         assertEquals(Msg.PAUSE, intent.pendingCommand)
-        intent.onWebState(Snap(id = "video", playing = true))
+        intent.acknowledge(Msg.STOP) // wrong ACK must not clear Pause
         assertEquals(Msg.PAUSE, intent.pendingCommand)
-        intent.onWebState(Snap(id = "video", userPaused = true))
+        intent.acknowledge(Msg.PAUSE)
         assertNull(intent.pendingCommand)
         intent.onCommand(Msg.STOP)
         assertEquals(Msg.STOP, intent.pendingCommand)
-        intent.onWebState(Snap(id = "video", userPaused = true))
+        intent.acknowledge(Msg.PAUSE)
+        assertEquals(Msg.STOP, intent.pendingCommand)
+        intent.acknowledge(Msg.STOP)
         assertNull(intent.pendingCommand)
     }
 
