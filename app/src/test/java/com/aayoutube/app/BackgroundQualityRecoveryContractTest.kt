@@ -66,7 +66,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("Features.current.backgroundPlay || carShown || inPip.value || shown"))
         assertTrue(web.contains("if (keepRecovering()) return"))
         assertTrue(web.contains("if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()"))
-        assertTrue(web.contains("if (s.ended || s.id.isBlank()) playbackWanted = false"))
+        assertTrue(web.contains("if (incoming.ended || incoming.id.isBlank()) playbackWanted = false"))
         assertTrue(web.contains("if (!preserveCarOwners) playbackWanted = false"))
         assertTrue(web.contains("main.postDelayed(freezeSoon, maxOf(45_000L, recoveryMs))"))
         assertTrue(web.contains("if (s.playing) unexpectedPauseRecoveryUntil = 0L"))
