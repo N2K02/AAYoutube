@@ -193,12 +193,14 @@ object WebHost {
         if (!Features.current.resumeLast) return null
         val u = webPrefs.getString("lastUrl", null) ?: return null
         val host = Uri.parse(u).host.orEmpty()
-        return u.takeIf { host.endsWith("youtube.com") }
+        return u.takeIf {
+            u.scheme == "https" && isYouTubeHost(host)
+        }
     }
 
     private fun saveUrl(url: String) {
         val u = Uri.parse(url)
-        if (!u.host.orEmpty().endsWith("youtube.com")) return
+        if (u.scheme != "https" || !isYouTubeHost(u.host)) return
         // Without our autoplay flags: opening the app should not start a video on its own.
         val clean = u.buildUpon().clearQuery().apply {
             u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
@@ -709,7 +711,8 @@ object WebHost {
         for (i in list.currentIndex - 1 downTo 0) {
             val u = list.getItemAtIndex(i)?.url ?: continue
             val path = Uri.parse(u).path.orEmpty()
-            if (!path.startsWith("/watch") && !path.startsWith("/shorts") && Uri.parse(u).host.orEmpty().endsWith("youtube.com")) return u
+            if (!path.startsWith("/watch") && !path.startsWith("/shorts") &&
+                Uri.parse(u).let { it.scheme == "https" && isYouTubeHost(it.host) }) return u
         }
         return home()
     }
@@ -784,12 +787,21 @@ object WebHost {
      * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
     fun clearSession() {
         youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
+        val generation = webGeneration
+        val page = web
         CookieManager.getInstance().removeAllCookies {
             main.post {
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                web?.clearCache(true)
-                web?.loadUrl(home())
+                // CookieManager's completion may arrive after Quit, renderer
+                // replacement, or a car/phone handoff. Never navigate a new
+                // page using a callback belonging to the old one.
+                if (generation != webGeneration || web !== page) {
+                    AppLog.add("ACCOUNT", "Ignored delayed sign-out navigation for replaced WebView")
+                    return@post
+                }
+                page?.clearCache(true)
+                page?.loadUrl(home())
                 BrowseHost.onSessionCleared()
             }
         }
@@ -888,6 +900,7 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        mainFrameAllowsPlayback = false
         if (!preserveCarOwners) {
             // A stopped/idle renderer has no live video. Inform Android Auto
             // so its next Play comes from the saved last selection, not a
@@ -1207,6 +1220,11 @@ object WebHost {
     }
 
     // ---------------------------------------------------------------- WebView clients
+
+    internal fun isYouTubeHost(host: String?): Boolean {
+        val h = host?.lowercase() ?: return false
+        return h == "youtube.com" || h.endsWith(".youtube.com")
+    }
 
     internal fun allowedHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false

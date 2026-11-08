@@ -131,6 +131,23 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(media.contains("snapshot.copy(playing = false, buffering = false, recovering = false, userPaused = true)"))
     }
 
+    @Test fun savedAndHistoricalUrlsRejectLookalikeYouTubeHosts() {
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("internal fun isYouTubeHost(host: String?)"))
+        assertTrue(web.contains("h == \"youtube.com\" || h.endsWith(\".youtube.com\")"))
+        assertTrue(web.contains("u.scheme == \"https\" && isYouTubeHost(host)"))
+        assertTrue(web.contains("u.scheme != \"https\" || !isYouTubeHost(u.host)"))
+    }
+
+    @Test fun delayedLogoutCannotReloadReplacementOrQuitWebView() {
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("val generation = webGeneration"))
+        assertTrue(web.contains("val page = web"))
+        assertTrue(web.contains("if (generation != webGeneration || web !== page)"))
+        assertTrue(web.contains("return@post"))
+        assertTrue(web.contains("mainFrameAllowsPlayback = false"))
+    }
+
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(media.contains("handler.removeCallbacks(demoteForeground)"))
