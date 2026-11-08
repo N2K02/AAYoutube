@@ -67,7 +67,8 @@ function playerPage(options = {}) {
     }
     querySelector(selector) {
       if (selector.includes('ProgressBarDragContainer')) return seekBar;
-      if (selector === 'video.html5-main-video' || selector === 'video') return video;
+      if (selector === 'video.html5-main-video' || selector === 'video')
+        return options.noVideo ? null : video;
       return dom ? dom.querySelectorAll(selector)[0] || null : null;
     }
     querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
@@ -127,8 +128,8 @@ function playerPage(options = {}) {
   window.self = window;
   const location = {
     hostname: 'm.youtube.com', pathname: '/watch',
-    search: '?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : ''),
-    href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : ''),
+    search: '?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
+    href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
   };
   const context = {
     window, document, location,
@@ -825,4 +826,27 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   p.video.play();
   p.video.trigger('play');
   assert.equal(p.video.paused, false, 'trusted player gesture can Play');
+});
+
+test('manual Pause before autoplay video appears cancels the deferred request', () => {
+  const opts = { noVideo: true, autoplay: true };
+  const p = playerPage(opts);
+  p.window.__aay.cmd('pause'); // user wins even before the video element loads
+  opts.noVideo = false;
+  p.video.paused = true;
+  p.flush();
+  p.video.trigger('loadedmetadata');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'pending page autoplay must never defeat explicit Pause');
+});
+
+test('native Play before video exists starts it after the player becomes available', () => {
+  const opts = { noVideo: true };
+  const p = playerPage(opts);
+  p.window.__aay.cmd('play'); // no HTML video to control yet
+  opts.noVideo = false;
+  p.video.paused = true;
+  p.flush();
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
 });
