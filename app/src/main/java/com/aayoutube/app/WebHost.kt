@@ -894,8 +894,6 @@ object WebHost {
             // stale page identity or a phantom BUFFERING state.
             send(Msg.STATE, Snap().toBundle())
             playbackWanted = false
-        }
-        if (!preserveCarOwners) {
             carOwners.clear()
             carShown = false
             carProjectionActive.value = false
