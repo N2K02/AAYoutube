@@ -14,6 +14,14 @@ class PlaybackRecoveryTest {
         assertNull(r.onMissingPlayer())
     }
 
+    @Test fun userPauseDuringLinkFailureMustNeverAutoResumeOnReconnect() {
+        val r = PlaybackRecovery()
+        assertTrue(r.onLinkLost(Snap(id = "video", playing = true)))
+        assertFalse(r.onExistingPlayer(Snap(id = "video", playing = false, userPaused = true)))
+        assertFalse(r.active)
+        assertNull(r.onMissingPlayer())
+    }
+
     @Test fun interruptedPlaybackCanResumeItsExistingPlayerWithoutNavigation() {
         val r = PlaybackRecovery()
         assertTrue(r.onLinkLost(Snap(id = "video", playing = true)))

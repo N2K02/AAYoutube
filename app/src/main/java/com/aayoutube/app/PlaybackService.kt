@@ -98,6 +98,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         } else if (message.what == Msg.STATE && !quitRequested && validWebMessage(message)) {
             val fresh = Snap.from(message.data)
+            // A user may have pressed Pause on YouTube while the IPC link was
+            // unavailable. Do not replay a stale, pre-disconnect play intent.
+            if (fresh.userPaused) recovery.cancel()
             val resume = recovery.onExistingPlayer(fresh)
             recoveringPlayback = recovery.active
             snapshot = fresh
@@ -369,7 +372,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onPause() {
                     send(Msg.PAUSE)
-                    snapshot = snapshot.copy(playing = false, buffering = false)
+                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false)
                     publish(snapshot)
                 }
                 override fun onSkipToNext() {
@@ -394,7 +397,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onStop() {
                     send(Msg.STOP)
-                    snapshot = snapshot.copy(playing = false, buffering = false)
+                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false)
                     publish(snapshot)
                 }
                 override fun onCustomAction(action: String?, extras: Bundle?) {

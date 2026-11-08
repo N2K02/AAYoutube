@@ -53,6 +53,8 @@ data class Snap(
     val artist: String = "",
     val art: String = "",
     val playing: Boolean = false,
+    /** True only for a deliberate user Pause, never for a spontaneous playback loss. */
+    val userPaused: Boolean = false,
     val buffering: Boolean = false,
     val ended: Boolean = false,
     val live: Boolean = false,
@@ -71,6 +73,7 @@ data class Snap(
         putString("artist", artist)
         putString("art", art)
         putBoolean("playing", playing)
+        putBoolean("userPaused", userPaused)
         putBoolean("buffering", buffering)
         putBoolean("ended", ended)
         putBoolean("live", live)
@@ -99,6 +102,7 @@ data class Snap(
                 artist = b.getString("artist").orEmpty(),
                 art = b.getString("art").orEmpty(),
                 playing = playing,
+                userPaused = b.getBoolean("userPaused"),
                 buffering = b.getBoolean("buffering"),
                 ended = b.getBoolean("ended"),
                 live = b.getBoolean("live"),

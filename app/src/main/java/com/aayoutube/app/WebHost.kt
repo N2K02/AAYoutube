@@ -524,8 +524,11 @@ object WebHost {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
             unexpectedPauseRecoveryUntil = 0L
+            if (snapshot.value.id.isNotBlank())
+                publish(snapshot.value.copy(playing = false, buffering = false, userPaused = true))
         } else if (name == "play") {
             playbackWanted = true
+            snapshot.value = snapshot.value.copy(userPaused = false)
         }
         js("window.__aay&&window.__aay.cmd('$name')")
     }
@@ -790,6 +793,10 @@ object WebHost {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
             unexpectedPauseRecoveryUntil = 0L
+            // The player may be disconnected from the media process when the user
+            // pauses YouTube itself. Save the authoritative intent for the next SYNC.
+            if (snapshot.value.id.isNotBlank())
+                publish(snapshot.value.copy(playing = false, buffering = false, userPaused = true))
             AppLog.add("PLAY", "Explicit pause from YouTube player controls")
             if (!shown) scheduleFreeze()
         }
@@ -935,7 +942,7 @@ object WebHost {
                 val close = onQuit
                 if (close != null) close() else release()
             }
-            Msg.FREEZE -> if (!shown && !snapshot.value.playing) freeze()
+            Msg.FREEZE -> if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()
         }
     }
 
@@ -1031,6 +1038,7 @@ object WebHost {
                 artist = o.optString("artist"),
                 art = o.optString("art"),
                 playing = o.optBoolean("playing"),
+                userPaused = o.optBoolean("userPaused"),
                 buffering = o.optBoolean("buffering"),
                 ended = o.optBoolean("ended"),
                 live = o.optBoolean("live"),
@@ -1123,7 +1131,10 @@ object WebHost {
 
     private fun publish(s: Snap) {
         val previous = snapshot.value
-        if (s.playing) playbackWanted = true
+        if (s.userPaused && !s.playing) {
+            playbackWanted = false
+            userPausedAt = SystemClock.elapsedRealtime()
+        } else if (s.playing) playbackWanted = true
         if (s.ended || s.id.isBlank()) playbackWanted = false
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
@@ -1279,7 +1290,11 @@ object WebHost {
             rendererCrashCount = if (now - lastRendererCrashAt <= 15_000L) rendererCrashCount + 1 else 1
             lastRendererCrashAt = now
             val before = snapshot.value
-            val mayResume = rendererCrashCount <= 2 && before.playing && before.id.isNotBlank()
+            val mayResume = rendererCrashCount <= 2 && (before.playing || playbackWanted) &&
+                !before.userPaused && before.id.isNotBlank()
+            // Stop retaining a phantom recovery intent after the renderer crash
+            // circuit-breaker has deliberately stopped automatic restarts.
+            if (!mayResume) playbackWanted = false
             val reopen = if (before.id.isNotBlank()) {
                 val base = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
                 base + "watch?v=" + Uri.encode(before.id) +

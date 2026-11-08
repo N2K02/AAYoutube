@@ -46,6 +46,20 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("userPausedAt = SystemClock.elapsedRealtime()"))
     }
 
+    @Test fun intentionalPauseIsPreservedAcrossServiceAndWebProcessReconnection() {
+        val protocol = source("app/src/main/java/com/aayoutube/app/Protocol.kt")
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val service = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        val js = source("app/src/main/assets/aay.js")
+        assertTrue(protocol.contains("val userPaused: Boolean = false"))
+        assertTrue(protocol.contains("putBoolean(\"userPaused\", userPaused)"))
+        assertTrue(protocol.contains("userPaused = b.getBoolean(\"userPaused\")"))
+        assertTrue(js.contains("userPaused: !!(bgWatch && bgWatch.explicitPause && v.paused)"))
+        assertTrue(web.contains("userPaused = o.optBoolean(\"userPaused\")"))
+        assertTrue(web.contains("publish(snapshot.value.copy(playing = false, buffering = false, userPaused = true))"))
+        assertTrue(service.contains("if (fresh.userPaused) recovery.cancel()"))
+    }
+
     @Test fun recoveryIntentPreventsIdleFreezeButStopsOnPauseOrQuit() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("private fun keepRecovering(): Boolean = playbackWanted"))

@@ -713,6 +713,8 @@ test('trusted YouTube Pause is authoritative even with background protection ena
   p.video.pause();
   assert.equal(p.video.paused, true, 'trusted page Pause must bypass the pause interceptor');
   assert.equal(nativePauses.length, 1, 'the native media owner must know this pause was intentional');
+  p.flush();
+  assert.equal(p.stateReports.at(-1).userPaused, true, 'manual Pause must survive IPC reconnection');
   p.runIntervals();
   assert.equal(p.video.paused, true, 'the recovery watchdog must not undo manual Pause');
 });

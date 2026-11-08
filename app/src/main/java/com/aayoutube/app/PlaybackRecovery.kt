@@ -20,7 +20,8 @@ internal class PlaybackRecovery {
         val previous = intended ?: return false
         if (current.id.isBlank()) return false // The WebView might still be loading.
         intended = null
-        return current.id == previous.id && !current.playing && !current.buffering && !current.ended
+        return current.id == previous.id && !current.userPaused &&
+            !current.playing && !current.buffering && !current.ended
     }
 
     fun onMissingPlayer(): Snap? = intended.also { intended = null }

@@ -763,6 +763,8 @@
     N.state(JSON.stringify(lastSent = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
+      // Persist explicit user Pause across IPC disconnect/reconnect.
+      userPaused: !!(bgWatch && bgWatch.explicitPause && v.paused),
       ended: !!v.ended,
       buffering: !v.paused && !v.ended && v.readyState < 3,
       live: d === Infinity,
