@@ -1205,11 +1205,29 @@
     if (H.previoustrack) { try { H.previoustrack(); } catch (e) {} }
   }
 
+  // Prefer YouTube's registered MediaSession Play handler, as AABrowser does.
+  // It can update player state when directly calling video.play() is rejected
+  // or does not fully wake YouTube's own player UI.
+  function requestPlayerPlay(v) {
+    if (typeof H.play === 'function') {
+      try { H.play(); return; } catch (e) {
+        console.log('[aay] YouTube Play handler failed, trying HTML video');
+      }
+    }
+    if (v) {
+      try {
+        var p = v.play();
+        if (p && p.catch) p.catch(function (e) {
+          console.log('[aay] Play rejected: ' + (e && e.name || 'unknown'));
+        });
+      } catch (e) { console.log('[aay] Play failed: ' + e); }
+    }
+  }
   A.cmd = function (c, arg) {
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
+        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; requestPlayerPlay(v); break;
         case 'pause': userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;

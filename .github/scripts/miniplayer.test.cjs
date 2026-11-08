@@ -731,6 +731,28 @@ test('car playback recovers a dropped stream without reviving a user pause', () 
   assert.equal(p.video.paused, true, 'explicit Android Auto Pause always cancels recovery');
 });
 
+test('native Play prefers YouTube MediaSession and falls back to HTML video if its handler throws', () => {
+  const p = playerPage();
+  let received = 0;
+  p.navigator.mediaSession.setActionHandler('play', () => {
+    received++;
+    p.video.paused = false;
+  });
+  p.video.paused = true;
+  p.window.__aay.cmd('play');
+  assert.equal(received, 1, 'YouTube registered Play should run first');
+  assert.equal(p.video.paused, false);
+
+  p.navigator.mediaSession.setActionHandler('play', () => {
+    received++;
+    throw new Error('YouTube player not ready');
+  });
+  p.video.paused = true;
+  p.window.__aay.cmd('play');
+  assert.equal(received, 2);
+  assert.equal(p.video.paused, false, 'HTML video is the fallback after handler failure');
+});
+
 test('same-video document reload can recover the position through the native bridge', () => {
   const p = playerPage();
   p.flush();
