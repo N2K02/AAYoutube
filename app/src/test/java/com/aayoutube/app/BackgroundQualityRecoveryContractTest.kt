@@ -95,10 +95,19 @@ class BackgroundQualityRecoveryContractTest {
 
     @Test fun fullDocumentNavigationClearsStaleMediaBeforeScriptIsReplaced() {
         val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(host.contains("!PlaybackRoutePolicy.isPlaybackRoute(route) && previous.id.isNotBlank()"))
+        assertTrue(host.contains("mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)"))
+        assertTrue(host.contains("if (!mainFrameAllowsPlayback && previous.id.isNotBlank())"))
         assertTrue(host.contains("snapshot.value = Snap()"))
         assertTrue(host.contains("send(Msg.STATE, Snap().toBundle())"))
         assertTrue(host.contains("playbackWanted = false"))
+    }
+
+    @Test fun staleBridgeStateCannotReviveVideoAfterDocumentOrSpaNavigation() {
+        val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(host.contains("if (s.id.isNotBlank() && !mainFrameAllowsPlayback)"))
+        assertTrue(host.contains("if (!mainFrameAllowsPlayback && snapshot.value.id.isNotBlank())"))
+        assertTrue(host.contains("publish(Snap())"))
+        assertTrue(host.contains("generation != webGeneration) return@post"))
     }
 
     @Test fun unrequestedPauseRetainsForegroundWhileWatchdogRecovers() {

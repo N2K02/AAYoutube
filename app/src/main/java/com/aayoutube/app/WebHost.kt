@@ -87,6 +87,10 @@ object WebHost {
     val canGoBack = MutableStateFlow(false)
     /** The player page shows a video (watch or live page). */
     val onWatchPage = MutableStateFlow(false)
+    // The WebView instance survives full document loads. Old JS bridge
+    // callbacks can arrive after SPA/full navigation and must not revive the
+    // previous video's notification or its recovery watchdog.
+    private var mainFrameAllowsPlayback = true
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     internal val lyricsClock = MutableStateFlow(LyricsClock())
@@ -1091,7 +1095,14 @@ object WebHost {
                 }.orEmpty(),
             )
         }.getOrNull() ?: return
-        main.post { if (generation == webGeneration) publish(s) }
+        main.post {
+            if (generation != webGeneration) return@post
+            if (s.id.isNotBlank() && !mainFrameAllowsPlayback) {
+                AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
+                return@post
+            }
+            publish(s)
+        }
     }
 
     private var lastLogged = ""
@@ -1266,7 +1277,8 @@ object WebHost {
             // can send the last empty snapshot. Clear the native media identity
             // here too, not just on YouTube's same-document SPA transitions.
             val route = runCatching { Uri.parse(url).path }.getOrNull()
-            if (!PlaybackRoutePolicy.isPlaybackRoute(route) && previous.id.isNotBlank()) {
+            mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            if (!mainFrameAllowsPlayback && previous.id.isNotBlank()) {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 snapshot.value = Snap()
@@ -1316,8 +1328,16 @@ object WebHost {
             adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             canGoBack.value = view.canGoBack()
             val wasWatch = onWatchPage.value
-            onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
-                .let { it.startsWith("/watch") || it.startsWith("/live/") }
+            val route = runCatching { Uri.parse(url).path }.getOrNull()
+            mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            onWatchPage.value = mainFrameAllowsPlayback
+            if (!mainFrameAllowsPlayback && snapshot.value.id.isNotBlank()) {
+                // YouTube SPA transitions do not invoke onPageStarted. Clear the
+                // media identity even if the old page script fails to report.
+                playbackWanted = false
+                unexpectedPauseRecoveryUntil = 0L
+                publish(Snap())
+            }
             if (carShown && onWatchPage.value && !wasWatch) {
                 main.removeCallbacks(carWatchProbe)
                 main.postDelayed(carWatchProbe, 3_000L)
