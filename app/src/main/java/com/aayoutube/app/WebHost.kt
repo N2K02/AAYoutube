@@ -173,6 +173,10 @@ object WebHost {
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
+        // WebView.pauseTimers() is process-wide. An older idle/frozen player
+        // may have paused Chromium's shared timers before being disposed.
+        // A fresh player must always have live script/media timers.
+        w.resumeTimers()
         web = w
         installScript(w)
         var url = pendingUrl ?: savedUrl() ?: home()
@@ -901,7 +905,11 @@ object WebHost {
         scriptHandler = null
         (w?.parent as? ViewGroup)?.removeView(w)
         w?.stopLoading()
-        w?.pauseTimers()
+        // Do not leave Chromium's process-wide timers paused after disposing
+        // this WebView: Android Auto can request Play with no Activity present.
+        // destroy() releases page work; pauseTimers() here would also freeze a
+        // surviving BrowseHost and any subsequent newly created player.
+        w?.resumeTimers()
         w?.destroy()
         wrapper = null
         webDisplayId = null

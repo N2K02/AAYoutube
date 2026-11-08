@@ -48,6 +48,20 @@ class PlayerLifecycleContractTest {
         assertTrue(phone.contains("if (WebHost.requestLink === relinkPhone)"))
     }
 
+    @Test fun releaseDoesNotLeaveSharedChromiumTimersFrozen() {
+        val web = source("WebHost.kt")
+        val release = web.substringAfter("fun release(preserveCarOwners: Boolean = false) {")
+            .substringBefore("fun onLinkUnbound()")
+        assertTrue(release.contains("w?.resumeTimers()"))
+        assertFalse(release.contains("w?.pauseTimers()"))
+        val creation = web.substringAfter("private fun ensureWeb(").substringBefore("// ---------------------------------------------------------------- resume last page")
+        assertTrue(creation.contains("w.resumeTimers()"))
+        assertTrue(creation.indexOf("w.resumeTimers()") < creation.indexOf("w.loadUrl(url)"))
+        // Intentional background idle freeze is still supported.
+        assertTrue(web.contains("w.pauseTimers()"))
+        assertTrue(web.contains("w.resumeTimers()"))
+    }
+
     @Test fun quitClosesBothWebViewsAndPreventsReconnection() {
         val phone = source("MainActivity.kt")
         assertTrue(phone.contains("BrowseHost.release()"))

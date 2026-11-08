@@ -163,6 +163,12 @@ class BackgroundQualityRecoveryContractTest {
         assertFalse(manifest.contains("android:minWidth=\"1dp\""))
     }
 
+    @Test fun freshPlayerResumesChromiumTimersAfterStopOrRendererReplacement() {
+        val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(host.contains("w?.resumeTimers()\n        w?.destroy()"))
+        assertTrue(host.contains("w.resumeTimers()\n        web = w"))
+    }
+
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(media.contains("handler.removeCallbacks(demoteForeground)"))
