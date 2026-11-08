@@ -772,7 +772,8 @@ test('leaving watch clears stale media identity instead of infinitely recovering
   p.runIntervals();
   assert.equal(p.stateReports.at(-1).id, '86p7SP34qSc');
   p.location.pathname = '/';
-  p.runIntervals();
+  p.emitWindow('yt-navigate-finish', {});
+  p.flush();
   assert.equal(p.stateReports.at(-1).id, '');
   assert.equal(p.stateReports.at(-1).playing, false);
   const count = p.stateReports.length;
@@ -789,6 +790,7 @@ test('reopened paused video never automatically resumes after timers', () => {
   assert.equal(p.video.paused, true, 'YouTube autoplay suppressed until user Play');
   p.runIntervals();
   assert.equal(p.video.paused, true, 'recovery watchdog must respect saved Pause');
+  p.flush();
   assert.equal(p.stateReports.at(-1).userPaused, true);
   p.window.__aay.cmd('play');
   assert.equal(p.video.paused, false);
@@ -796,6 +798,7 @@ test('reopened paused video never automatically resumes after timers', () => {
 
 test('native Pause survives delayed playback with background protection armed', () => {
   const p = playerPage();
+  p.flush(); // bind video listeners before simulating YouTube's delayed Play
   p.window.__aay.cmd('pause');
   p.window.__aay.setBg(true);
   p.video.play();
@@ -810,6 +813,7 @@ test('native Pause survives delayed playback with background protection armed', 
 test('only a trusted player Play gesture releases Pause, not an unrelated click', () => {
   const p = playerPage({ paused: true });
   p.video.paused = true;
+  p.flush(); // bind native player events
   p.emit('click', { isTrusted: true, target: { closest: () => null } });
   p.video.play();
   p.video.trigger('play');
