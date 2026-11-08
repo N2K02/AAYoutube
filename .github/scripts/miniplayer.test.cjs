@@ -695,6 +695,32 @@ test('background watchdog resumes an unexpected pause, but not an explicit media
   assert.equal(p.video.paused, true, 'a media pause must not be overridden');
 });
 
+test('trusted YouTube Pause is authoritative even with background protection enabled', () => {
+  const p = playerPage();
+  const nativePauses = [];
+  p.window.AAYNative.userPause = () => nativePauses.push(true);
+  p.window.__aay.setBg(true);
+  p.runIntervals(); // remember that playback was requested
+  p.emit('pointerdown', { isTrusted: true, target: { closest: () => ({}) } });
+  p.video.pause();
+  assert.equal(p.video.paused, true, 'trusted page Pause must bypass the pause interceptor');
+  assert.equal(nativePauses.length, 1, 'the native media owner must know this pause was intentional');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'the recovery watchdog must not undo manual Pause');
+});
+
+test('car playback recovers a dropped stream without reviving a user pause', () => {
+  const p = playerPage({ car: true });
+  p.runIntervals(); // the car's playing video sets watchdog intent
+  p.video.pause();
+  assert.equal(p.video.paused, true, 'simulate an unexpected car-side playback loss');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'the car player should be retried automatically');
+  p.window.__aay.cmd('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'explicit Android Auto Pause always cancels recovery');
+});
+
 test('same-video document reload can recover the position through the native bridge', () => {
   const p = playerPage();
   p.flush();
