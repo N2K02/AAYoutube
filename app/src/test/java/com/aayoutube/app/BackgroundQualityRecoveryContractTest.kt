@@ -38,7 +38,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(js.contains("if (manual) noteManualPause()"))
         assertTrue(js.contains("if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause()"))
         assertTrue(js.contains("N.userPause()"))
-        assertTrue(js.contains("case 'pause': userPauseEligibleUntil = 0; bgWatch.explicitPause = true"))
+        assertTrue(js.contains("case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true"))
         assertTrue(web.contains("fun onJsUserPause(generation: Int)"))
         assertTrue(web.contains("WebHost.onJsUserPause(generation)"))
         assertTrue(web.contains("if (generation != webGeneration) return@post"))

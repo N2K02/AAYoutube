@@ -107,7 +107,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var inactiveLogged = false
     private var carQuitInProgress = false
     // Legacy CarActivity is not an Android Activity; WebHost IPC arrives
-    // on the :web main thread, so no Activity.runOnUiThread() is available.
+    // on the :web main thread; the SDK exposes no regular Activity dispatcher.
     private val carQuitCallback: () -> Unit = { shutdownCarOnlySession() }
     private val rebindWhenActive = Runnable {
         if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable
