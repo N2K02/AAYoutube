@@ -812,15 +812,19 @@ object WebHost {
     // ---------------------------------------------------------------- freeze / release
 
     // Nothing playing and no screen open: stop the page's timers and scripts after a short wait.
+    private fun keepRecovering(): Boolean = playbackWanted &&
+        (Features.current.backgroundPlay || carShown || inPip.value || shown)
+
     private val freezeSoon = Runnable {
-        if (!shown && !snapshot.value.playing && !playbackWanted) freeze()
+        if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()
     }
 
     private fun scheduleFreeze() {
         main.removeCallbacks(freezeSoon)
         // A previously playing stream may have dropped silently. Leave the
         // watchdog active until Play succeeds, the user pauses, or Stop/Quit.
-        if (playbackWanted) return
+        // Background play OFF still permits the normal idle freeze offscreen.
+        if (keepRecovering()) return
         // Do not pause the WebView's own timers while it is attempting to recover
         // a spontaneous background pause. A deliberate user pause remains fast-idle.
         val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
