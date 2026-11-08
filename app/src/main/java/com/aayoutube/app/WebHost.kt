@@ -521,8 +521,11 @@ object WebHost {
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
         if (name == "pause") {
+            playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
             unexpectedPauseRecoveryUntil = 0L
+        } else if (name == "play") {
+            playbackWanted = true
         }
         js("window.__aay&&window.__aay.cmd('$name')")
     }
@@ -778,6 +781,20 @@ object WebHost {
         }
     }
 
+    /** A deliberate pause from YouTube's native page controls is authoritative,
+     * including while in PiP/mini/car. Bridge calls arrive off the main thread. */
+    fun onJsUserPause(generation: Int) {
+        if (generation != webGeneration) return
+        main.post {
+            if (generation != webGeneration) return@post
+            playbackWanted = false
+            userPausedAt = SystemClock.elapsedRealtime()
+            unexpectedPauseRecoveryUntil = 0L
+            AppLog.add("PLAY", "Explicit pause from YouTube player controls")
+            if (!shown) scheduleFreeze()
+        }
+    }
+
     /** Called by the injected script, using YouTube's own LOGGED_IN flag. */
     fun reportAccountStatus(value: String, generation: Int = webGeneration) {
         if (generation != webGeneration) return
@@ -796,11 +813,14 @@ object WebHost {
 
     // Nothing playing and no screen open: stop the page's timers and scripts after a short wait.
     private val freezeSoon = Runnable {
-        if (!shown && !snapshot.value.playing) freeze()
+        if (!shown && !snapshot.value.playing && !playbackWanted) freeze()
     }
 
     private fun scheduleFreeze() {
         main.removeCallbacks(freezeSoon)
+        // A previously playing stream may have dropped silently. Leave the
+        // watchdog active until Play succeeds, the user pauses, or Stop/Quit.
+        if (playbackWanted) return
         // Do not pause the WebView's own timers while it is attempting to recover
         // a spontaneous background pause. A deliberate user pause remains fast-idle.
         val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
@@ -846,6 +866,7 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        if (!preserveCarOwners) playbackWanted = false
         if (!preserveCarOwners) {
             carOwners.clear()
             carShown = false
@@ -1028,6 +1049,9 @@ object WebHost {
     private var lastLogged = ""
     private var visibilityChangedAt = 0L
     private var userPausedAt = 0L
+    // Last confirmed user/page intent; do not freeze a dropped stream that
+    // should recover, even after the initial native retry window expires.
+    private var playbackWanted = false
     private var resumeTries = 0
     private var resumeWindowAt = 0L
     private var unexpectedPauseRecoveryUntil = 0L
@@ -1042,15 +1066,14 @@ object WebHost {
     // A user pause delivered via the media session is authoritative; do not fight it.
     // Bound retries to prevent repeated play requests for an unavailable stream.
     private fun resumeIfDropped(old: Snap, new: Snap) {
-        if (!Features.current.backgroundPlay) return
-        if (!old.playing || new.playing || new.ended || new.id != old.id || new.id.isBlank()) return
+        if (!old.playing || new.playing || new.buffering || new.ended ||
+            new.id != old.id || new.id.isBlank()) return
         val now = SystemClock.elapsedRealtime()
-        val background = !shown && !inPip.value
-        // The mini player is still foreground, but WebView focus/viewport
-        // handoff can cause the same unrequested media pause as app backgrounding.
+        val background = !shown && !inPip.value && !carShown
+        // Background-play OFF is respected when fully hidden. Unexpected pauses
+        // in visible phone/car, mini-player or PiP still deserve recovery.
+        if (background && !Features.current.backgroundPlay) return
         val mini = mode.value == PlayerMode.MINI && !inPip.value
-        val visibilityTransition = now - visibilityChangedAt < 4_000L
-        if (!background && !mini && !visibilityTransition) return
         if (now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
         if (now - resumeWindowAt > 60_000L) {
@@ -1096,6 +1119,8 @@ object WebHost {
 
     private fun publish(s: Snap) {
         val previous = snapshot.value
+        if (s.playing) playbackWanted = true
+        if (s.ended || s.id.isBlank()) playbackWanted = false
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
@@ -1322,6 +1347,11 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json, generation)
+    }
+
+    @JavascriptInterface
+    fun userPause() {
+        WebHost.onJsUserPause(generation)
     }
 
     @JavascriptInterface
