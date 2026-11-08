@@ -20,7 +20,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("if (background && !Features.current.backgroundPlay) return"))
         assertTrue(web.contains("now - userPausedAt <= 5_000L"))
         assertTrue(web.contains("resumeTries >= 2"))
-        assertTrue(web.contains("cmd(\\"play\\")"))
+        assertTrue(web.contains("cmd(\"play\")"))
         assertTrue(js.contains("setInterval(backgroundWatchdog, 5000)"))
         assertTrue(js.contains("Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)))"))
         assertTrue(js.contains("if (bgWatch.explicitPause || !bgWatch.wanted) return"))
@@ -58,7 +58,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("if (s.playing) unexpectedPauseRecoveryUntil = 0L"))
         assertTrue(web.contains("Msg.STOP -> {"))
         assertTrue(web.contains("Msg.QUIT -> {"))
-        assertTrue(web.contains("cmd(\\"pause\\")"))
+        assertTrue(web.contains("cmd(\"pause\")"))
     }
 
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
