@@ -106,7 +106,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private val carToken = "legacy-projection@" + Integer.toHexString(System.identityHashCode(this))
     private var inactiveLogged = false
     private var carQuitInProgress = false
-    private val carQuitCallback: () -> Unit = { runOnUiThread { shutdownCarOnlySession() } }
+    // Legacy CarActivity is not an Android Activity; WebHost IPC arrives
+    // on the :web main thread, so no Activity.runOnUiThread() is available.
+    private val carQuitCallback: () -> Unit = { shutdownCarOnlySession() }
     private val rebindWhenActive = Runnable {
         if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable
         // A fallback instance can have been started while a newer car window
@@ -602,8 +604,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // As on the phone, Quit must still succeed if the media process
         // cannot connect, e.g. car-only launch without an existing session.
         handler.postDelayed({
-            if (WebHost.isActiveCarHost(carToken) && !carQuitInProgress &&
-                !isFinishing && !isDestroyed) shutdownCarOnlySession()
+            if (carStarted && WebHost.isActiveCarHost(carToken) &&
+                !carQuitInProgress) shutdownCarOnlySession()
         }, 1_800L)
     }
 
@@ -617,7 +619,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.cmd("pause")
         BrowseHost.release()
         WebHost.release()
-        finish()
+        // CarActivity has no finish(). The :web process owns the projection
+        // window, so its explicit shutdown ends the car-only session.
         // onStop cancels the car handler, so use a separate shutdown handler.
         Handler(Looper.getMainLooper()).postDelayed({
             android.os.Process.killProcess(android.os.Process.myPid())
