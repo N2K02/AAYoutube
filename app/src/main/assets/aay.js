@@ -114,14 +114,19 @@
   function manualPauseGesture(e) {
     if (BROWSE || e.isTrusted === false) return;
     var v = getVideo();
-    if (!v || v.paused) return;
+    if (!v) return;
     var t = e.target;
     if (t && t.closest && t.closest(
       'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
       'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
       'button[aria-label*="pause" i], button[title*="pause" i],' +
       '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]')) {
-      userPauseEligibleUntil = Date.now() + 2000;
+      if (v.paused) {
+        PAUSED = false;
+        bgWatch.explicitPause = false;
+        bgWatch.wanted = true;
+        userPauseEligibleUntil = 0;
+      } else userPauseEligibleUntil = Date.now() + 2000;
     }
   }
   document.addEventListener('pointerdown', manualPauseGesture, true);
@@ -129,13 +134,19 @@
   document.addEventListener('keydown', function (e) {
     if (BROWSE || e.isTrusted === false || e.repeat) return;
     var t = e.target, v = getVideo();
-    if (!v || v.paused || (t && t.closest && t.closest('input, textarea, [contenteditable]'))) return;
+    if (!v || (t && t.closest && t.closest('input, textarea, [contenteditable]'))) return;
     if (e.key === 'k' || e.key === 'K' || e.key === ' ' ||
         e.key === 'MediaPause' || e.key === 'MediaPlayPause') {
-      userPauseEligibleUntil = Date.now() + 2000;
+      if (v.paused) {
+        PAUSED = false;
+        bgWatch.explicitPause = false;
+        bgWatch.wanted = true;
+        userPauseEligibleUntil = 0;
+      } else userPauseEligibleUntil = Date.now() + 2000;
     }
   }, true);
   function noteManualPause() {
+    PAUSED = true;
     bgWatch.explicitPause = true;
     bgWatch.wanted = false;
     bgWatch.attempts = 0;
@@ -742,8 +753,14 @@
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
     // nothing is playing (no picture in picture, no media controls for a preview).
     if (!/^\/(watch|live\/)/.test(location.pathname)) {
-      if (lastSent && lastSent.playing) {
-        lastSent.playing = false; lastSent.buffering = false;
+      bgWatch.id = '';
+      bgWatch.wanted = false;
+      bgWatch.explicitPause = false;
+      // Do not leave a stale video ID in the media service: it would keep
+      // trying to recover a ghost stream after navigating away from Watch.
+      if (lastSent && lastSent.id) {
+        lastSent = { id: '', playing: false, userPaused: false, buffering: false,
+          ended: false, queue: [], pos: 0, dur: 0 };
         N.state(JSON.stringify(lastSent));
       }
       return;
@@ -908,13 +925,14 @@
   var AUTO = /[?&]aay=1/.test(location.search);       // start playing as soon as ready
   var SEARCH_PLAY = /[?&]aay=play/.test(location.search); // open the first result of a search
 
-  // Reopened on a video: keep it paused until you touch the page (YouTube would start it itself).
+  // An explicit Pause never expires after a timer or an unrelated page tap.
   var PAUSED = /[?&]aay=paused/.test(location.search);
-  if (PAUSED) {
-    var releasePaused = function () { PAUSED = false; };
-    document.addEventListener('touchstart', releasePaused, { capture: true, passive: true, once: true });
-    document.addEventListener('click', releasePaused, { capture: true, once: true });
-    setTimeout(releasePaused, 15000);
+  function enforceExplicitPause(v) {
+    if (!v) return;
+    bgWatch.explicitPause = true;
+    bgWatch.wanted = false;
+    allowPause = true; // bypass background pause interception
+    try { v.pause(); } finally { allowPause = false; }
   }
 
   function tryPlay(v) {
@@ -1035,6 +1053,12 @@
       bgWatch.id = id; bgWatch.wanted = !v.paused;
       bgWatch.explicitPause = false; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
     }
+    if (PAUSED) {
+      bgWatch.wanted = false;
+      bgWatch.explicitPause = true;
+      if (!v.paused) enforceExplicitPause(v);
+      return;
+    }
     if (!v.paused) {
       bgWatch.wanted = true;
       bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
@@ -1073,8 +1097,11 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          bgWatch.wanted = true; bgWatch.explicitPause = false;
-          bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+          if (PAUSED && !AUTO) enforceExplicitPause(v);
+          else {
+            bgWatch.wanted = true; bgWatch.explicitPause = false;
+            bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+          }
         }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
@@ -1084,9 +1111,8 @@
         schedReport(ev === 'seeked' ? 250 : 120);
       }, true);
     });
-    v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
     v.addEventListener('loadedmetadata', function () {
-      if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} }
+      if (PAUSED && !AUTO) enforceExplicitPause(v);
       onLoaded(v);
       restoreAfterSourceChange(v);
       later(function () { restoreAfterSourceChange(v); }, 300);
@@ -1228,11 +1254,11 @@
     try {
       switch (c) {
         case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; requestPlayerPlay(v); break;
-        case 'pause': userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
+        case 'pause': PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
-        case 'next': next(); break;
-        case 'prev': prev(); break;
+        case 'next': PAUSED = false; bgWatch.explicitPause = false; next(); break;
+        case 'prev': PAUSED = false; bgWatch.explicitPause = false; prev(); break;
       }
     } catch (e) {}
     schedReport(200);
