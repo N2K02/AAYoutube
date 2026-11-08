@@ -1172,18 +1172,17 @@ object WebHost {
         return ALLOWED.any { h == it || h.endsWith(".$it") }
     }
 
-    internal fun isAdRequest(host: String, path: String): Boolean {
-        if (BLOCKED_HOSTS.any { host == it || host.endsWith(".$it") }) return true
-        if (host.endsWith("youtube.com")) {
-            return path.startsWith("/pagead/") || path.startsWith("/api/stats/ads") ||
-                path.startsWith("/ptracking") || path.startsWith("/pcs/activeview") ||
-                path.contains("/get_midroll_")
-        }
-        return false
-    }
+    // AABrowser parity: YouTube/Googlevideo resources and ALL resources on a
+    // YouTube page are script-managed. Network-blocking advertising endpoints
+    // breaks some YouTube player streams before the page can skip the ad.
+    internal fun isAdRequest(host: String, pageHost: String?): Boolean =
+        YouTubeAdRequestPolicy.shouldBlock(host, pageHost)
 
     internal val emptyResponse: WebResourceResponse
         get() = WebResourceResponse("text/plain", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+
+    // Updated on WebView's UI thread; read by shouldInterceptRequest's worker.
+    @Volatile private var adPageHost: String? = "youtube.com"
 
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -1218,13 +1217,14 @@ object WebHost {
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             if (!Features.current.blockAds) return null
             val uri = request.url
-            val ad = isAdRequest(uri.host.orEmpty().lowercase(), uri.path.orEmpty())
+            val ad = isAdRequest(uri.host.orEmpty().lowercase(), adPageHost)
             if (ad) AppLog.add("ADS", "Blocked request ${uri.host}${uri.path}")
             return if (ad) emptyResponse else null
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             if (view !== web) return
+            adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             val incomingId = runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull()
             val outgoingId = runCatching { Uri.parse(lastUrl).getQueryParameter("v") }.getOrNull()
             val previous = snapshot.value
@@ -1268,6 +1268,7 @@ object WebHost {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             if (view !== web) return
+            adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             canGoBack.value = view.canGoBack()
             val wasWatch = onWatchPage.value
             onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
@@ -1362,9 +1363,6 @@ object WebHost {
         "googleusercontent.com", "googleapis.com", "recaptcha.net", "ytimg.com", "googlevideo.com", "ggpht.com", "gvt1.com",
     )
 
-    private val BLOCKED_HOSTS = listOf(
-        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
-    )
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
