@@ -157,7 +157,13 @@
         }
         return;
       }
-      if (manual) noteManualPause();
+      // On a fully visible phone player, an untagged page pause is treated as
+      // intentional: the page may use YouTube's own control handlers without
+      // forwarding a trusted DOM event. During car/mini/PiP/background handoffs
+      // it remains eligible for interruption recovery.
+      var foregroundPlayerPause = !allowPause && !holding() &&
+        !A.isCar && !A.inPip && !A.isMini && !A.isBg;
+      if (manual || foregroundPlayerPause) noteManualPause();
       if (allowPause) console.log('[aay] user pause accepted');
       return origPause.apply(this, arguments);
     };
