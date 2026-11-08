@@ -126,8 +126,9 @@ function playerPage(options = {}) {
   window.top = window;
   window.self = window;
   const location = {
-    hostname: 'm.youtube.com', pathname: '/watch', search: '?v=86p7SP34qSc',
-    href: 'https://m.youtube.com/watch?v=86p7SP34qSc',
+    hostname: 'm.youtube.com', pathname: '/watch',
+    search: '?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : ''),
+    href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : ''),
   };
   const context = {
     window, document, location,
@@ -763,4 +764,58 @@ test('same-video document reload can recover the position through the native bri
   p.video.currentTime = 0;
   p.window.__aay.restoreAt('different-video-id', 220);
   assert.equal(p.video.currentTime, 0, 'never restore a different video ID');
+});
+
+test('leaving watch clears stale media identity instead of infinitely recovering a ghost stream', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  assert.equal(p.stateReports.at(-1).id, '86p7SP34qSc');
+  p.location.pathname = '/';
+  p.runIntervals();
+  assert.equal(p.stateReports.at(-1).id, '');
+  assert.equal(p.stateReports.at(-1).playing, false);
+  const count = p.stateReports.length;
+  p.runIntervals();
+  assert.equal(p.stateReports.length, count, 'clear state sent exactly once');
+});
+
+test('reopened paused video never automatically resumes after timers', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'YouTube autoplay suppressed until user Play');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'recovery watchdog must respect saved Pause');
+  assert.equal(p.stateReports.at(-1).userPaused, true);
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, false);
+});
+
+test('native Pause survives delayed playback with background protection armed', () => {
+  const p = playerPage();
+  p.window.__aay.cmd('pause');
+  p.window.__aay.setBg(true);
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'later YouTube play must not undo Pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'background watchdog must not undo Pause');
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, false, 'native Play releases Pause');
+});
+
+test('only a trusted player Play gesture releases Pause, not an unrelated click', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.emit('click', { isTrusted: true, target: { closest: () => null } });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'unrelated click is not Play');
+  p.emit('click', { isTrusted: true, target: { closest: () => ({}) } });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'trusted player gesture can Play');
 });
