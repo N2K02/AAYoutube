@@ -146,6 +146,7 @@
     }
   }, true);
   function noteManualPause() {
+    AUTO = false; // cancel autoplay still pending during YouTube page load
     PAUSED = true;
     bgWatch.explicitPause = true;
     bgWatch.wanted = false;
@@ -1050,7 +1051,7 @@
     // In the phone, PiP, mini-player and car, an unexpected pause is recoverable.
     if ((A.isBg || A.hold) && !A.isCar && CFG.backgroundPlay === false) return;
     if (bgWatch.id !== id) {
-      bgWatch.id = id; bgWatch.wanted = !v.paused;
+      bgWatch.id = id; bgWatch.wanted = AUTO || (!v.paused && !PAUSED);
       bgWatch.explicitPause = false; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
     }
     if (PAUSED) {
@@ -1253,8 +1254,8 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; requestPlayerPlay(v); break;
-        case 'pause': PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
+        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
         case 'next': PAUSED = false; bgWatch.explicitPause = false; next(); break;
