@@ -157,13 +157,10 @@
         }
         return;
       }
-      // On a fully visible phone player, an untagged page pause is treated as
-      // intentional: the page may use YouTube's own control handlers without
-      // forwarding a trusted DOM event. During car/mini/PiP/background handoffs
-      // it remains eligible for interruption recovery.
-      var foregroundPlayerPause = !allowPause && !holding() &&
-        !A.isCar && !A.inPip && !A.isMini && !A.isBg;
-      if (manual || foregroundPlayerPause) noteManualPause();
+      // Intent is established by a trusted player gesture or an explicit
+      // native command, not by the pause() call alone: YouTube and Chromium
+      // can issue that same call after an involuntary interruption.
+      if (manual) noteManualPause();
       if (allowPause) console.log('[aay] user pause accepted');
       return origPause.apply(this, arguments);
     };
