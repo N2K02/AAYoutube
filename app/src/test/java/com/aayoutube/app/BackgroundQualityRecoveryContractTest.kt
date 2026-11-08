@@ -10,20 +10,55 @@ class BackgroundQualityRecoveryContractTest {
         listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
             ?: error("Missing $path")
 
-    @Test fun unexpectedBackgroundPauseRetriesAreBoundedAndRespectExplicitPause() {
+    @Test fun automaticRecoveryRunsAcrossPhoneCarAndPipWithoutCancellingManualPause() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("val background = !shown && !inPip.value"))
+        val js = source("app/src/main/assets/aay.js")
+
+        // Native recovery observes real transitions; the page watchdog continues
+        // at a capped rate even after native's short retry budget has expired.
+        assertTrue(web.contains("val background = !shown && !inPip.value && !carShown"))
+        assertTrue(web.contains("if (background && !Features.current.backgroundPlay) return"))
         assertTrue(web.contains("now - userPausedAt <= 5_000L"))
         assertTrue(web.contains("resumeTries >= 2"))
-        assertTrue(web.contains("now - resumeWindowAt > 60_000L"))
-        assertTrue(web.contains("cmd(\"play\")"))
-        assertTrue(web.contains("unexpectedPauseRecoveryUntil = now + 120_000L"))
+        assertTrue(web.contains("cmd(\\"play\\")"))
+        assertTrue(js.contains("setInterval(backgroundWatchdog, 5000)"))
+        assertTrue(js.contains("Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)))"))
+        assertTrue(js.contains("if (bgWatch.explicitPause || !bgWatch.wanted) return"))
+        assertFalse(js.contains("if (bgWatch.attempts >= 3) return"))
+        assertFalse(js.contains("if ((!A.isBg && !A.hold && !A.isMini)"))
+    }
+
+    @Test fun youtubePlayerGestureAndMediaCommandBothOverridePauseProtection() {
+        val js = source("app/src/main/assets/aay.js")
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(js.contains("function manualPauseGesture(e)"))
+        assertTrue(js.contains("if (BROWSE || e.isTrusted === false) return"))
+        assertTrue(js.contains("var manual = !allowPause && Date.now() <= userPauseEligibleUntil"))
+        assertTrue(js.contains("if (!allowPause && !manual && holding() && !this.ended)"))
+        assertTrue(js.contains("if (manual) noteManualPause()"))
+        assertTrue(js.contains("if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause()"))
+        assertTrue(js.contains("N.userPause()"))
+        assertTrue(js.contains("case 'pause': userPauseEligibleUntil = 0; bgWatch.explicitPause = true"))
+        assertTrue(web.contains("fun onJsUserPause(generation: Int)"))
+        assertTrue(web.contains("WebHost.onJsUserPause(generation)"))
+        assertTrue(web.contains("if (generation != webGeneration) return@post"))
+        assertTrue(web.contains("playbackWanted = false"))
+        assertTrue(web.contains("userPausedAt = SystemClock.elapsedRealtime()"))
+    }
+
+    @Test fun recoveryIntentPreventsIdleFreezeButStopsOnPauseOrQuit() {
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("private fun keepRecovering(): Boolean = playbackWanted"))
+        assertTrue(web.contains("Features.current.backgroundPlay || carShown || inPip.value || shown"))
+        assertTrue(web.contains("if (keepRecovering()) return"))
+        assertTrue(web.contains("if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()"))
+        assertTrue(web.contains("if (s.ended || s.id.isBlank()) playbackWanted = false"))
+        assertTrue(web.contains("if (!preserveCarOwners) playbackWanted = false"))
         assertTrue(web.contains("main.postDelayed(freezeSoon, maxOf(45_000L, recoveryMs))"))
         assertTrue(web.contains("if (s.playing) unexpectedPauseRecoveryUntil = 0L"))
-        val js = source("app/src/main/assets/aay.js")
-        assertTrue(js.contains("setInterval(backgroundWatchdog, 5000)"))
-        assertTrue(js.contains("bgWatch.explicitPause = true"))
-        assertTrue(js.contains("bgWatch.attempts >= 3"))
+        assertTrue(web.contains("Msg.STOP -> {"))
+        assertTrue(web.contains("Msg.QUIT -> {"))
+        assertTrue(web.contains("cmd(\\"pause\\")"))
     }
 
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
