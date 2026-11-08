@@ -132,7 +132,10 @@ class CompatPlaybackServiceContractTest {
         assertTrue(protocol.contains("const val REGISTER_ACK = 103"))
         assertTrue(web.contains("send(Msg.REGISTER_ACK"))
         assertTrue(web.contains("d.getInt(\"epoch\", -1)"))
-        assertTrue(web.contains("if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)"))
+        // Explicit transport acknowledgements must be tied to the current
+        // Messenger registration epoch, not accepted from an old WebView.
+        assertTrue(web.contains("what == Msg.RENDERER_GONE || what == Msg.TRANSPORT_ACK"))
+        assertTrue(protocol.contains("const val TRANSPORT_ACK = 106"))
         assertTrue(web.contains("data.putInt(\"epoch\", linkEpoch)"))
         assertTrue(web.contains("linkEpoch = -1"))
         assertTrue(source.contains("message.data.getInt(\"epoch\", -1) == registrationEpoch"))
