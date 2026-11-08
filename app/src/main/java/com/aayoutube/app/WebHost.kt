@@ -105,6 +105,15 @@ object WebHost {
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
 
+    /** Hide previous lyrics at the start of navigation, not after the old
+     * document eventually reports its new media session. Do not change the
+     * playback identity here: YouTube may still be transitioning. */
+    private fun noteSelectedLyricsRoute(uri: Uri?) {
+        val id = uri?.getQueryParameter("v")
+            ?.takeIf { uri.path == "/watch" && it.isNotBlank() }.orEmpty()
+        selectedWatchVideoId.value = id
+    }
+
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
 
@@ -1051,6 +1060,7 @@ object WebHost {
     }
 
     private fun load(url: String) {
+        noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())
         val w = web
         if (w == null) {
             pendingUrl = url
@@ -1284,6 +1294,7 @@ object WebHost {
                 }
                 return true
             }
+            if (request.isForMainFrame) noteSelectedLyricsRoute(uri)
             if (Features.current.hideShorts) {
                 val m = Regex("^/shorts/([\\w-]{6,})").find(uri.path.orEmpty())
                 if (m != null) {

@@ -46,6 +46,8 @@ class LyricsVideoIdentityContractTest {
         assertTrue(screens.contains("foundLyrics.foundFor(lyricsRequest.videoId)"))
         assertTrue(screens.contains("key(lyricsRequest) { LyricsOverlay"))
         assertTrue(host.contains("selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()"))
+        assertTrue(host.contains("if (request.isForMainFrame) noteSelectedLyricsRoute(uri)"))
+        assertTrue(host.contains("noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())"))
         assertTrue(host.contains("selectedWatchVideoId.value = \"\""))
         assertFalse(screens.contains("foundLyrics = LyricsContent()"))
     }
