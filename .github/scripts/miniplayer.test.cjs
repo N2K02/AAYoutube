@@ -583,9 +583,9 @@ test('lyrics sync reports the actual video position during playback and seeking'
   p.video.readyState = 2;
   p.runIntervals();
   assert.equal(p.lyricReports.at(-1)[3], true, 'buffering reaches the lyrics clock');
-  p.video.pause();
+  p.window.__aay.cmd('pause'); // intentional user Pause, not a spontaneous WebView drop
   p.runIntervals();
-  assert.equal(p.lyricReports.at(-1)[2], false, 'paused state reaches the lyrics clock');
+  assert.equal(p.lyricReports.at(-1)[2], false, 'manual pause reaches the lyrics clock');
 });
 
 test('lyrics sync stops reporting when hidden and never runs in the browse page', () => {
@@ -693,6 +693,14 @@ test('background watchdog resumes an unexpected pause, but not an explicit media
   assert.equal(p.video.paused, true);
   p.runIntervals();
   assert.equal(p.video.paused, true, 'a media pause must not be overridden');
+});
+
+test('visible phone recovers an unrequested player pause without a user gesture', () => {
+  const p = playerPage();
+  p.runIntervals(); // remember actual playing intent
+  p.video.pause();  // YouTube or Chromium initiated; no user event or media command
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'unrequested page pause should recover in foreground too');
 });
 
 test('trusted YouTube Pause is authoritative even with background protection enabled', () => {
