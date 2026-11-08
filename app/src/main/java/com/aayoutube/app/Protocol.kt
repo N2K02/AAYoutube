@@ -34,6 +34,7 @@ object Msg {
     const val REGISTER_ACK = 103  // web process confirms the session message channel is ready
     const val PLAYER_MISSING = 104  // the shared WebView is absent
     const val RENDERER_GONE = 105  // previous playback intent before renderer replacement
+    const val TRANSPORT_ACK = 106  // acknowledges the exact PAUSE/STOP command applied by WebHost
 }
 
 /** Custom commands on the media session (app -> service, and notification buttons). */
@@ -53,6 +54,9 @@ data class Snap(
     val artist: String = "",
     val art: String = "",
     val playing: Boolean = false,
+    /** True only for a deliberate user Pause, never for a spontaneous playback loss. */
+    val userPaused: Boolean = false,
+    val recovering: Boolean = false,
     val buffering: Boolean = false,
     val ended: Boolean = false,
     val live: Boolean = false,
@@ -71,6 +75,8 @@ data class Snap(
         putString("artist", artist)
         putString("art", art)
         putBoolean("playing", playing)
+        putBoolean("userPaused", userPaused)
+        putBoolean("recovering", recovering)
         putBoolean("buffering", buffering)
         putBoolean("ended", ended)
         putBoolean("live", live)
@@ -99,6 +105,8 @@ data class Snap(
                 artist = b.getString("artist").orEmpty(),
                 art = b.getString("art").orEmpty(),
                 playing = playing,
+                userPaused = b.getBoolean("userPaused"),
+                recovering = b.getBoolean("recovering"),
                 buffering = b.getBoolean("buffering"),
                 ended = b.getBoolean("ended"),
                 live = b.getBoolean("live"),

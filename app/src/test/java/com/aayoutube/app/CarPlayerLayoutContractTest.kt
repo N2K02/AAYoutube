@@ -37,7 +37,11 @@ class CarPlayerLayoutContractTest {
         assertTrue(js.contains("pointer-events:none!important"))
         assertTrue(js.contains("pointer-events:auto!important"))
         assertTrue(web.contains("val mini = mode.value == PlayerMode.MINI"))
-        assertTrue(js.contains("!A.isBg && !A.hold && !A.isMini"))
+        // The watchdog now covers visible car/mini/PiP as well as background;
+        // recovery must stop only for an intentional user pause.
+        assertTrue(js.contains("if (bgWatch.explicitPause || !bgWatch.wanted) return"))
+        assertTrue(js.contains("var manual = !allowPause && Date.now() <= userPauseEligibleUntil"))
+        assertTrue(js.contains("if (!allowPause && !manual && holding() && !this.ended)"))
     }
 
     @Test fun carReattachmentPreservesMiniAndForegroundVideoQuality() {

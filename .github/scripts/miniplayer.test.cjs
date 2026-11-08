@@ -67,7 +67,8 @@ function playerPage(options = {}) {
     }
     querySelector(selector) {
       if (selector.includes('ProgressBarDragContainer')) return seekBar;
-      if (selector === 'video.html5-main-video' || selector === 'video') return video;
+      if (selector === 'video.html5-main-video' || selector === 'video')
+        return options.noVideo ? null : video;
       return dom ? dom.querySelectorAll(selector)[0] || null : null;
     }
     querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
@@ -126,8 +127,9 @@ function playerPage(options = {}) {
   window.top = window;
   window.self = window;
   const location = {
-    hostname: 'm.youtube.com', pathname: '/watch', search: '?v=86p7SP34qSc',
-    href: 'https://m.youtube.com/watch?v=86p7SP34qSc',
+    hostname: 'm.youtube.com', pathname: '/watch',
+    search: '?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
+    href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
   };
   const context = {
     window, document, location,
@@ -583,9 +585,9 @@ test('lyrics sync reports the actual video position during playback and seeking'
   p.video.readyState = 2;
   p.runIntervals();
   assert.equal(p.lyricReports.at(-1)[3], true, 'buffering reaches the lyrics clock');
-  p.video.pause();
+  p.window.__aay.cmd('pause'); // intentional user Pause, not a spontaneous WebView drop
   p.runIntervals();
-  assert.equal(p.lyricReports.at(-1)[2], false, 'paused state reaches the lyrics clock');
+  assert.equal(p.lyricReports.at(-1)[2], false, 'manual pause reaches the lyrics clock');
 });
 
 test('lyrics sync stops reporting when hidden and never runs in the browse page', () => {
@@ -695,6 +697,64 @@ test('background watchdog resumes an unexpected pause, but not an explicit media
   assert.equal(p.video.paused, true, 'a media pause must not be overridden');
 });
 
+test('visible phone recovers an unrequested player pause without a user gesture', () => {
+  const p = playerPage();
+  p.runIntervals(); // remember actual playing intent
+  p.video.pause();  // YouTube or Chromium initiated; no user event or media command
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'unrequested page pause should recover in foreground too');
+});
+
+test('trusted YouTube Pause is authoritative even with background protection enabled', () => {
+  const p = playerPage();
+  const nativePauses = [];
+  p.window.AAYNative.userPause = () => nativePauses.push(true);
+  p.window.__aay.setBg(true);
+  p.runIntervals(); // remember that playback was requested
+  p.emit('pointerdown', { isTrusted: true, target: { closest: () => ({}) } });
+  p.video.pause();
+  assert.equal(p.video.paused, true, 'trusted page Pause must bypass the pause interceptor');
+  assert.equal(nativePauses.length, 1, 'the native media owner must know this pause was intentional');
+  p.flush();
+  assert.equal(p.stateReports.at(-1).userPaused, true, 'manual Pause must survive IPC reconnection');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'the recovery watchdog must not undo manual Pause');
+});
+
+test('car playback recovers a dropped stream without reviving a user pause', () => {
+  const p = playerPage({ car: true });
+  p.runIntervals(); // the car's playing video sets watchdog intent
+  p.video.pause();
+  assert.equal(p.video.paused, true, 'simulate an unexpected car-side playback loss');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'the car player should be retried automatically');
+  p.window.__aay.cmd('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'explicit Android Auto Pause always cancels recovery');
+});
+
+test('native Play prefers YouTube MediaSession and falls back to HTML video if its handler throws', () => {
+  const p = playerPage();
+  let received = 0;
+  p.navigator.mediaSession.setActionHandler('play', () => {
+    received++;
+    p.video.paused = false;
+  });
+  p.video.paused = true;
+  p.window.__aay.cmd('play');
+  assert.equal(received, 1, 'YouTube registered Play should run first');
+  assert.equal(p.video.paused, false);
+
+  p.navigator.mediaSession.setActionHandler('play', () => {
+    received++;
+    throw new Error('YouTube player not ready');
+  });
+  p.video.paused = true;
+  p.window.__aay.cmd('play');
+  assert.equal(received, 2);
+  assert.equal(p.video.paused, false, 'HTML video is the fallback after handler failure');
+});
+
 test('same-video document reload can recover the position through the native bridge', () => {
   const p = playerPage();
   p.flush();
@@ -705,4 +765,91 @@ test('same-video document reload can recover the position through the native bri
   p.video.currentTime = 0;
   p.window.__aay.restoreAt('different-video-id', 220);
   assert.equal(p.video.currentTime, 0, 'never restore a different video ID');
+});
+
+test('leaving watch clears stale media identity instead of infinitely recovering a ghost stream', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  assert.equal(p.stateReports.at(-1).id, '86p7SP34qSc');
+  p.location.pathname = '/';
+  p.emitWindow('yt-navigate-finish', {});
+  p.flush();
+  assert.equal(p.stateReports.at(-1).id, '');
+  assert.equal(p.stateReports.at(-1).playing, false);
+  p.video.paused = true;
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdog must not restart a stale video on YouTube Home');
+  const count = p.stateReports.length;
+  p.runIntervals();
+  assert.equal(p.stateReports.length, count, 'clear state sent exactly once');
+});
+
+test('reopened paused video never automatically resumes after timers', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'YouTube autoplay suppressed until user Play');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'recovery watchdog must respect saved Pause');
+  p.flush();
+  assert.equal(p.stateReports.at(-1).userPaused, true);
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, false);
+});
+
+test('native Pause survives delayed playback with background protection armed', () => {
+  const p = playerPage();
+  p.flush(); // bind video listeners before simulating YouTube's delayed Play
+  p.window.__aay.cmd('pause');
+  p.window.__aay.setBg(true);
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'later YouTube play must not undo Pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'background watchdog must not undo Pause');
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, false, 'native Play releases Pause');
+});
+
+test('only a trusted player Play gesture releases Pause, not an unrelated click', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush(); // bind native player events
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', closest: () => null } });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'unrelated click is not Play');
+  const playButton = { tagName: 'BUTTON', closest(selector) {
+    return selector.includes('video, .ytp-play-button') ? { tagName: 'VIDEO' } : null;
+  } };
+  p.emit('click', { isTrusted: true, target: playButton });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'trusted player gesture can Play');
+});
+
+test('manual Pause before autoplay video appears cancels the deferred request', () => {
+  const opts = { noVideo: true, autoplay: true };
+  const p = playerPage(opts);
+  p.window.__aay.cmd('pause'); // user wins even before the video element loads
+  opts.noVideo = false;
+  p.video.paused = true;
+  p.flush();
+  p.video.trigger('loadedmetadata');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'pending page autoplay must never defeat explicit Pause');
+});
+
+test('native Play before video exists starts it after the player becomes available', () => {
+  const opts = { noVideo: true };
+  const p = playerPage(opts);
+  p.window.__aay.cmd('play'); // no HTML video to control yet
+  opts.noVideo = false;
+  p.video.paused = true;
+  p.flush();
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
 });

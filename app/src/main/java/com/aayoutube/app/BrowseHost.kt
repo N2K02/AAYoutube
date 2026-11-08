@@ -29,6 +29,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * time the mini player opens and paused whenever the app screen is hidden.
  */
 object BrowseHost {
+    // Network requests are intercepted off-thread: do not call WebView.getUrl()
+    // inside shouldInterceptRequest.
+    @Volatile private var adPageHost: String? = "youtube.com"
     private lateinit var app: Application
     private var web: WebView? = null
     private var wrapper: MutableContextWrapper? = null
@@ -185,12 +188,13 @@ object BrowseHost {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 if (!Features.current.blockAds) return null
                 val uri = request.url
-                return if (WebHost.isAdRequest(uri.host.orEmpty().lowercase(), uri.path.orEmpty())) WebHost.emptyResponse else null
+                return if (WebHost.isAdRequest(uri.host.orEmpty().lowercase(), adPageHost)) WebHost.emptyResponse else null
             }
 
             // YouTube changes pages without loading: catch a video page that slipped through.
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                 val uri = Uri.parse(url ?: return)
+                adPageHost = uri.host
                 if (isVideo(uri)) {
                     openInPlayer(url)
                     if (view.canGoBack()) view.goBack()
@@ -198,6 +202,7 @@ object BrowseHost {
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
                 if (handler == null) view.evaluateJavascript("window.__AAY_BROWSE=true;\n" + WebHost.script(), null)
             }
         }

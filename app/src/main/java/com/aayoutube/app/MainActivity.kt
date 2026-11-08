@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     private var compatConnection: CompatMediaConnection? = null
     private var watchTabVisible = true
     private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
+    private val quitPhone: () -> Unit = { runOnUiThread { closeEverything() } }
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -54,7 +55,7 @@ class MainActivity : ComponentActivity() {
         // Opened from the icon (not a link, not after rotation): start on YouTube Home.
         if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) WebHost.goHomeIfIdle()
         handleIntent(intent)
-        WebHost.onQuit = { runOnUiThread { closeEverything() } }
+        WebHost.onQuit = quitPhone
         setContent { AAYoutubeTheme { AppRoot(this) } }
     }
 
@@ -81,6 +82,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         started += this
+        WebHost.onQuit = quitPhone
         if (!WebHost.carShown) WebHost.requestLink = relinkPhone
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         WebHost.setCarScreen(!onPhoneScreen())
@@ -110,7 +112,8 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         started -= this
         resumed -= this
-        if (isFinishing && started.isEmpty()) WebHost.onQuit = null
+        if (WebHost.onQuit === quitPhone)
+            WebHost.onQuit = started.lastOrNull()?.quitPhone
     }
 
     override fun onStop() {
@@ -118,6 +121,8 @@ class MainActivity : ComponentActivity() {
         started -= this
         releaseController()
         val other = started.lastOrNull()
+        if (other != null && WebHost.onQuit === quitPhone)
+            WebHost.onQuit = other.quitPhone
         if (WebHost.requestLink === relinkPhone) {
             // Never remove a link now owned by the projection activity.
             WebHost.requestLink = null
@@ -125,7 +130,9 @@ class MainActivity : ComponentActivity() {
         }
         if (other != null) return
         WebHost.onActivityVisible(false)
-        BrowseHost.pause()
+        // The phone can stop while a car-only mini player is still browsing.
+        // Pausing the shared browse WebView would blank that car screen.
+        if (!WebHost.carShown) BrowseHost.pause()
     }
 
     private fun sayHello() {
@@ -184,7 +191,11 @@ class MainActivity : ComponentActivity() {
     private fun pipParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
         val bounds = Rect()
-        if (WebHost.pipSourceRect(bounds)) builder.setSourceRectHint(bounds)
+        // SourceRectHint controls the transition animation, not the desired
+        // floating window size. Never feed it a rect measured *inside* PiP:
+        // that can keep shrinking the hint across state updates.
+        if (!isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
+            builder.setSourceRectHint(bounds)
         if (Build.VERSION.SDK_INT >= 31) {
             builder.setAutoEnterEnabled(
                 Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
@@ -198,6 +209,9 @@ class MainActivity : ComponentActivity() {
     fun updatePip(isWatchTab: Boolean = watchTabVisible) {
         if (Build.VERSION.SDK_INT < 26 || !onPhoneScreen()) return
         watchTabVisible = isWatchTab
+        // Once inside PiP, keep the initial 16:9 size request unchanged.
+        // Repeated updates from the now-small window can poison the hint.
+        if (isInPictureInPictureMode) return
         runCatching { setPictureInPictureParams(pipParams()) }
     }
 
@@ -208,8 +222,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip &&
             watchTabVisible && WebHost.snapshot.value.playing &&
             WebHost.isOnWatchPage() && onPhoneScreen()) {
+            // Capture full-player bounds BEFORE PiP CSS mutates the page.
+            val params = pipParams()
             WebHost.pip(true)
-            val entered = runCatching { enterPictureInPictureMode(pipParams()) }.getOrDefault(false)
+            val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
             if (!entered) WebHost.pip(false)
         }
     }

@@ -66,8 +66,8 @@
             <meta-data android:name="distractionOptimized" android:value="true" />
             <!-- Fill the car display (it can be very wide and short). -->
             <layout
-                android:minWidth="1dp"
-                android:minHeight="1dp"
+                android:minWidth="240dp"
+                android:minHeight="135dp"
                 android:gravity="fill"
                 android:defaultWidth="800dp"
                 android:defaultHeight="480dp" />

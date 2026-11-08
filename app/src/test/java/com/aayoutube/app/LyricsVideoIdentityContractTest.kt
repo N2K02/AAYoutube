@@ -15,6 +15,43 @@ class LyricsVideoIdentityContractTest {
         assertNotEquals(LyricsCache.key(Snap(id = "first")), LyricsCache.key(Snap(id = "second")))
     }
 
+    @Test fun lookupRequiresASelectedVideoAndValidMetadata() {
+        val song = Snap(id = "A", title = "Song", artist = "Artist")
+        assertNull(LyricsRequestIdentity.forSelection(song, "", true, 0))
+        assertNull(LyricsRequestIdentity.forSelection(song, "B", true, 0))
+        assertNull(LyricsRequestIdentity.forSelection(song, "A", false, 0))
+        assertNull(LyricsRequestIdentity.forSelection(song.copy(title = ""), "A", true, 0))
+        assertNull(LyricsRequestIdentity.forSelection(song.copy(ad = true), "A", true, 0))
+        assertNull(LyricsRequestIdentity.forSelection(song.copy(live = true), "A", true, 0))
+        assertNotNull(LyricsRequestIdentity.forSelection(song, "A", true, 0))
+    }
+
+    @Test fun lookupChangesImmediatelyOnNewVideoCorrectedMetadataOrProviderChange() {
+        val first = Snap(id = "A", title = "Song [Official Video]", artist = "Singer")
+        val key = LyricsRequestIdentity.forSelection(first, "A", true, 3)
+        assertNotNull(key)
+        assertEquals("song", key!!.title)
+        assertNotEquals(key, LyricsRequestIdentity.forSelection(first.copy(id = "B"), "B", true, 3))
+        assertNotEquals(key, LyricsRequestIdentity.forSelection(first.copy(title = "Other"), "A", true, 3))
+        assertNotEquals(key, LyricsRequestIdentity.forSelection(first.copy(artist = "Other"), "A", true, 3))
+        assertNotEquals(key, LyricsRequestIdentity.forSelection(first, "A", true, 4))
+        assertEquals(key, LyricsRequestIdentity.forSelection(first.copy(title = "song [official video]"), "A", true, 3))
+    }
+
+    @Test fun staleLyricsCannotAppearDuringFirstFrameOfNewSelection() {
+        val screens = read("app/src/main/java/com/aayoutube/app/Screens.kt")
+        val host = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(screens.contains("remember(lyricsRequest) { mutableStateOf(LyricsContent()) }"))
+        assertTrue(screens.contains("LaunchedEffect(lyricsRequest)"))
+        assertTrue(screens.contains("foundLyrics.foundFor(lyricsRequest.videoId)"))
+        assertTrue(screens.contains("key(lyricsRequest) { LyricsOverlay"))
+        assertTrue(host.contains("selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()"))
+        assertTrue(host.contains("if (request.isForMainFrame) noteSelectedLyricsRoute(uri)"))
+        assertTrue(host.contains("noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())"))
+        assertTrue(host.contains("selectedWatchVideoId.value = \"\""))
+        assertFalse(screens.contains("foundLyrics = LyricsContent()"))
+    }
+
     @Test fun lyricsCacheRetriggersAfterArtistOrTitleIsCorrected() {
         LyricsCache.clear()
         val first = Snap(id = "v1", title = "Song", artist = "")

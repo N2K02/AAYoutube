@@ -87,6 +87,16 @@ object WebHost {
     val canGoBack = MutableStateFlow(false)
     /** The player page shows a video (watch or live page). */
     val onWatchPage = MutableStateFlow(false)
+    /** The selected /watch?v= ID, set by navigation rather than a delayed
+     * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
+    val selectedWatchVideoId = MutableStateFlow("")
+    // The WebView instance survives full document loads. Old JS bridge
+    // callbacks can arrive after SPA/full navigation and must not revive the
+    // previous video's notification or its recovery watchdog.
+    private var mainFrameAllowsPlayback = true
+    // A /watch route can change video ID without recreating the WebView. Use
+    // the current history ID to reject queued JS reports from the old video.
+    private var expectedWatchVideoId: String? = null
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     internal val lyricsClock = MutableStateFlow(LyricsClock())
@@ -95,11 +105,23 @@ object WebHost {
     val webVersion = MutableStateFlow(0)
     val inPip = MutableStateFlow(false)
 
+    /** Hide previous lyrics at the start of navigation, not after the old
+     * document eventually reports its new media session. Do not change the
+     * playback identity here: YouTube may still be transitioning. */
+    private fun noteSelectedLyricsRoute(uri: Uri?) {
+        val id = uri?.getQueryParameter("v")
+            ?.takeIf { uri.path == "/watch" && it.isNotBlank() }.orEmpty()
+        selectedWatchVideoId.value = id
+    }
+
     /** Set by the activity: asks the media service to link up with this process again. */
     var requestLink: (() -> Unit)? = null
 
     /** Set by the open screen: closes it (Exit in the notification). */
     var onQuit: (() -> Unit)? = null
+
+    /** A car-only launch may have no MainActivity to receive Quit. */
+    var onCarQuit: (() -> Unit)? = null
 
     @Volatile var activityVisible = false
         private set
@@ -163,6 +185,10 @@ object WebHost {
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
         configure(w)
+        // WebView.pauseTimers() is process-wide. An older idle/frozen player
+        // may have paused Chromium's shared timers before being disposed.
+        // A fresh player must always have live script/media timers.
+        w.resumeTimers()
         web = w
         installScript(w)
         var url = pendingUrl ?: savedUrl() ?: home()
@@ -185,13 +211,13 @@ object WebHost {
     private fun savedUrl(): String? {
         if (!Features.current.resumeLast) return null
         val u = webPrefs.getString("lastUrl", null) ?: return null
-        val host = Uri.parse(u).host.orEmpty()
-        return u.takeIf { host.endsWith("youtube.com") }
+        val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return null
+        return u.takeIf { uri.scheme == "https" && isYouTubeHost(uri.host) }
     }
 
     private fun saveUrl(url: String) {
         val u = Uri.parse(url)
-        if (!u.host.orEmpty().endsWith("youtube.com")) return
+        if (u.scheme != "https" || !isYouTubeHost(u.host)) return
         // Without our autoplay flags: opening the app should not start a video on its own.
         val clean = u.buildUpon().clearQuery().apply {
             u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
@@ -372,8 +398,12 @@ object WebHost {
         val now = SystemClock.elapsedRealtime()
         // The old car window's teardown can pause the page a moment before the
         // new window binds. Keep the user's play intent unless they paused.
-        val play = state.playing || (playingWhenCarLeft && now - carLeftAt < 8_000 &&
-            now - userPausedAt > 8_000)
+        // A Chromium video renderer can pause just before Android Auto replaces
+        // its window. Do not turn an active recovery into a permanently paused
+        // new document: the new page would otherwise lose its watchdog intent.
+        val play = CarWindowPlaybackIntent.shouldAutoplay(state, playbackWanted,
+            playingWhenCarLeft && now - carLeftAt < 8_000 &&
+                now - userPausedAt > 8_000)
         val restored = if (isWatch && state.id.isNotBlank()) {
             uri!!.buildUpon().clearQuery().apply {
                 uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
@@ -521,8 +551,14 @@ object WebHost {
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
         if (name == "pause") {
+            playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
             unexpectedPauseRecoveryUntil = 0L
+            if (snapshot.value.id.isNotBlank())
+                publish(snapshot.value.copy(playing = false, buffering = false, userPaused = true))
+        } else if (name == "play") {
+            playbackWanted = true
+            snapshot.value = snapshot.value.copy(userPaused = false)
         }
         js("window.__aay&&window.__aay.cmd('$name')")
     }
@@ -581,9 +617,14 @@ object WebHost {
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
     fun pipSourceRect(out: android.graphics.Rect): Boolean {
+        // Only a real, full-size player is a valid transition origin.
+        // The internal 224dp mini window must never seed Android's PiP bounds.
+        if (mode.value != PlayerMode.FULL || !isOnWatchPage()) return false
         val w = web ?: return false
-        return w.isAttachedToWindow && w.getGlobalVisibleRect(out) &&
-            out.width() > 0 && out.height() > 0
+        if (!w.isAttachedToWindow || !w.getGlobalVisibleRect(out)) return false
+        val density = w.resources.displayMetrics.density
+        // Ignore stale/1px rectangles while Activity and car displays reparent.
+        return StandardPipPolicy.isValidSource(out.width(), out.height(), density)
     }
 
     fun refreshBackgroundQuality() {
@@ -692,7 +733,8 @@ object WebHost {
         for (i in list.currentIndex - 1 downTo 0) {
             val u = list.getItemAtIndex(i)?.url ?: continue
             val path = Uri.parse(u).path.orEmpty()
-            if (!path.startsWith("/watch") && !path.startsWith("/shorts") && Uri.parse(u).host.orEmpty().endsWith("youtube.com")) return u
+            if (!path.startsWith("/watch") && !path.startsWith("/shorts") &&
+                Uri.parse(u).let { it.scheme == "https" && isYouTubeHost(it.host) }) return u
         }
         return home()
     }
@@ -767,14 +809,43 @@ object WebHost {
      * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
     fun clearSession() {
         youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
+        val generation = webGeneration
+        val page = web
         CookieManager.getInstance().removeAllCookies {
             main.post {
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                web?.clearCache(true)
-                web?.loadUrl(home())
+                // CookieManager's completion may arrive after Quit, renderer
+                // replacement, or a car/phone handoff. Never navigate a new
+                // page using a callback belonging to the old one.
+                // The secondary browse page shares cookies, so invalidate it
+                // regardless of which player renderer owned the sign-out.
                 BrowseHost.onSessionCleared()
+                if (generation != webGeneration || web !== page) {
+                    AppLog.add("ACCOUNT", "Ignored delayed sign-out navigation for replaced WebView")
+                    return@post
+                }
+                page?.clearCache(true)
+                page?.loadUrl(home())
             }
+        }
+    }
+
+    /** A deliberate pause from YouTube's native page controls is authoritative,
+     * including while in PiP/mini/car. Bridge calls arrive off the main thread. */
+    fun onJsUserPause(generation: Int) {
+        if (generation != webGeneration) return
+        main.post {
+            if (generation != webGeneration) return@post
+            playbackWanted = false
+            userPausedAt = SystemClock.elapsedRealtime()
+            unexpectedPauseRecoveryUntil = 0L
+            // The player may be disconnected from the media process when the user
+            // pauses YouTube itself. Save the authoritative intent for the next SYNC.
+            if (snapshot.value.id.isNotBlank())
+                publish(snapshot.value.copy(playing = false, buffering = false, userPaused = true))
+            AppLog.add("PLAY", "Explicit pause from YouTube player controls")
+            if (!shown) scheduleFreeze()
         }
     }
 
@@ -795,12 +866,19 @@ object WebHost {
     // ---------------------------------------------------------------- freeze / release
 
     // Nothing playing and no screen open: stop the page's timers and scripts after a short wait.
+    private fun keepRecovering(): Boolean = playbackWanted &&
+        (Features.current.backgroundPlay || carShown || inPip.value || shown)
+
     private val freezeSoon = Runnable {
-        if (!shown && !snapshot.value.playing) freeze()
+        if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()
     }
 
     private fun scheduleFreeze() {
         main.removeCallbacks(freezeSoon)
+        // A previously playing stream may have dropped silently. Leave the
+        // watchdog active until Play succeeds, the user pauses, or Stop/Quit.
+        // Background play OFF still permits the normal idle freeze offscreen.
+        if (keepRecovering()) return
         // Do not pause the WebView's own timers while it is attempting to recover
         // a spontaneous background pause. A deliberate user pause remains fast-idle.
         val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
@@ -839,14 +917,26 @@ object WebHost {
         scriptHandler = null
         (w?.parent as? ViewGroup)?.removeView(w)
         w?.stopLoading()
-        w?.pauseTimers()
+        // Do not leave Chromium's process-wide timers paused after disposing
+        // this WebView: Android Auto can request Play with no Activity present.
+        // destroy() releases page work; pauseTimers() here would also freeze a
+        // surviving BrowseHost and any subsequent newly created player.
+        w?.resumeTimers()
         w?.destroy()
         wrapper = null
         webDisplayId = null
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        selectedWatchVideoId.value = ""
+        mainFrameAllowsPlayback = false
+        expectedWatchVideoId = null
         if (!preserveCarOwners) {
+            // A stopped/idle renderer has no live video. Inform Android Auto
+            // so its next Play comes from the saved last selection, not a
+            // stale page identity or a phantom BUFFERING state.
+            send(Msg.STATE, Snap().toBundle())
+            playbackWanted = false
             carOwners.clear()
             carShown = false
             carProjectionActive.value = false
@@ -890,8 +980,26 @@ object WebHost {
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
-            Msg.PLAY -> cmd("play")
-            Msg.PAUSE -> { userPausedAt = SystemClock.elapsedRealtime(); cmd("pause") }
+            Msg.PLAY -> {
+                if (web == null || !mainFrameAllowsPlayback) {
+                    val resumeId = d.getString("id").orEmpty()
+                    if (resumeId.isNotBlank()) {
+                        AppLog.add("MEDIA", "Restoring selected video for Play")
+                        open(resumeId, d.getLong("sec", 0L))
+                    } else {
+                        AppLog.add("MEDIA", "Play ignored: no selected video to restore")
+                        send(Msg.PLAYER_MISSING, Bundle())
+                    }
+                } else cmd("play")
+            }
+            Msg.PAUSE -> {
+                userPausedAt = SystemClock.elapsedRealtime()
+                cmd("pause")
+                send(Msg.TRANSPORT_ACK, Bundle().apply {
+                    putInt("command", Msg.PAUSE)
+                    putLong("terminalId", d.getLong("terminalId", -1L))
+                })
+            }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
             Msg.NEXT -> cmd("next")
             Msg.PREV -> cmd("prev")
@@ -899,6 +1007,10 @@ object WebHost {
             Msg.STOP -> {
                 cmd("pause")
                 if (!shown) release()
+                send(Msg.TRANSPORT_ACK, Bundle().apply {
+                    putInt("command", Msg.STOP)
+                    putLong("terminalId", d.getLong("terminalId", -1L))
+                })
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
@@ -907,10 +1019,10 @@ object WebHost {
                     m.replyTo?.send(Message.obtain(null, Msg.QUIT_ACK))
                 }.onFailure { AppLog.add("LINK", "Quit acknowledgement failed") }
                 cmd("pause")
-                val close = onQuit
+                val close = onQuit ?: onCarQuit
                 if (close != null) close() else release()
             }
-            Msg.FREEZE -> if (!shown && !snapshot.value.playing) freeze()
+            Msg.FREEZE -> if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()
         }
     }
 
@@ -948,6 +1060,7 @@ object WebHost {
     }
 
     private fun load(url: String) {
+        noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())
         val w = web
         if (w == null) {
             pendingUrl = url
@@ -985,7 +1098,8 @@ object WebHost {
         val l = link ?: return
         try {
             val m = Message.obtain(null, what)
-            if (what == Msg.STATE || what == Msg.PLAYER_MISSING || what == Msg.RENDERER_GONE)
+            if (what == Msg.STATE || what == Msg.PLAYER_MISSING ||
+                what == Msg.RENDERER_GONE || what == Msg.TRANSPORT_ACK)
                 data.putInt("epoch", linkEpoch)
             m.data = data
             l.send(m)
@@ -1006,6 +1120,7 @@ object WebHost {
                 artist = o.optString("artist"),
                 art = o.optString("art"),
                 playing = o.optBoolean("playing"),
+                userPaused = o.optBoolean("userPaused"),
                 buffering = o.optBoolean("buffering"),
                 ended = o.optBoolean("ended"),
                 live = o.optBoolean("live"),
@@ -1022,12 +1137,23 @@ object WebHost {
                 }.orEmpty(),
             )
         }.getOrNull() ?: return
-        main.post { if (generation == webGeneration) publish(s) }
+        main.post {
+            if (generation != webGeneration) return@post
+            if (s.id.isNotBlank() && (!mainFrameAllowsPlayback ||
+                    (expectedWatchVideoId != null && expectedWatchVideoId != s.id))) {
+                AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
+                return@post
+            }
+            publish(s)
+        }
     }
 
     private var lastLogged = ""
     private var visibilityChangedAt = 0L
     private var userPausedAt = 0L
+    // Last confirmed user/page intent; do not freeze a dropped stream that
+    // should recover, even after the initial native retry window expires.
+    private var playbackWanted = false
     private var resumeTries = 0
     private var resumeWindowAt = 0L
     private var unexpectedPauseRecoveryUntil = 0L
@@ -1042,15 +1168,14 @@ object WebHost {
     // A user pause delivered via the media session is authoritative; do not fight it.
     // Bound retries to prevent repeated play requests for an unavailable stream.
     private fun resumeIfDropped(old: Snap, new: Snap) {
-        if (!Features.current.backgroundPlay) return
-        if (!old.playing || new.playing || new.ended || new.id != old.id || new.id.isBlank()) return
+        if (!old.playing || new.playing || new.buffering || new.ended ||
+            new.id != old.id || new.id.isBlank()) return
         val now = SystemClock.elapsedRealtime()
-        val background = !shown && !inPip.value
-        // The mini player is still foreground, but WebView focus/viewport
-        // handoff can cause the same unrequested media pause as app backgrounding.
+        val background = !shown && !inPip.value && !carShown
+        // Background-play OFF is respected when fully hidden. Unexpected pauses
+        // in visible phone/car, mini-player or PiP still deserve recovery.
+        if (background && !Features.current.backgroundPlay) return
         val mini = mode.value == PlayerMode.MINI && !inPip.value
-        val visibilityTransition = now - visibilityChangedAt < 4_000L
-        if (!background && !mini && !visibilityTransition) return
         if (now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
         if (now - resumeWindowAt > 60_000L) {
@@ -1094,8 +1219,17 @@ object WebHost {
         }
     }
 
-    private fun publish(s: Snap) {
+    private fun publish(incoming: Snap) {
         val previous = snapshot.value
+        if (incoming.userPaused && !incoming.playing) {
+            playbackWanted = false
+            userPausedAt = SystemClock.elapsedRealtime()
+        } else if (incoming.playing) playbackWanted = true
+        if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
+        // Keep foreground media priority while the active watchdog retries a
+        // spontaneous pause. Never preserve this for explicit Pause or ending.
+        val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
+            !incoming.ended && incoming.id.isNotBlank() && keepRecovering())
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
@@ -1119,6 +1253,8 @@ object WebHost {
 
     // ---------------------------------------------------------------- WebView clients
 
+    internal fun isYouTubeHost(host: String?): Boolean = YouTubeSavedHostPolicy.matches(host)
+
     internal fun allowedHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false
         // Google sign-in hops between many Google domains (google.co.uk, accounts.google.*, ...).
@@ -1126,18 +1262,17 @@ object WebHost {
         return ALLOWED.any { h == it || h.endsWith(".$it") }
     }
 
-    internal fun isAdRequest(host: String, path: String): Boolean {
-        if (BLOCKED_HOSTS.any { host == it || host.endsWith(".$it") }) return true
-        if (host.endsWith("youtube.com")) {
-            return path.startsWith("/pagead/") || path.startsWith("/api/stats/ads") ||
-                path.startsWith("/ptracking") || path.startsWith("/pcs/activeview") ||
-                path.contains("/get_midroll_")
-        }
-        return false
-    }
+    // AABrowser parity: YouTube/Googlevideo resources and ALL resources on a
+    // YouTube page are script-managed. Network-blocking advertising endpoints
+    // breaks some YouTube player streams before the page can skip the ad.
+    internal fun isAdRequest(host: String, pageHost: String?): Boolean =
+        YouTubeAdRequestPolicy.shouldBlock(host, pageHost)
 
     internal val emptyResponse: WebResourceResponse
         get() = WebResourceResponse("text/plain", "utf-8", 200, "OK", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+
+    // Updated on WebView's UI thread; read by shouldInterceptRequest's worker.
+    @Volatile private var adPageHost: String? = "youtube.com"
 
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -1159,6 +1294,7 @@ object WebHost {
                 }
                 return true
             }
+            if (request.isForMainFrame) noteSelectedLyricsRoute(uri)
             if (Features.current.hideShorts) {
                 val m = Regex("^/shorts/([\\w-]{6,})").find(uri.path.orEmpty())
                 if (m != null) {
@@ -1172,16 +1308,31 @@ object WebHost {
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             if (!Features.current.blockAds) return null
             val uri = request.url
-            val ad = isAdRequest(uri.host.orEmpty().lowercase(), uri.path.orEmpty())
+            val ad = isAdRequest(uri.host.orEmpty().lowercase(), adPageHost)
             if (ad) AppLog.add("ADS", "Blocked request ${uri.host}${uri.path}")
             return if (ad) emptyResponse else null
         }
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             if (view !== web) return
+            adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             val incomingId = runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull()
             val outgoingId = runCatching { Uri.parse(lastUrl).getQueryParameter("v") }.getOrNull()
             val previous = snapshot.value
+            // A full document navigation destroys the old page's JS before it
+            // can send the last empty snapshot. Clear the native media identity
+            // here too, not just on YouTube's same-document SPA transitions.
+            val route = runCatching { Uri.parse(url).path }.getOrNull()
+            mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            expectedWatchVideoId = incomingId?.takeIf { route == "/watch" && it.isNotBlank() }
+            selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
+            if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
+                playbackWanted = false
+                unexpectedPauseRecoveryUntil = 0L
+                snapshot.value = Snap()
+                send(Msg.STATE, Snap().toBundle())
+                AppLog.add("PLAY", "Navigation cleared previous media session")
+            }
             sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
                 incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
                 incomingId to previous.posMs else null
@@ -1222,10 +1373,23 @@ object WebHost {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
             if (view !== web) return
+            adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             canGoBack.value = view.canGoBack()
             val wasWatch = onWatchPage.value
-            onWatchPage.value = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
-                .let { it.startsWith("/watch") || it.startsWith("/live/") }
+            val parsed = runCatching { Uri.parse(url) }.getOrNull()
+            val route = parsed?.path
+            mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            expectedWatchVideoId = parsed?.getQueryParameter("v")
+                ?.takeIf { route == "/watch" && it.isNotBlank() }
+            selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
+            onWatchPage.value = mainFrameAllowsPlayback
+            if (PlaybackRoutePolicy.shouldClearPrevious(
+                    route, parsed?.getQueryParameter("v"), snapshot.value.id)) {
+                // SPA navigation can move from video A to B without onPageStarted.
+                playbackWanted = false
+                unexpectedPauseRecoveryUntil = 0L
+                publish(Snap())
+            }
             if (carShown && onWatchPage.value && !wasWatch) {
                 main.removeCallbacks(carWatchProbe)
                 main.postDelayed(carWatchProbe, 3_000L)
@@ -1250,7 +1414,11 @@ object WebHost {
             rendererCrashCount = if (now - lastRendererCrashAt <= 15_000L) rendererCrashCount + 1 else 1
             lastRendererCrashAt = now
             val before = snapshot.value
-            val mayResume = rendererCrashCount <= 2 && before.playing && before.id.isNotBlank()
+            val mayResume = rendererCrashCount <= 2 && (before.playing || playbackWanted) &&
+                !before.userPaused && before.id.isNotBlank()
+            // Stop retaining a phantom recovery intent after the renderer crash
+            // circuit-breaker has deliberately stopped automatic restarts.
+            if (!mayResume) playbackWanted = false
             val reopen = if (before.id.isNotBlank()) {
                 val base = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
                 base + "watch?v=" + Uri.encode(before.id) +
@@ -1312,9 +1480,6 @@ object WebHost {
         "googleusercontent.com", "googleapis.com", "recaptcha.net", "ytimg.com", "googlevideo.com", "ggpht.com", "gvt1.com",
     )
 
-    private val BLOCKED_HOSTS = listOf(
-        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.com",
-    )
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
@@ -1322,6 +1487,11 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json, generation)
+    }
+
+    @JavascriptInterface
+    fun userPause() {
+        WebHost.onJsUserPause(generation)
     }
 
     @JavascriptInterface

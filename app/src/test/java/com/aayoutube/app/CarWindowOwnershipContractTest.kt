@@ -81,6 +81,7 @@ class CarWindowOwnershipContractTest {
         val recreate = host.substringAfter("private fun recreateRenderer(").substringBefore("fun logCarRenderProbe()")
         assertTrue(recreate.contains("appendQueryParameter(\"t\", \"\${state.posMs / 1000}s\")"))
         assertTrue(recreate.contains("appendQueryParameter(\"aay\", if (play) \"1\" else \"paused\")"))
+        assertTrue(recreate.contains("CarWindowPlaybackIntent.shouldAutoplay(state, playbackWanted,"))
         assertTrue(recreate.contains("playingWhenCarLeft && now - carLeftAt < 8_000"))
         assertTrue(recreate.contains("now - userPausedAt > 8_000"))
         assertTrue(recreate.contains("previous.destroy()"))

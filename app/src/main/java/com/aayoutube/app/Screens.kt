@@ -258,24 +258,30 @@ fun AppRoot(activity: MainActivity) {
             topMenuVisible = false
         }
     }
-    val lyricsKey = LyricsCache.key(snap)
-    var foundLyrics by remember { mutableStateOf(LyricsContent()) }
+    val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
+    val lyricsRequest = LyricsRequestIdentity.forSelection(
+        snap, selectedWatchVideoId, lyricsEnabled, providerVersion
+    )
+    // Video-keyed state is empty *during the first recomposition* of a new
+    // selection. Resetting ordinary state inside LaunchedEffect was one frame
+    // too late, briefly displaying lyrics from the previous video.
+    var foundLyrics by remember(lyricsRequest) { mutableStateOf(LyricsContent()) }
 
-    // Lookup begins for the current video regardless of overlay visibility. A hidden
-    // overlay must never leave the top Lyrics button permanently disabled.
-    LaunchedEffect(lyricsKey, lyricsEnabled, providerVersion, snap.ad, snap.live, snap.title, snap.artist) {
-        foundLyrics = LyricsContent()
-        if (!lyricsEnabled || snap.id.isBlank() || snap.title.isBlank() || snap.live || snap.ad)
-            return@LaunchedEffect
-        val cached = LyricsCache.get(lyricsKey, snap)
-        val result = cached ?: LyricsProviders.fetch(context, snap).also {
-            LyricsCache.put(lyricsKey, snap, it)
+    // Search only after the selected Watch video has valid metadata. Searching
+    // is independent of overlay visibility, so the lyrics button can still
+    // enable when a user has hidden the panel.
+    LaunchedEffect(lyricsRequest) {
+        if (lyricsRequest == null) return@LaunchedEffect
+        val requestSnap = snap
+        val cached = LyricsCache.get(lyricsRequest.videoId, requestSnap)
+        val result = cached ?: LyricsProviders.fetch(context, requestSnap).also {
+            LyricsCache.put(lyricsRequest.videoId, requestSnap, it)
         }
-        foundLyrics = LyricsContent(lyricsKey, result.first, result.second)
-        AppLog.add("LYRICS", "Result for video ${snap.id}: timed=${result.first.size} plain=${!result.second.isNullOrBlank()}")
+        foundLyrics = LyricsContent(lyricsRequest.videoId, result.first, result.second)
+        AppLog.add("LYRICS", "Result for selected video ${lyricsRequest.videoId}: timed=${result.first.size} plain=${!result.second.isNullOrBlank()}")
     }
-    val lyricsAvailable = lyricsEnabled && !snap.live && !snap.ad &&
-        snap.id.isNotBlank() && foundLyrics.foundFor(lyricsKey)
+    val lyricsAvailable = lyricsRequest != null &&
+        foundLyrics.foundFor(lyricsRequest.videoId)
     val lyricsOnScreen = lyricsAvailable && lyricsShown &&
         tab == Tab.Watch.ordinal && !inPip && fullscreen == null &&
         playerMode == WebHost.PlayerMode.FULL
@@ -457,9 +463,9 @@ fun AppRoot(activity: MainActivity) {
             // Reduce overlap while the menu is hidden; no second app header.
             Box(Modifier.align(Alignment.TopCenter).statusBarsPadding()
                 .padding(top = 30.dp)) {
-                LyricsOverlay(snap, foundLyrics) {
+                key(lyricsRequest) { LyricsOverlay(snap, foundLyrics) {
                     LyricsPrefs.set(context, "show", false)
-                }
+                } }
             }
         }
         val full = fullscreen

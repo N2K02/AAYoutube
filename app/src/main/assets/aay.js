@@ -105,12 +105,61 @@
   /* ---------- 1b. Keep playing when the screen is hidden or in picture in picture ---------- */
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
-  var allowPause = false, ignored = 0;
+  var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
   function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini); }
+
+  // YouTube's on-screen controls are a real Pause even if background/PiP
+  // protection is armed. Only trusted playback gestures grant this short window;
+  // unrelated DOM clicks must not disable interruption recovery.
+  function manualPauseGesture(e) {
+    if (BROWSE || e.isTrusted === false) return;
+    var v = getVideo();
+    if (!v) return;
+    var t = e.target;
+    if (t && t.closest && t.closest(
+      'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
+      'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
+      'button[aria-label*="pause" i], button[title*="pause" i],' +
+      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]')) {
+      if (v.paused) {
+        PAUSED = false;
+        bgWatch.explicitPause = false;
+        bgWatch.wanted = true;
+        userPauseEligibleUntil = 0;
+      } else userPauseEligibleUntil = Date.now() + 2000;
+    }
+  }
+  document.addEventListener('pointerdown', manualPauseGesture, true);
+  document.addEventListener('click', manualPauseGesture, true);
+  document.addEventListener('keydown', function (e) {
+    if (BROWSE || e.isTrusted === false || e.repeat) return;
+    var t = e.target, v = getVideo();
+    if (!v || (t && t.closest && t.closest('input, textarea, [contenteditable]'))) return;
+    if (e.key === 'k' || e.key === 'K' || e.key === ' ' ||
+        e.key === 'MediaPause' || e.key === 'MediaPlayPause') {
+      if (v.paused) {
+        PAUSED = false;
+        bgWatch.explicitPause = false;
+        bgWatch.wanted = true;
+        userPauseEligibleUntil = 0;
+      } else userPauseEligibleUntil = Date.now() + 2000;
+    }
+  }, true);
+  function noteManualPause() {
+    AUTO = false; // cancel autoplay still pending during YouTube page load
+    PAUSED = true;
+    bgWatch.explicitPause = true;
+    bgWatch.wanted = false;
+    bgWatch.attempts = 0;
+    userPauseEligibleUntil = 0;
+    try { if (N && typeof N.userPause === 'function') N.userPause(); } catch (e) {}
+    console.log('[aay] intentional YouTube player pause');
+  }
   try {
     var origPause = HTMLMediaElement.prototype.pause;
     HTMLMediaElement.prototype.pause = function () {
-      if (!allowPause && holding() && !this.ended) {
+      var manual = !allowPause && Date.now() <= userPauseEligibleUntil;
+      if (!allowPause && !manual && holding() && !this.ended) {
         ignored++;
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
@@ -120,6 +169,10 @@
         }
         return;
       }
+      // Intent is established by a trusted player gesture or an explicit
+      // native command, not by the pause() call alone: YouTube and Chromium
+      // can issue that same call after an involuntary interruption.
+      if (manual) noteManualPause();
       if (allowPause) console.log('[aay] user pause accepted');
       return origPause.apply(this, arguments);
     };
@@ -701,8 +754,14 @@
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
     // nothing is playing (no picture in picture, no media controls for a preview).
     if (!/^\/(watch|live\/)/.test(location.pathname)) {
-      if (lastSent && lastSent.playing) {
-        lastSent.playing = false; lastSent.buffering = false;
+      bgWatch.id = '';
+      bgWatch.wanted = false;
+      bgWatch.explicitPause = false;
+      // Do not leave a stale video ID in the media service: it would keep
+      // trying to recover a ghost stream after navigating away from Watch.
+      if (lastSent && lastSent.id) {
+        lastSent = { id: '', playing: false, userPaused: false, buffering: false,
+          ended: false, queue: [], pos: 0, dur: 0 };
         N.state(JSON.stringify(lastSent));
       }
       return;
@@ -722,6 +781,8 @@
     N.state(JSON.stringify(lastSent = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
+      // Persist explicit user Pause across IPC disconnect/reconnect.
+      userPaused: !!(bgWatch && bgWatch.explicitPause && v.paused),
       ended: !!v.ended,
       buffering: !v.paused && !v.ended && v.readyState < 3,
       live: d === Infinity,
@@ -865,13 +926,14 @@
   var AUTO = /[?&]aay=1/.test(location.search);       // start playing as soon as ready
   var SEARCH_PLAY = /[?&]aay=play/.test(location.search); // open the first result of a search
 
-  // Reopened on a video: keep it paused until you touch the page (YouTube would start it itself).
+  // An explicit Pause never expires after a timer or an unrelated page tap.
   var PAUSED = /[?&]aay=paused/.test(location.search);
-  if (PAUSED) {
-    var releasePaused = function () { PAUSED = false; };
-    document.addEventListener('touchstart', releasePaused, { capture: true, passive: true, once: true });
-    document.addEventListener('click', releasePaused, { capture: true, once: true });
-    setTimeout(releasePaused, 15000);
+  function enforceExplicitPause(v) {
+    if (!v) return;
+    bgWatch.explicitPause = true;
+    bgWatch.wanted = false;
+    allowPause = true; // bypass background pause interception
+    try { v.pause(); } finally { allowPause = false; }
   }
 
   function tryPlay(v) {
@@ -981,27 +1043,47 @@
   /* WebView timers may be throttled with the screen off. Check only when the
    * user's last intent was to play; explicit media pauses and completed videos win.
    */
-  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, windowAt: 0 };
+  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
   function backgroundWatchdog() {
+    // Only a watch/live page owns an active media session. A stale video
+    // element/URL parameter can survive SPA navigation back to YouTube Home.
+    if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
+      bgWatch.id = ''; bgWatch.wanted = false; bgWatch.explicitPause = false;
+      return;
+    }
     var v = getVideo(), id = qualityVideoId();
-    if (BROWSE || !v || !id || !CFG.backgroundPlay || v.ended) return;
+    if (!v || !id || v.ended) return;
+    // An intentionally disabled Background play setting still wins offscreen.
+    // In the phone, PiP, mini-player and car, an unexpected pause is recoverable.
+    if ((A.isBg || A.hold) && !A.isCar && CFG.backgroundPlay === false) return;
     if (bgWatch.id !== id) {
-      bgWatch.id = id; bgWatch.wanted = !v.paused;
-      bgWatch.explicitPause = false; bgWatch.attempts = 0;
+      bgWatch.id = id; bgWatch.wanted = AUTO || (!v.paused && !PAUSED);
+      bgWatch.explicitPause = false; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+    }
+    if (PAUSED) {
+      bgWatch.wanted = false;
+      bgWatch.explicitPause = true;
+      if (!v.paused) enforceExplicitPause(v);
+      return;
     }
     if (!v.paused) {
       bgWatch.wanted = true;
+      bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
       return;
     }
-    if ((!A.isBg && !A.hold && !A.isMini) || bgWatch.explicitPause || !bgWatch.wanted) return;
+    if (bgWatch.explicitPause || !bgWatch.wanted) return;
+    // Never give up solely because a retry limit was reached. Use exponential
+    // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
-    if (now - bgWatch.windowAt > 60000) { bgWatch.windowAt = now; bgWatch.attempts = 0; }
-    if (bgWatch.attempts >= 3) return;
+    var retryMs = Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)));
+    if (bgWatch.lastAttemptAt && now - bgWatch.lastAttemptAt < retryMs) return;
+    bgWatch.lastAttemptAt = now;
     bgWatch.attempts++;
-    console.log('[aay] background: unexpected pause, recovery ' + bgWatch.attempts + '/3');
+    console.log('[aay] unexpected pause: resume attempt ' + bgWatch.attempts +
+      ' (bg=' + A.isBg + ' pip=' + A.inPip + ' mini=' + A.isMini + ' car=' + A.isCar + ')');
     try { var p = v.play(); if (p && p.catch) p.catch(function (e) {
-      console.log('[aay] background resume rejected: ' + (e && e.name || 'unknown'));
-    }); } catch (e) { console.log('[aay] background resume failed: ' + e); }
+      console.log('[aay] playback recovery rejected: ' + (e && e.name || 'unknown'));
+    }); } catch (e) { console.log('[aay] playback recovery failed: ' + e); }
     schedReport(150);
   }
   setInterval(backgroundWatchdog, 5000);
@@ -1013,7 +1095,7 @@
       bgWatch.id = qualityVideoId();
       bgWatch.wanted = !v.paused;
       bgWatch.explicitPause = false;
-      bgWatch.attempts = 0;
+      bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
     }
     v.__aay = 1;
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
@@ -1021,8 +1103,14 @@
       v.addEventListener(ev, function () {
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
-        if (ev === 'play') { bgWatch.wanted = true; bgWatch.explicitPause = false; }
-        if (ev === 'pause' && !A.isBg && !A.hold && !A.inPip && !A.isMini) bgWatch.wanted = false;
+        if (ev === 'play') {
+          if (PAUSED && !AUTO) enforceExplicitPause(v);
+          else {
+            bgWatch.wanted = true; bgWatch.explicitPause = false;
+            bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+          }
+        }
+        if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
           else notePosition(v);
@@ -1030,9 +1118,8 @@
         schedReport(ev === 'seeked' ? 250 : 120);
       }, true);
     });
-    v.addEventListener('play', function () { if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} } }, true);
     v.addEventListener('loadedmetadata', function () {
-      if (PAUSED && !AUTO) { try { v.pause(); } catch (e) {} }
+      if (PAUSED && !AUTO) enforceExplicitPause(v);
       onLoaded(v);
       restoreAfterSourceChange(v);
       later(function () { restoreAfterSourceChange(v); }, 300);
@@ -1151,16 +1238,34 @@
     if (H.previoustrack) { try { H.previoustrack(); } catch (e) {} }
   }
 
+  // Prefer YouTube's registered MediaSession Play handler, as AABrowser does.
+  // It can update player state when directly calling video.play() is rejected
+  // or does not fully wake YouTube's own player UI.
+  function requestPlayerPlay(v) {
+    if (typeof H.play === 'function') {
+      try { H.play(); return; } catch (e) {
+        console.log('[aay] YouTube Play handler failed, trying HTML video');
+      }
+    }
+    if (v) {
+      try {
+        var p = v.play();
+        if (p && p.catch) p.catch(function (e) {
+          console.log('[aay] Play rejected: ' + (e && e.name || 'unknown'));
+        });
+      } catch (e) { console.log('[aay] Play failed: ' + e); }
+    }
+  }
   A.cmd = function (c, arg) {
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; if (v) { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } break;
-        case 'pause': bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) { allowPause = true; try { v.pause(); } finally { allowPause = false; } } break;
+        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
-        case 'next': next(); break;
-        case 'prev': prev(); break;
+        case 'next': PAUSED = false; bgWatch.explicitPause = false; next(); break;
+        case 'prev': PAUSED = false; bgWatch.explicitPause = false; prev(); break;
       }
     } catch (e) {}
     schedReport(200);
