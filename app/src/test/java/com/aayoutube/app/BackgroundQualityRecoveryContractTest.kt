@@ -75,6 +75,16 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("cmd(\"pause\")"))
     }
 
+    @Test fun explicitMediaPauseIsReplayedAfterWebProcessReconnect() {
+        val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        assertTrue(media.contains("terminalIntent.pendingCommand?.let { send(it) }"))
+        assertTrue(media.contains("terminalIntent.onCommand(command)"))
+        assertTrue(media.contains("terminalIntent.onWebState(fresh)"))
+        assertTrue(media.contains("terminalIntent.pendingCommand != null || snapshot.playing"))
+        assertTrue(media.contains("!bound && snapshot.id.isNotBlank()) ensureWeb()"))
+        assertTrue(media.contains("terminalIntent.clear()"))
+    }
+
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(media.contains("handler.removeCallbacks(demoteForeground)"))

@@ -4,6 +4,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackRecoveryTest {
+    @Test fun pauseAndStopAreReplayedUntilAcknowledged() {
+        val intent = TerminalTransportIntent()
+        intent.onCommand(Msg.PAUSE)
+        assertEquals(Msg.PAUSE, intent.pendingCommand)
+        intent.onWebState(Snap(id = "video", playing = true))
+        assertEquals(Msg.PAUSE, intent.pendingCommand)
+        intent.onWebState(Snap(id = "video", userPaused = true))
+        assertNull(intent.pendingCommand)
+        intent.onCommand(Msg.STOP)
+        assertEquals(Msg.STOP, intent.pendingCommand)
+        intent.onWebState(Snap(id = "video", userPaused = true))
+        assertNull(intent.pendingCommand)
+    }
+
+    @Test fun laterPlaySelectionOrQuitSupersedesStaleTerminalIntent() {
+        val intent = TerminalTransportIntent()
+        intent.onCommand(Msg.PAUSE)
+        intent.onCommand(Msg.PLAY)
+        assertNull(intent.pendingCommand)
+        intent.onCommand(Msg.STOP)
+        intent.onCommand(Msg.OPEN)
+        assertNull(intent.pendingCommand)
+        intent.onCommand(Msg.PAUSE)
+        intent.onCommand(Msg.SEARCH)
+        assertNull(intent.pendingCommand)
+        intent.onCommand(Msg.STOP)
+        intent.onCommand(Msg.QUIT)
+        assertNull(intent.pendingCommand)
+    }
+
     @Test fun survivingPlayerIsNeverReopened() {
         val r = PlaybackRecovery()
         assertTrue(r.onLinkLost(Snap(id = "video", playing = true, posMs = 120_000)))

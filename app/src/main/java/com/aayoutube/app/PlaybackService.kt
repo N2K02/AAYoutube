@@ -71,6 +71,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var awaitingRegistration = false
     private var recoveringPlayback = false
     private val recovery = PlaybackRecovery()
+    private val terminalIntent = TerminalTransportIntent()
     /** A binder connection alone is not evidence that the WebView can accept commands. */
     private val registrationTimeout = Runnable {
         if (!shuttingDown && !quitRequested && awaitingRegistration && bound) {
@@ -93,11 +94,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 retries = 0
                 handler.removeCallbacks(retry)
                 handler.removeCallbacks(registrationTimeout)
+                // Pause and Stop may have been pressed while :web was absent.
+                // Replay those first, before asking for a player snapshot.
+                terminalIntent.pendingCommand?.let { send(it) }
                 drainPending()
                 send(Msg.SYNC)
             }
         } else if (message.what == Msg.STATE && !quitRequested && validWebMessage(message)) {
             val fresh = Snap.from(message.data)
+            terminalIntent.onWebState(fresh)
             // A user may have pressed Pause on YouTube while the IPC link was
             // unavailable. Do not replay a stale, pre-disconnect play intent.
             if (fresh.userPaused) recovery.cancel()
@@ -185,7 +190,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private fun scheduleRetry() {
-        val hasWork = recovery.active || pending.isNotEmpty() || snapshot.playing
+        val hasWork = recovery.active || pending.isNotEmpty() ||
+            terminalIntent.pendingCommand != null || snapshot.playing
         if (shuttingDown || quitRequested || !MediaRetryPolicy.shouldRetry(retries, hasWork)) return
         handler.removeCallbacks(retry)
         handler.postDelayed(retry, MediaRetryPolicy.delayMs(retries))
@@ -206,13 +212,19 @@ class PlaybackService : MediaBrowserServiceCompat() {
             snapshot = snapshot.copy(playing = false, buffering = true)
             publish(snapshot)
             scheduleRetry()
-        } else if (!shuttingDown && !quitRequested && (pending.isNotEmpty() || awaitingRegistration)) {
+        } else if (!shuttingDown && !quitRequested &&
+            (pending.isNotEmpty() || awaitingRegistration || terminalIntent.pendingCommand != null)) {
             // A binder can die before registration or the first playback snapshot arrives.
             scheduleRetry()
         }
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
+        terminalIntent.onCommand(command)
+        // A terminal transport action must not disappear merely because
+        // the WebView Messenger was temporarily disconnected.
+        if ((command == Msg.PAUSE || command == Msg.STOP) &&
+            !bound && snapshot.id.isNotBlank()) ensureWeb()
         if (command != Msg.QUIT && command != Msg.STOP && command != Msg.PAUSE && command != Msg.FREEZE) ensureWeb()
         if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT ||
             command == Msg.OPEN || command == Msg.SEARCH) {
@@ -553,6 +565,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         outgoing = null
         pending.clear()
         recovery.cancel()
+        terminalIntent.clear()
         artworkLoader.shutdown()
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         session.isActive = false
