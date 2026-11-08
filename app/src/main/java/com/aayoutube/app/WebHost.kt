@@ -884,7 +884,13 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
-        if (!preserveCarOwners) playbackWanted = false
+        if (!preserveCarOwners) {
+            // A stopped/idle renderer has no live video. Inform Android Auto
+            // so its next Play comes from the saved last selection, not a
+            // stale page identity or a phantom BUFFERING state.
+            send(Msg.STATE, Snap().toBundle())
+            playbackWanted = false
+        }
         if (!preserveCarOwners) {
             carOwners.clear()
             carShown = false
@@ -929,7 +935,18 @@ object WebHost {
             }
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
-            Msg.PLAY -> cmd("play")
+            Msg.PLAY -> {
+                if (web == null) {
+                    val resumeId = d.getString("id").orEmpty()
+                    if (resumeId.isNotBlank()) {
+                        AppLog.add("MEDIA", "Restoring absent WebView for Play")
+                        open(resumeId, d.getLong("sec", 0L))
+                    } else {
+                        AppLog.add("MEDIA", "Play ignored: no selected video to restore")
+                        send(Msg.PLAYER_MISSING, Bundle())
+                    }
+                } else cmd("play")
+            }
             Msg.PAUSE -> {
                 userPausedAt = SystemClock.elapsedRealtime()
                 cmd("pause")

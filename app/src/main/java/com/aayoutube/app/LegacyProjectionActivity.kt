@@ -121,7 +121,6 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         else BrowseHost.resume()
         WebHost.setHold(false)
         WebHost.requestLink = relink
-        WebHost.onCarQuit = carQuitCallback
         connectMedia()
         val frame = playerContainer ?: return@Runnable
         if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)

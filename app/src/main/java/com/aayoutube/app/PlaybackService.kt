@@ -393,13 +393,24 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() {
-                    val last = Library.last
-                    if (snapshot.id.isBlank() && last != null) {
+                    val target = MediaResumeTarget.select(snapshot, Library.last)
+                    if (snapshot.id.isBlank() && target != null) {
                         send(Msg.OPEN, Bundle().apply {
-                            putString("id", last.id)
-                            putLong("sec", last.posSec)
+                            putString("id", target.id)
+                            putLong("sec", target.sec)
                         })
-                    } else send(Msg.PLAY)
+                    } else {
+                        // When a hidden STOP released Chromium, the native
+                        // MediaSession may still remember the selected video.
+                        // Send its identity so a WebHost with no WebView can
+                        // restore the player instead of dropping Play.
+                        send(Msg.PLAY, Bundle().apply {
+                            if (target != null) {
+                                putString("id", target.id)
+                                putLong("sec", target.sec)
+                            }
+                        })
+                    }
                 }
                 override fun onPause() {
                     send(Msg.PAUSE)

@@ -82,6 +82,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         started += this
+        WebHost.onQuit = quitPhone
         if (!WebHost.carShown) WebHost.requestLink = relinkPhone
         AppLog.add("VIEW", if (onPhoneScreen()) "Screen on the phone" else "Screen on the car display")
         WebHost.setCarScreen(!onPhoneScreen())
@@ -111,7 +112,8 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         started -= this
         resumed -= this
-        if (WebHost.onQuit === quitPhone) WebHost.onQuit = null
+        if (WebHost.onQuit === quitPhone)
+            WebHost.onQuit = started.lastOrNull()?.quitPhone
     }
 
     override fun onStop() {
@@ -119,6 +121,8 @@ class MainActivity : ComponentActivity() {
         started -= this
         releaseController()
         val other = started.lastOrNull()
+        if (other != null && WebHost.onQuit === quitPhone)
+            WebHost.onQuit = other.quitPhone
         if (WebHost.requestLink === relinkPhone) {
             // Never remove a link now owned by the projection activity.
             WebHost.requestLink = null
@@ -126,7 +130,9 @@ class MainActivity : ComponentActivity() {
         }
         if (other != null) return
         WebHost.onActivityVisible(false)
-        BrowseHost.pause()
+        // The phone can stop while a car-only mini player is still browsing.
+        // Pausing the shared browse WebView would blank that car screen.
+        if (!WebHost.carShown) BrowseHost.pause()
     }
 
     private fun sayHello() {
