@@ -44,6 +44,29 @@ internal data class LyricsContent(
         key == currentKey && (lines.isNotEmpty() || !plain.isNullOrBlank())
 }
 
+/** A lookup is valid only for the video explicitly selected on the Watch
+ * route. Title/artist/provider changes create a new token immediately and
+ * cannot briefly render an older result with the same video ID. */
+internal data class LyricsRequestIdentity(
+    val videoId: String,
+    val title: String,
+    val artist: String,
+    val providerVersion: Int,
+) {
+    companion object {
+        fun forSelection(
+            snap: Snap, selectedWatchVideoId: String,
+            enabled: Boolean, providerVersion: Int,
+        ): LyricsRequestIdentity? {
+            if (!enabled || snap.ad || snap.live || snap.id.isBlank() ||
+                snap.id != selectedWatchVideoId || snap.title.isBlank()) return null
+            return LyricsRequestIdentity(
+                snap.id, LyricsQuery.title(snap.title, snap.artist).lowercase(),
+                snap.artist.trim().lowercase(), providerVersion
+            )
+        }
+    }
+}
 
 internal object LyricsParser {
     private val stamp = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?]""")

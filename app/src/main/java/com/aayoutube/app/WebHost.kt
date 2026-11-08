@@ -87,6 +87,9 @@ object WebHost {
     val canGoBack = MutableStateFlow(false)
     /** The player page shows a video (watch or live page). */
     val onWatchPage = MutableStateFlow(false)
+    /** The selected /watch?v= ID, set by navigation rather than a delayed
+     * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
+    val selectedWatchVideoId = MutableStateFlow("")
     // The WebView instance survives full document loads. Old JS bridge
     // callbacks can arrive after SPA/full navigation and must not revive the
     // previous video's notification or its recovery watchdog.
@@ -916,6 +919,7 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        selectedWatchVideoId.value = ""
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
         if (!preserveCarOwners) {
@@ -1310,6 +1314,7 @@ object WebHost {
             val route = runCatching { Uri.parse(url).path }.getOrNull()
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
             expectedWatchVideoId = incomingId?.takeIf { route == "/watch" && it.isNotBlank() }
+            selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
@@ -1365,6 +1370,7 @@ object WebHost {
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
             expectedWatchVideoId = parsed?.getQueryParameter("v")
                 ?.takeIf { route == "/watch" && it.isNotBlank() }
+            selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             onWatchPage.value = mainFrameAllowsPlayback
             if (PlaybackRoutePolicy.shouldClearPrevious(
                     route, parsed?.getQueryParameter("v"), snapshot.value.id)) {
