@@ -6,17 +6,30 @@ import org.junit.Test
 class PlaybackRecoveryTest {
     @Test fun pauseAndStopAreReplayedUntilAcknowledged() {
         val intent = TerminalTransportIntent()
-        intent.onCommand(Msg.PAUSE)
+        val pause = intent.onCommand(Msg.PAUSE)!!
         assertEquals(Msg.PAUSE, intent.pendingCommand)
-        intent.acknowledge(Msg.STOP) // wrong ACK must not clear Pause
+        intent.acknowledge(Msg.STOP, pause)
         assertEquals(Msg.PAUSE, intent.pendingCommand)
-        intent.acknowledge(Msg.PAUSE)
+        intent.acknowledge(Msg.PAUSE, pause)
         assertNull(intent.pendingCommand)
-        intent.onCommand(Msg.STOP)
+        val stop = intent.onCommand(Msg.STOP)!!
         assertEquals(Msg.STOP, intent.pendingCommand)
-        intent.acknowledge(Msg.PAUSE)
+        intent.acknowledge(Msg.PAUSE, stop)
         assertEquals(Msg.STOP, intent.pendingCommand)
-        intent.acknowledge(Msg.STOP)
+        intent.acknowledge(Msg.STOP, stop)
+        assertNull(intent.pendingCommand)
+    }
+
+    @Test fun sameActionAckCannotClearLaterManualPause() {
+        val intent = TerminalTransportIntent()
+        val old = intent.onCommand(Msg.PAUSE)!!
+        intent.onCommand(Msg.PLAY)
+        val newer = intent.onCommand(Msg.PAUSE)!!
+        assertTrue(newer > old)
+        intent.acknowledge(Msg.PAUSE, old)
+        assertEquals(Msg.PAUSE, intent.pendingCommand)
+        assertEquals(newer, intent.pendingId)
+        intent.acknowledge(Msg.PAUSE, newer)
         assertNull(intent.pendingCommand)
     }
 
@@ -89,10 +102,29 @@ class PlaybackRecoveryTest {
         assertNull(r.onMissingPlayer())
     }
 
+    @Test fun mediaRecoverySurvivesLinkLossWithoutAPlayingSnapshot() {
+        val r = PlaybackRecovery()
+        assertTrue(r.onLinkLost(Snap(id = "video", recovering = true)))
+        assertFalse(r.onExistingPlayer(Snap(id = "video", buffering = true)))
+        assertTrue(r.active)
+        assertTrue(r.onExistingPlayer(Snap(id = "video", playing = false)))
+        assertFalse(r.active)
+    }
+
+    @Test fun userPauseWhileBufferingCancelsRecovery() {
+        val r = PlaybackRecovery()
+        assertTrue(r.onLinkLost(Snap(id = "video", playing = true)))
+        assertFalse(r.onExistingPlayer(Snap(id = "video", buffering = true)))
+        assertFalse(r.onExistingPlayer(Snap(id = "video", userPaused = true)))
+        assertFalse(r.active)
+    }
+
     @Test fun bufferingExistingPlayerMustNotTriggerPlay() {
         val r = PlaybackRecovery()
         assertTrue(r.onLinkLost(Snap(id = "video", playing = true)))
         assertFalse(r.onExistingPlayer(Snap(id = "video", buffering = true)))
+        assertTrue(r.active)
+        assertTrue(r.onExistingPlayer(Snap(id = "video", playing = false)))
         assertFalse(r.active)
     }
 }

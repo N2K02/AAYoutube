@@ -77,9 +77,11 @@ class BackgroundQualityRecoveryContractTest {
 
     @Test fun explicitMediaPauseIsReplayedAfterWebProcessReconnect() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
-        assertTrue(media.contains("terminalIntent.pendingCommand?.let { send(it) }"))
+        assertTrue(media.contains("terminalIntent.pendingCommand?.let { pending ->"))
+        assertTrue(media.contains("putLong(\"terminalId\", terminalIntent.pendingId ?: 0L)"))
         assertTrue(media.contains("terminalIntent.onCommand(command)"))
-        assertTrue(media.contains("terminalIntent.acknowledge(message.data.getInt(\"command\", -1))"))
+        assertTrue(media.contains("terminalIntent.acknowledge("))
+        assertTrue(media.contains("message.data.getLong(\"terminalId\", -1L)"))
         assertTrue(media.contains("terminalIntent.pendingCommand != null || snapshot.playing"))
         assertTrue(media.contains("!bound && snapshot.id.isNotBlank()) ensureWeb()"))
         assertTrue(media.contains("terminalIntent.clear()"))
@@ -89,6 +91,19 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("send(Msg.TRANSPORT_ACK"))
         assertTrue(web.contains("what == Msg.TRANSPORT_ACK"))
         assertTrue(media.contains("terminalIntent.pendingCommand == null) stopSelf()"))
+    }
+
+    @Test fun unrequestedPauseRetainsForegroundWhileWatchdogRecovers() {
+        val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        val proto = source("app/src/main/java/com/aayoutube/app/Protocol.kt")
+        assertTrue(proto.contains("val recovering: Boolean = false"))
+        assertTrue(proto.contains("putBoolean(\"recovering\", recovering)"))
+        assertTrue(proto.contains("recovering = b.getBoolean(\"recovering\")"))
+        assertTrue(web.contains("incoming.copy(recovering = !incoming.playing"))
+        assertTrue(web.contains("&& incoming.id.isNotBlank() && keepRecovering()"))
+        assertTrue(media.contains("recoveringPlayback = recovery.active || fresh.recovering"))
+        assertTrue(media.contains("s.buffering || s.recovering -> PlaybackStateCompat.STATE_BUFFERING"))
     }
 
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {

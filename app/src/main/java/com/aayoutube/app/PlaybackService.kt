@@ -96,7 +96,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 handler.removeCallbacks(registrationTimeout)
                 // Pause and Stop may have been pressed while :web was absent.
                 // Replay those first, before asking for a player snapshot.
-                terminalIntent.pendingCommand?.let { send(it) }
+                terminalIntent.pendingCommand?.let { pending ->
+                    send(pending, Bundle().apply {
+                        putLong("terminalId", terminalIntent.pendingId ?: 0L)
+                    })
+                }
                 drainPending()
                 send(Msg.SYNC)
             }
@@ -109,12 +113,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
             // unavailable. Do not replay a stale, pre-disconnect play intent.
             if (fresh.userPaused) recovery.cancel()
             val resume = recovery.onExistingPlayer(fresh)
-            recoveringPlayback = recovery.active
+            recoveringPlayback = recovery.active || fresh.recovering
             snapshot = fresh
             publish(fresh)
             if (resume) send(Msg.PLAY)
         } else if (message.what == Msg.TRANSPORT_ACK && !quitRequested && validWebMessage(message)) {
-            terminalIntent.acknowledge(message.data.getInt("command", -1))
+            terminalIntent.acknowledge(
+                message.data.getInt("command", -1),
+                message.data.getLong("terminalId", -1L)
+            )
         } else if (message.what == Msg.PLAYER_MISSING && !quitRequested && validWebMessage(message)) {
             // OPEN is allowed only when the WebView confirms the player is missing.
             val wanted = recovery.onMissingPlayer()
@@ -224,7 +231,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private fun send(command: Int, data: Bundle = Bundle(), replyTo: Messenger? = null) {
         if (shuttingDown || (quitRequested && command != Msg.QUIT)) return
-        terminalIntent.onCommand(command)
+        val replayId = data.getLong("terminalId", 0L)
+        if ((command == Msg.PAUSE || command == Msg.STOP) && replayId > 0L) {
+            if (terminalIntent.pendingCommand != command ||
+                terminalIntent.pendingId != replayId) return
+        } else {
+            val id = terminalIntent.onCommand(command)
+            if (command == Msg.PAUSE || command == Msg.STOP)
+                id?.let { data.putLong("terminalId", it) }
+        }
         // A terminal transport action must not disappear merely because
         // the WebView Messenger was temporarily disconnected.
         if ((command == Msg.PAUSE || command == Msg.STOP) &&
@@ -264,8 +279,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private fun publish(s: Snap) {
         val state = when {
-            s.buffering -> PlaybackStateCompat.STATE_BUFFERING
             s.playing -> PlaybackStateCompat.STATE_PLAYING
+            s.buffering || s.recovering -> PlaybackStateCompat.STATE_BUFFERING
             s.ended -> PlaybackStateCompat.STATE_STOPPED
             s.id.isNotEmpty() -> PlaybackStateCompat.STATE_PAUSED
             else -> PlaybackStateCompat.STATE_NONE

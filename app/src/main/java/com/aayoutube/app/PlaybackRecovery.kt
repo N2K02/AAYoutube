@@ -9,7 +9,8 @@ internal class PlaybackRecovery {
     val active: Boolean get() = intended != null
 
     fun onLinkLost(snapshot: Snap): Boolean {
-        if (snapshot.playing && snapshot.id.isNotBlank()) intended = snapshot
+        if ((snapshot.playing || snapshot.recovering) && !snapshot.userPaused &&
+            !snapshot.ended && snapshot.id.isNotBlank()) intended = snapshot
         return active
     }
 
@@ -19,9 +20,15 @@ internal class PlaybackRecovery {
     fun onExistingPlayer(current: Snap): Boolean {
         val previous = intended ?: return false
         if (current.id.isBlank()) return false // The WebView might still be loading.
+        if (current.id != previous.id || current.userPaused || current.ended) {
+            intended = null
+            return false
+        }
+        // The page can report BUFFERING before it reports its final paused
+        // state. Retain resume intent until that transition is complete.
+        if (current.buffering) return false
         intended = null
-        return current.id == previous.id && !current.userPaused &&
-            !current.playing && !current.buffering && !current.ended
+        return !current.playing
     }
 
     fun onMissingPlayer(): Snap? = intended.also { intended = null }
@@ -35,20 +42,29 @@ internal class PlaybackRecovery {
 internal class TerminalTransportIntent {
     var pendingCommand: Int? = null
         private set
+    var pendingId: Long? = null
+        private set
+    private var nextId = 1L
 
-    fun onCommand(command: Int) {
+    /** Each NEW terminal command gets its own ID. Reconnect replays keep it. */
+    fun onCommand(command: Int): Long? {
         when (command) {
-            Msg.PAUSE, Msg.STOP -> pendingCommand = command
-            Msg.PLAY, Msg.OPEN, Msg.SEARCH, Msg.NEXT, Msg.PREV, Msg.QUIT ->
-                pendingCommand = null
+            Msg.PAUSE, Msg.STOP -> {
+                pendingCommand = command
+                pendingId = nextId++
+            }
+            Msg.PLAY, Msg.OPEN, Msg.SEARCH, Msg.NEXT, Msg.PREV, Msg.QUIT -> clear()
         }
+        return pendingId
     }
 
-    /** Only the current connection's matching transport ACK confirms delivery.
-     * A page state marked paused may predate STOP, so it is not sufficient. */
-    fun acknowledge(command: Int) {
-        if (pendingCommand == command) pendingCommand = null
+    /** An old Pause ACK must not acknowledge a newer Pause in the same epoch. */
+    fun acknowledge(command: Int, id: Long) {
+        if (pendingCommand == command && pendingId == id) clear()
     }
 
-    fun clear() { pendingCommand = null }
+    fun clear() {
+        pendingCommand = null
+        pendingId = null
+    }
 }

@@ -926,7 +926,10 @@ object WebHost {
             Msg.PAUSE -> {
                 userPausedAt = SystemClock.elapsedRealtime()
                 cmd("pause")
-                send(Msg.TRANSPORT_ACK, Bundle().apply { putInt("command", Msg.PAUSE) })
+                send(Msg.TRANSPORT_ACK, Bundle().apply {
+                    putInt("command", Msg.PAUSE)
+                    putLong("terminalId", d.getLong("terminalId", -1L))
+                })
             }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
             Msg.NEXT -> cmd("next")
@@ -935,7 +938,10 @@ object WebHost {
             Msg.STOP -> {
                 cmd("pause")
                 if (!shown) release()
-                send(Msg.TRANSPORT_ACK, Bundle().apply { putInt("command", Msg.STOP) })
+                send(Msg.TRANSPORT_ACK, Bundle().apply {
+                    putInt("command", Msg.STOP)
+                    putLong("terminalId", d.getLong("terminalId", -1L))
+                })
             }
             Msg.QUIT -> {
                 AppLog.add("LINK", "Exit")
@@ -1135,13 +1141,17 @@ object WebHost {
         }
     }
 
-    private fun publish(s: Snap) {
+    private fun publish(incoming: Snap) {
         val previous = snapshot.value
-        if (s.userPaused && !s.playing) {
+        if (incoming.userPaused && !incoming.playing) {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
-        } else if (s.playing) playbackWanted = true
-        if (s.ended || s.id.isBlank()) playbackWanted = false
+        } else if (incoming.playing) playbackWanted = true
+        if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
+        // Keep foreground media priority while the active watchdog retries a
+        // spontaneous pause. Never preserve this for explicit Pause or ending.
+        val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
+            !incoming.ended && incoming.id.isNotBlank() && keepRecovering())
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
