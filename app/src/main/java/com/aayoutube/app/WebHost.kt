@@ -372,8 +372,12 @@ object WebHost {
         val now = SystemClock.elapsedRealtime()
         // The old car window's teardown can pause the page a moment before the
         // new window binds. Keep the user's play intent unless they paused.
-        val play = state.playing || (playingWhenCarLeft && now - carLeftAt < 8_000 &&
-            now - userPausedAt > 8_000)
+        // A Chromium video renderer can pause just before Android Auto replaces
+        // its window. Do not turn an active recovery into a permanently paused
+        // new document: the new page would otherwise lose its watchdog intent.
+        val play = CarWindowPlaybackIntent.shouldAutoplay(state, playbackWanted,
+            playingWhenCarLeft && now - carLeftAt < 8_000 &&
+                now - userPausedAt > 8_000)
         val restored = if (isWatch && state.id.isNotBlank()) {
             uri!!.buildUpon().clearQuery().apply {
                 uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
