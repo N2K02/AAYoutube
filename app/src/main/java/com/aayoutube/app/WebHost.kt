@@ -1296,12 +1296,12 @@ object WebHost {
             // here too, not just on YouTube's same-document SPA transitions.
             val route = runCatching { Uri.parse(url).path }.getOrNull()
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
-            if (!mainFrameAllowsPlayback && previous.id.isNotBlank()) {
+            if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 snapshot.value = Snap()
                 send(Msg.STATE, Snap().toBundle())
-                AppLog.add("PLAY", "Leaving watch document: cleared previous media session")
+                AppLog.add("PLAY", "Navigation cleared previous media session")
             }
             sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
                 incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
@@ -1346,12 +1346,13 @@ object WebHost {
             adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
             canGoBack.value = view.canGoBack()
             val wasWatch = onWatchPage.value
-            val route = runCatching { Uri.parse(url).path }.getOrNull()
+            val parsed = runCatching { Uri.parse(url) }.getOrNull()
+            val route = parsed?.path
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
             onWatchPage.value = mainFrameAllowsPlayback
-            if (!mainFrameAllowsPlayback && snapshot.value.id.isNotBlank()) {
-                // YouTube SPA transitions do not invoke onPageStarted. Clear the
-                // media identity even if the old page script fails to report.
+            if (PlaybackRoutePolicy.shouldClearPrevious(
+                    route, parsed?.getQueryParameter("v"), snapshot.value.id)) {
+                // SPA navigation can move from video A to B without onPageStarted.
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 publish(Snap())

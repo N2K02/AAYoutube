@@ -222,8 +222,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT in 26..30 && Features.current.autoPip &&
             watchTabVisible && WebHost.snapshot.value.playing &&
             WebHost.isOnWatchPage() && onPhoneScreen()) {
+            // Capture full-player bounds BEFORE PiP CSS mutates the page.
+            val params = pipParams()
             WebHost.pip(true)
-            val entered = runCatching { enterPictureInPictureMode(pipParams()) }.getOrDefault(false)
+            val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
             if (!entered) WebHost.pip(false)
         }
     }
