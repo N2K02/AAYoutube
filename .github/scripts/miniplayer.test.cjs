@@ -777,6 +777,9 @@ test('leaving watch clears stale media identity instead of infinitely recovering
   p.flush();
   assert.equal(p.stateReports.at(-1).id, '');
   assert.equal(p.stateReports.at(-1).playing, false);
+  p.video.paused = true;
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdog must not restart a stale video on YouTube Home');
   const count = p.stateReports.length;
   p.runIntervals();
   assert.equal(p.stateReports.length, count, 'clear state sent exactly once');
