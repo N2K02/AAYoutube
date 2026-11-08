@@ -1245,6 +1245,17 @@ object WebHost {
             val incomingId = runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull()
             val outgoingId = runCatching { Uri.parse(lastUrl).getQueryParameter("v") }.getOrNull()
             val previous = snapshot.value
+            // A full document navigation destroys the old page's JS before it
+            // can send the last empty snapshot. Clear the native media identity
+            // here too, not just on YouTube's same-document SPA transitions.
+            val route = runCatching { Uri.parse(url).path }.getOrNull()
+            if (!PlaybackRoutePolicy.isPlaybackRoute(route) && previous.id.isNotBlank()) {
+                playbackWanted = false
+                unexpectedPauseRecoveryUntil = 0L
+                snapshot.value = Snap()
+                send(Msg.STATE, Snap().toBundle())
+                AppLog.add("PLAY", "Leaving watch document: cleared previous media session")
+            }
             sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
                 incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
                 incomingId to previous.posMs else null

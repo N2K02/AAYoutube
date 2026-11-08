@@ -93,6 +93,14 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(media.contains("terminalIntent.pendingCommand == null) stopSelf()"))
     }
 
+    @Test fun fullDocumentNavigationClearsStaleMediaBeforeScriptIsReplaced() {
+        val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(host.contains("!PlaybackRoutePolicy.isPlaybackRoute(route) && previous.id.isNotBlank()"))
+        assertTrue(host.contains("snapshot.value = Snap()"))
+        assertTrue(host.contains("send(Msg.STATE, Snap().toBundle())"))
+        assertTrue(host.contains("playbackWanted = false"))
+    }
+
     @Test fun unrequestedPauseRetainsForegroundWhileWatchdogRecovers() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
