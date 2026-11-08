@@ -796,13 +796,15 @@ object WebHost {
                 // CookieManager's completion may arrive after Quit, renderer
                 // replacement, or a car/phone handoff. Never navigate a new
                 // page using a callback belonging to the old one.
+                // The secondary browse page shares cookies, so invalidate it
+                // regardless of which player renderer owned the sign-out.
+                BrowseHost.onSessionCleared()
                 if (generation != webGeneration || web !== page) {
                     AppLog.add("ACCOUNT", "Ignored delayed sign-out navigation for replaced WebView")
                     return@post
                 }
                 page?.clearCache(true)
                 page?.loadUrl(home())
-                BrowseHost.onSessionCleared()
             }
         }
     }
@@ -1221,10 +1223,7 @@ object WebHost {
 
     // ---------------------------------------------------------------- WebView clients
 
-    internal fun isYouTubeHost(host: String?): Boolean {
-        val h = host?.lowercase() ?: return false
-        return h == "youtube.com" || h.endsWith(".youtube.com")
-    }
+    internal fun isYouTubeHost(host: String?): Boolean = YouTubeSavedHostPolicy.matches(host)
 
     internal fun allowedHost(host: String?): Boolean {
         val h = host?.lowercase() ?: return false

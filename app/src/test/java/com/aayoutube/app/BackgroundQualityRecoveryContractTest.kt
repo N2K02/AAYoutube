@@ -134,7 +134,7 @@ class BackgroundQualityRecoveryContractTest {
     @Test fun savedAndHistoricalUrlsRejectLookalikeYouTubeHosts() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("internal fun isYouTubeHost(host: String?)"))
-        assertTrue(web.contains("h == \"youtube.com\" || h.endsWith(\".youtube.com\")"))
+        assertTrue(web.contains("YouTubeSavedHostPolicy.matches(host)"))
         assertTrue(web.contains("u.scheme == \"https\" && isYouTubeHost(host)"))
         assertTrue(web.contains("u.scheme != \"https\" || !isYouTubeHost(u.host)"))
     }

@@ -5,15 +5,15 @@ import org.junit.Test
 
 class YouTubeSavedHostTest {
     @Test fun exactDomainAndSubdomainsAreAccepted() {
-        assertTrue(WebHost.isYouTubeHost("youtube.com"))
-        assertTrue(WebHost.isYouTubeHost("m.youtube.com"))
-        assertTrue(WebHost.isYouTubeHost("WWW.YOUTUBE.COM"))
+        assertTrue(YouTubeSavedHostPolicy.matches("youtube.com"))
+        assertTrue(YouTubeSavedHostPolicy.matches("m.youtube.com"))
+        assertTrue(YouTubeSavedHostPolicy.matches("WWW.YOUTUBE.COM"))
     }
 
     @Test fun suffixLookalikesAndOtherHostsAreRejected() {
         for (host in listOf("evilyoutube.com", "notyoutube.com", "youtube.com.evil.test", "youtube.co", "youtu.be", "google.com", "youtube.com@evil.test", "")) {
-            assertFalse(host, WebHost.isYouTubeHost(host))
+            assertFalse(host, YouTubeSavedHostPolicy.matches(host))
         }
-        assertFalse(WebHost.isYouTubeHost(null))
+        assertFalse(YouTubeSavedHostPolicy.matches(null))
     }
 }
