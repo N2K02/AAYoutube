@@ -814,11 +814,14 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   const p = playerPage({ paused: true });
   p.video.paused = true;
   p.flush(); // bind native player events
-  p.emit('click', { isTrusted: true, target: { closest: () => null } });
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', closest: () => null } });
   p.video.play();
   p.video.trigger('play');
   assert.equal(p.video.paused, true, 'unrelated click is not Play');
-  p.emit('click', { isTrusted: true, target: { closest: () => ({}) } });
+  const playButton = { tagName: 'BUTTON', closest(selector) {
+    return selector.includes('video, .ytp-play-button') ? { tagName: 'VIDEO' } : null;
+  } };
+  p.emit('click', { isTrusted: true, target: playButton });
   p.video.play();
   p.video.trigger('play');
   assert.equal(p.video.paused, false, 'trusted player gesture can Play');
