@@ -39,7 +39,7 @@ class MediaResumeTargetTest {
         assertTrue(media.contains("send(Msg.PLAY, Bundle().apply"))
         assertTrue(media.contains("putString(\"id\", target.id)"))
         assertTrue(web.contains("Msg.PLAY -> {"))
-        assertTrue(web.contains("if (web == null)"))
+        assertTrue(web.contains("if (web == null || !mainFrameAllowsPlayback)"))
         assertTrue(web.contains("open(resumeId, d.getLong(\"sec\", 0L))"))
         assertTrue(web.contains("send(Msg.STATE, Snap().toBundle())"))
     }

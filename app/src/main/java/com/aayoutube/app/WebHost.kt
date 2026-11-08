@@ -940,10 +940,10 @@ object WebHost {
             Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
             Msg.SEARCH -> search(d.getString("q").orEmpty())
             Msg.PLAY -> {
-                if (web == null) {
+                if (web == null || !mainFrameAllowsPlayback) {
                     val resumeId = d.getString("id").orEmpty()
                     if (resumeId.isNotBlank()) {
-                        AppLog.add("MEDIA", "Restoring absent WebView for Play")
+                        AppLog.add("MEDIA", "Restoring selected video for Play")
                         open(resumeId, d.getLong("sec", 0L))
                     } else {
                         AppLog.add("MEDIA", "Play ignored: no selected video to restore")
