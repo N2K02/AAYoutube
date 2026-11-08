@@ -101,6 +101,9 @@ object WebHost {
     /** Set by the open screen: closes it (Exit in the notification). */
     var onQuit: (() -> Unit)? = null
 
+    /** A car-only launch may have no MainActivity to receive Quit. */
+    var onCarQuit: (() -> Unit)? = null
+
     @Volatile var activityVisible = false
         private set
 
@@ -954,7 +957,7 @@ object WebHost {
                     m.replyTo?.send(Message.obtain(null, Msg.QUIT_ACK))
                 }.onFailure { AppLog.add("LINK", "Quit acknowledgement failed") }
                 cmd("pause")
-                val close = onQuit
+                val close = onQuit ?: onCarQuit
                 if (close != null) close() else release()
             }
             Msg.FREEZE -> if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()

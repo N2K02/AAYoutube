@@ -105,7 +105,7 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("handler.removeCallbacks(idleStop)"))
         assertTrue(source.contains("!snapshot.playing && !recoveringPlayback && !quitRequested"))
         assertTrue(source.contains("idleSince = 0L"))
-        assertTrue(source.contains("snapshot.copy(playing = false, buffering = false)"))
+        assertTrue(source.contains("snapshot.copy(playing = false, buffering = false, recovering = false, userPaused = true)"))
         assertTrue(source.contains("!snapshot.playing && !snapshot.buffering && !recoveringPlayback"))
         assertTrue(source.contains("pending.isNotEmpty() || awaitingRegistration"))
         assertFalse(source.contains("retries = 0\n            recoveringPlayback = false"))

@@ -24,6 +24,15 @@ class QuitNavigationContractTest {
         val main = src("app/src/main/java/com/aayoutube/app/MainActivity.kt")
         assertTrue(main.contains("compatConnection?.command(Commands.EXIT)"))
         assertTrue(main.contains("PlaybackService.ACTION_QUIT"))
+        assertTrue(main.contains("private val quitPhone: () -> Unit"))
+        assertTrue(main.contains("if (WebHost.onQuit === quitPhone) WebHost.onQuit = null"))
+        val web = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("val close = onQuit ?: onCarQuit"))
+        assertTrue(car.contains("WebHost.onCarQuit = carQuitCallback"))
+        assertTrue(car.contains("private fun shutdownCarOnlySession()"))
+        assertTrue(car.contains("WebHost.release()"))
+        assertTrue(car.contains("android.os.Process.killProcess(android.os.Process.myPid())"))
+        assertTrue(car.contains("if (WebHost.onCarQuit === carQuitCallback) WebHost.onCarQuit = null"))
     }
 
     @Test fun settingsHasNoBottomBarAndHeaderHasNoGear() {

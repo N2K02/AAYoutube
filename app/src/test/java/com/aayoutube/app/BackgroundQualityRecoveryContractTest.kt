@@ -106,6 +106,12 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(media.contains("s.buffering || s.recovering -> PlaybackStateCompat.STATE_BUFFERING"))
     }
 
+    @Test fun transportPauseStopAndQuitDropStaleRecoveryImmediately() {
+        val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        assertTrue(media.contains("snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)"))
+        assertTrue(media.contains("snapshot.copy(playing = false, buffering = false, recovering = false, userPaused = true)"))
+    }
+
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(media.contains("handler.removeCallbacks(demoteForeground)"))

@@ -403,7 +403,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onPause() {
                     send(Msg.PAUSE)
-                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false)
+                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
                 }
                 override fun onSkipToNext() {
@@ -428,7 +428,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onStop() {
                     send(Msg.STOP)
-                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false)
+                    snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
                 }
                 override fun onCustomAction(action: String?, extras: Bundle?) {
@@ -478,7 +478,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         handler.removeCallbacks(freeze)
         handler.removeCallbacks(idleStop)
         handler.removeCallbacks(demoteForeground)
-        snapshot = snapshot.copy(playing = false, buffering = false)
+        snapshot = snapshot.copy(playing = false, buffering = false, recovering = false, userPaused = true)
         publish(snapshot)
         if (outgoing == null) ensureWeb()
         send(Msg.QUIT, replyTo = incoming)

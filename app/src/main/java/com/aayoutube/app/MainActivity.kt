@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
     private var compatConnection: CompatMediaConnection? = null
     private var watchTabVisible = true
     private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
+    private val quitPhone: () -> Unit = { runOnUiThread { closeEverything() } }
 
     private val askNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -54,7 +55,7 @@ class MainActivity : ComponentActivity() {
         // Opened from the icon (not a link, not after rotation): start on YouTube Home.
         if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) WebHost.goHomeIfIdle()
         handleIntent(intent)
-        WebHost.onQuit = { runOnUiThread { closeEverything() } }
+        WebHost.onQuit = quitPhone
         setContent { AAYoutubeTheme { AppRoot(this) } }
     }
 
@@ -110,7 +111,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         started -= this
         resumed -= this
-        if (isFinishing && started.isEmpty()) WebHost.onQuit = null
+        if (WebHost.onQuit === quitPhone) WebHost.onQuit = null
     }
 
     override fun onStop() {

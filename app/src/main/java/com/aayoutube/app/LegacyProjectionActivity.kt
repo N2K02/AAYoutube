@@ -105,6 +105,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     // player back into a window that is no longer on the car screen.
     private val carToken = "legacy-projection@" + Integer.toHexString(System.identityHashCode(this))
     private var inactiveLogged = false
+    private var carQuitInProgress = false
+    private val carQuitCallback: () -> Unit = { runOnUiThread { shutdownCarOnlySession() } }
     private val rebindWhenActive = Runnable {
         if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable
         // A fallback instance can have been started while a newer car window
@@ -112,10 +114,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // the view: otherwise music/media callbacks remain attached to a
         // stopped instance until another lifecycle event happens.
         WebHost.showOnCar(true, carToken)
+        WebHost.onCarQuit = carQuitCallback
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
         else BrowseHost.resume()
         WebHost.setHold(false)
         WebHost.requestLink = relink
+        WebHost.onCarQuit = carQuitCallback
         connectMedia()
         val frame = playerContainer ?: return@Runnable
         if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)
@@ -212,6 +216,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // The newest car activity instance is the one Android Auto shows.
         val wasAlreadyProjected = WebHost.carShown
         WebHost.claimCarHost(carToken, onBecameActive)
+        WebHost.onCarQuit = carQuitCallback
         WebHost.showOnCar(true, carToken)
         // Preserve a car mini-player across host window replacement.
         if (!wasAlreadyProjected || WebHost.mode.value != WebHost.PlayerMode.MINI)
@@ -594,6 +599,29 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     .setAction(PlaybackService.ACTION_QUIT)
             )
         }.onFailure { AppLog.add("CAR", "Quit intent failed: " + it.javaClass.simpleName) }
+        // As on the phone, Quit must still succeed if the media process
+        // cannot connect, e.g. car-only launch without an existing session.
+        handler.postDelayed({
+            if (WebHost.isActiveCarHost(carToken) && !carQuitInProgress &&
+                !isFinishing && !isDestroyed) shutdownCarOnlySession()
+        }, 1_800L)
+    }
+
+    private fun shutdownCarOnlySession() {
+        if (carQuitInProgress) return
+        carQuitInProgress = true
+        if (WebHost.onCarQuit === carQuitCallback) WebHost.onCarQuit = null
+        if (WebHost.requestLink === relink) WebHost.requestLink = null
+        mediaController?.disconnect()
+        mediaController = null
+        WebHost.cmd("pause")
+        BrowseHost.release()
+        WebHost.release()
+        finish()
+        // onStop cancels the car handler, so use a separate shutdown handler.
+        Handler(Looper.getMainLooper()).postDelayed({
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }, 500L)
     }
 
     /** The native media process remains the sole owner of Android Auto media commands. */
@@ -623,6 +651,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // Only this instance's ownership ends here. A newer car window keeps
         // the player, its car layout and its foreground video quality.
         WebHost.releaseCarHost(carToken)
+        if (WebHost.onCarQuit === carQuitCallback) WebHost.onCarQuit = null
         playerContainer?.let { WebHost.detach(it) }
         WebHost.showOnCar(false, carToken)
         if (WebHost.requestLink === relink) {
@@ -646,6 +675,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }
         handler.removeCallbacksAndMessages(null)
         WebHost.releaseCarHost(carToken)
+        if (WebHost.onCarQuit === carQuitCallback) WebHost.onCarQuit = null
         WebHost.showOnCar(false, carToken)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
