@@ -1045,8 +1045,14 @@
    */
   var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
   function backgroundWatchdog() {
+    // Only a watch/live page owns an active media session. A stale video
+    // element/URL parameter can survive SPA navigation back to YouTube Home.
+    if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
+      bgWatch.id = ''; bgWatch.wanted = false; bgWatch.explicitPause = false;
+      return;
+    }
     var v = getVideo(), id = qualityVideoId();
-    if (BROWSE || !v || !id || v.ended) return;
+    if (!v || !id || v.ended) return;
     // An intentionally disabled Background play setting still wins offscreen.
     // In the phone, PiP, mini-player and car, an unexpected pause is recoverable.
     if ((A.isBg || A.hold) && !A.isCar && CFG.backgroundPlay === false) return;
