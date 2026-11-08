@@ -91,6 +91,9 @@ object WebHost {
     // callbacks can arrive after SPA/full navigation and must not revive the
     // previous video's notification or its recovery watchdog.
     private var mainFrameAllowsPlayback = true
+    // A /watch route can change video ID without recreating the WebView. Use
+    // the current history ID to reject queued JS reports from the old video.
+    private var expectedWatchVideoId: String? = null
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     internal val lyricsClock = MutableStateFlow(LyricsClock())
@@ -906,6 +909,7 @@ object WebHost {
         frozen = false
         snapshot.value = Snap()
         mainFrameAllowsPlayback = false
+        expectedWatchVideoId = null
         if (!preserveCarOwners) {
             // A stopped/idle renderer has no live video. Inform Android Auto
             // so its next Play comes from the saved last selection, not a
@@ -1113,7 +1117,8 @@ object WebHost {
         }.getOrNull() ?: return
         main.post {
             if (generation != webGeneration) return@post
-            if (s.id.isNotBlank() && !mainFrameAllowsPlayback) {
+            if (s.id.isNotBlank() && (!mainFrameAllowsPlayback ||
+                    (expectedWatchVideoId != null && expectedWatchVideoId != s.id))) {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
@@ -1296,6 +1301,7 @@ object WebHost {
             // here too, not just on YouTube's same-document SPA transitions.
             val route = runCatching { Uri.parse(url).path }.getOrNull()
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            expectedWatchVideoId = incomingId?.takeIf { route == "/watch" && it.isNotBlank() }
             if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
@@ -1349,6 +1355,8 @@ object WebHost {
             val parsed = runCatching { Uri.parse(url) }.getOrNull()
             val route = parsed?.path
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            expectedWatchVideoId = parsed?.getQueryParameter("v")
+                ?.takeIf { route == "/watch" && it.isNotBlank() }
             onWatchPage.value = mainFrameAllowsPlayback
             if (PlaybackRoutePolicy.shouldClearPrevious(
                     route, parsed?.getQueryParameter("v"), snapshot.value.id)) {
