@@ -191,7 +191,11 @@ class MainActivity : ComponentActivity() {
     private fun pipParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
         val bounds = Rect()
-        if (WebHost.pipSourceRect(bounds)) builder.setSourceRectHint(bounds)
+        // SourceRectHint controls the transition animation, not the desired
+        // floating window size. Never feed it a rect measured *inside* PiP:
+        // that can keep shrinking the hint across state updates.
+        if (!isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
+            builder.setSourceRectHint(bounds)
         if (Build.VERSION.SDK_INT >= 31) {
             builder.setAutoEnterEnabled(
                 Features.current.autoPip && watchTabVisible && WebHost.snapshot.value.playing &&
@@ -205,6 +209,9 @@ class MainActivity : ComponentActivity() {
     fun updatePip(isWatchTab: Boolean = watchTabVisible) {
         if (Build.VERSION.SDK_INT < 26 || !onPhoneScreen()) return
         watchTabVisible = isWatchTab
+        // Once inside PiP, keep the initial 16:9 size request unchanged.
+        // Repeated updates from the now-small window can poison the hint.
+        if (isInPictureInPictureMode) return
         runCatching { setPictureInPictureParams(pipParams()) }
     }
 

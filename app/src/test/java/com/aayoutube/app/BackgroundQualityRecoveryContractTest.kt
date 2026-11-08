@@ -148,6 +148,20 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(web.contains("mainFrameAllowsPlayback = false"))
     }
 
+    @Test fun pipTransitionNeverUsesTheMiniWindowOrRecyclesPipRects() {
+        val main = source("app/src/main/java/com/aayoutube/app/MainActivity.kt")
+        val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val manifest = source("app/src/main/AndroidManifest.xml")
+        assertTrue(main.contains("if (!isInPictureInPictureMode && WebHost.pipSourceRect(bounds))"))
+        assertTrue(main.contains("if (isInPictureInPictureMode) return"))
+        assertTrue(main.contains("setAspectRatio(Rational(16, 9))"))
+        assertTrue(host.contains("if (mode.value != PlayerMode.FULL || !isOnWatchPage()) return false"))
+        assertTrue(host.contains("StandardPipPolicy.isValidSource(out.width(), out.height(), density)"))
+        assertTrue(manifest.contains("android:minWidth=\"240dp\""))
+        assertTrue(manifest.contains("android:minHeight=\"135dp\""))
+        assertFalse(manifest.contains("android:minWidth=\"1dp\""))
+    }
+
     @Test fun mediaServiceKeepsForegroundThroughTransientPause() {
         val media = source("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(media.contains("handler.removeCallbacks(demoteForeground)"))

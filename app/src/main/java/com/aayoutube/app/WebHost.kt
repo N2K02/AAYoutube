@@ -192,10 +192,8 @@ object WebHost {
     private fun savedUrl(): String? {
         if (!Features.current.resumeLast) return null
         val u = webPrefs.getString("lastUrl", null) ?: return null
-        val host = Uri.parse(u).host.orEmpty()
-        return u.takeIf {
-            u.scheme == "https" && isYouTubeHost(host)
-        }
+        val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return null
+        return u.takeIf { uri.scheme == "https" && isYouTubeHost(uri.host) }
     }
 
     private fun saveUrl(url: String) {
@@ -600,9 +598,14 @@ object WebHost {
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
     fun pipSourceRect(out: android.graphics.Rect): Boolean {
+        // Only a real, full-size player is a valid transition origin.
+        // The internal 224dp mini window must never seed Android's PiP bounds.
+        if (mode.value != PlayerMode.FULL || !isOnWatchPage()) return false
         val w = web ?: return false
-        return w.isAttachedToWindow && w.getGlobalVisibleRect(out) &&
-            out.width() > 0 && out.height() > 0
+        if (!w.isAttachedToWindow || !w.getGlobalVisibleRect(out)) return false
+        val density = w.resources.displayMetrics.density
+        // Ignore stale/1px rectangles while Activity and car displays reparent.
+        return StandardPipPolicy.isValidSource(out.width(), out.height(), density)
     }
 
     fun refreshBackgroundQuality() {
