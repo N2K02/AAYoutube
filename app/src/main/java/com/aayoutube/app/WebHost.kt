@@ -1041,7 +1041,20 @@ object WebHost {
         }
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
         // aay=1 tells the page script to start playing as soon as the video is ready.
-        load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
+        // Preserve playlist/Mix context when skipping via native media controls.
+        // Dropping list= on every OPEN turns the next item into a standalone
+        // video, which can break subsequent steering-wheel navigation.
+        val currentUrl = web?.url.orEmpty()
+        val currentUri = runCatching { Uri.parse(currentUrl) }.getOrNull()
+        val playlistId = currentUri?.takeIf {
+            it.path == "/watch" && it.getQueryParameter("v") == snapshot.value.id
+        }?.getQueryParameter("list")?.takeIf {
+            it.length in 2..100 && it.all { ch -> ch.isLetterOrDigit() || ch == '_' || ch == '-' }
+        }
+        val playlist = playlistId?.let { "&list=" + Uri.encode(it) }.orEmpty()
+        AppLog.add("MEDIA", "Open queued video id=$id playlistContext=${playlistId != null}")
+        load("$base/watch?v=${Uri.encode(id)}" + playlist +
+            (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
     }
 
     /** Legacy Assistant / car voice search, routed to the MediaCompat playback search. */
