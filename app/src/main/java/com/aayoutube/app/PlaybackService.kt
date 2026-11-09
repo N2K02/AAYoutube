@@ -253,6 +253,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
             recoveringPlayback = false
             if (command == Msg.PAUSE || command == Msg.STOP || command == Msg.QUIT) pending.clear()
         }
+        if (command == Msg.OPEN && pending.isNotEmpty()) {
+            // A fast sequence of wheel presses during WebView re-registration
+            // has only one final destination. Never replay obsolete OPENs.
+            val before = pending.size
+            pending.removeAll { it.first == Msg.OPEN || it.first == Msg.NEXT || it.first == Msg.PREV }
+            if (before != pending.size)
+                AppLog.add("MEDIA", "Superseded ${before - pending.size} stale queued navigation commands")
+        }
         // Never issue queued play/open/search commands before WebHost acknowledged
         // its new Messenger. Pause, stop and Quit must bypass this barrier.
         val target = outgoing?.takeUnless {
@@ -264,6 +272,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 pending.addLast(command to data)
             }
             return
+        }
+        if (command == Msg.OPEN || command == Msg.NEXT || command == Msg.PREV) {
+            AppLog.add("MEDIA", "IPC dispatch command=$command target=${data.getString("id").orEmpty()} epoch=$registrationEpoch")
         }
         runCatching {
             target.send(Message.obtain(null, command).apply {
@@ -421,10 +432,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     publish(snapshot)
                 }
                 override fun onSkipToNext() {
-                    // YouTube sometimes omits next/prev availability despite
-                    // supplying a complete Mix/playlist queue. Respect the
-                    // reported player when it supports skipping, otherwise
-                    // navigate the native queue by ID.
+                    // Native queue is authoritative when it contains the active
+                    // video; otherwise the WebView handles the fallback.
                     val target = transportSkips.next(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
                     if (target != null) {
                         AppLog.add("MEDIA", "Next: native queue target=$target from=${snapshot.id}")
@@ -435,7 +444,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onSkipToPrevious() {
-                    val target = transportSkips.previous(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (transportSkips.shouldRestartPrevious(snapshot.id, snapshot.posMs, now)) {
+                        AppLog.add("MEDIA", "Previous: restarting current video after 5s")
+                        send(Msg.SEEK, Bundle().apply { putLong("ms", 0L) })
+                        return
+                    }
+                    val target = transportSkips.previous(snapshot.id, queueGate.items(), now)
                     if (target != null) {
                         AppLog.add("MEDIA", "Previous: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
