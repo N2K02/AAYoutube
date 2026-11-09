@@ -241,7 +241,7 @@
     var unmute = function (v) {
       if (!v || !v.muted || BROWSE) return;
       // Feed previews (small videos that play by themselves) stay muted, as YouTube intends.
-          !(location.pathname === '/watch' || location.pathname.indexOf('/live/') === 0)) return;
+      if (location.pathname !== '/watch' && location.pathname.indexOf('/live/') !== 0) return;
       if (v.closest && v.closest('ytm-inline-playback-renderer,ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-reel-shelf-renderer,[class*="inline-player"],[class*="preview"]')) return;
       var mainV = document.querySelector('#player-container-id video, #player video, video.html5-main-video');
       if (mainV && v !== mainV) return;
@@ -1283,7 +1283,7 @@
     }
     later(function () {
       if (serial !== skipSerial || hasNavigated(original) ||
-          !/^\\/(watch|live\\/)/.test(location.pathname)) return;
+          (location.pathname !== '/watch' && location.pathname.indexOf('/live/') !== 0)) return;
       console.log('[aay] ' + direction + ' handler did not advance after 2500ms');
       fallbackSkip(direction);
     }, 2500);
