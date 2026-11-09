@@ -115,7 +115,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             if (fresh.userPaused) recovery.cancel()
             val resume = recovery.onExistingPlayer(fresh)
             recoveringPlayback = recovery.active || fresh.recovering
-            transportSkips.onPlaybackState(fresh.id)
+            transportSkips.onPlaybackState(fresh.id, fresh.playing)
             snapshot = fresh
             publish(fresh)
             if (resume) send(Msg.PLAY)
