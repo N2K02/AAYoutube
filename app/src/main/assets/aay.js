@@ -1227,15 +1227,69 @@
   };
 
   /* ---------- 10. Commands from the app ---------- */
-  function next() {
-    if (H.nexttrack) { try { H.nexttrack(); return; } catch (e) {} }
-    var b = document.querySelector('.ytp-next-button, button[aria-label^="Next"]');
-    if (b) b.click();
+  // A YouTube MediaSession handler may return successfully without navigating.
+  // Verify one change before invoking a single alternate player control.
+  // Cancel old timers whenever a newer transport command supersedes them.
+  var skipSerial = 0;
+  function skipIdentity() {
+    var pv = playerVideo();
+    return { player: (pv && pv.video_id) || '', route: urlId() };
   }
+  function hasNavigated(origin) {
+    var now = skipIdentity();
+    return !!((now.player && now.player !== origin.player && now.player !== origin.route) ||
+      (now.route && now.route !== origin.route && now.route !== origin.player));
+  }
+  function fallbackSkip(direction) {
+    var player = document.getElementById('movie_player');
+    var method = direction === 'next' ? 'nextVideo' : 'previousVideo';
+    if (player && typeof player[method] === 'function') {
+      try { player[method](); console.log('[aay] ' + direction + ' fallback: player API'); return; }
+      catch (e) { console.log('[aay] ' + direction + ' player API failed'); }
+    }
+    var selector = direction === 'next' ?
+      '.ytp-next-button, button[aria-label^="Next"]' :
+      '.ytp-prev-button, button[aria-label^="Previous"]';
+    var button = document.querySelector(selector);
+    if (button && !button.disabled) {
+      button.click();
+      console.log('[aay] ' + direction + ' fallback: button');
+    } else console.log('[aay] ' + direction + ' fallback unavailable');
+  }
+  function skip(direction) {
+    var serial = ++skipSerial;
+    var original = skipIdentity();
+    var handler = H[direction === 'next' ? 'nexttrack' : 'previoustrack'];
+    if (typeof handler !== 'function') {
+      console.log('[aay] ' + direction + ' no media handler; player fallback');
+      fallbackSkip(direction);
+      return;
+    }
+    try {
+      handler();
+      console.log('[aay] ' + direction + ' media handler invoked');
+    } catch (e) {
+      console.log('[aay] ' + direction + ' media handler threw; player fallback');
+      fallbackSkip(direction);
+      return;
+    }
+    later(function () {
+      if (serial !== skipSerial || hasNavigated(original) ||
+          !/^\\/(watch|live\\/)/.test(location.pathname)) return;
+      console.log('[aay] ' + direction + ' handler did not advance after 2500ms');
+      fallbackSkip(direction);
+    }, 2500);
+  }
+  function next() { skip('next'); }
   function prev() {
     var v = getVideo();
-    if (v && (v.currentTime > 5 || !H.previoustrack)) { v.currentTime = 0; return; }
-    if (H.previoustrack) { try { H.previoustrack(); } catch (e) {} }
+    if (v && v.currentTime > 5) {
+      ++skipSerial;
+      v.currentTime = 0;
+      console.log('[aay] previous restarts current video');
+      return;
+    }
+    skip('prev');
   }
 
   // Prefer YouTube's registered MediaSession Play handler, as AABrowser does.
@@ -1260,12 +1314,12 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
-        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'pause': ++skipSerial; AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
-        case 'next': PAUSED = false; bgWatch.explicitPause = false; next(); break;
-        case 'prev': PAUSED = false; bgWatch.explicitPause = false; prev(); break;
+        case 'next': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; next(); break;
+        case 'prev': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; prev(); break;
       }
     } catch (e) {}
     schedReport(200);
