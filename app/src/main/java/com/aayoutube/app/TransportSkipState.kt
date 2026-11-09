@@ -20,7 +20,21 @@ internal class TransportSkipState {
     }
 
     fun onPlaybackState(current: String) {
+        // A newer queue snapshot may briefly identify an older video during
+        // navigation; only the target itself confirms the transition.
         if (current.isNotBlank() && current == target) clear()
+    }
+
+    /** Previous restarts the currently established track beyond five seconds.
+     * During an in-flight skip it reverses the pending target instead. */
+    fun shouldRestartPrevious(current: String, positionMs: Long, nowMs: Long): Boolean {
+        if (target != null && nowMs >= deadlineMs) clear()
+        return target == null && current.isNotBlank() && positionMs > 5_000L
+    }
+
+    fun hasPending(nowMs: Long): Boolean {
+        if (target != null && nowMs >= deadlineMs) clear()
+        return target != null
     }
 
     fun next(current: String, queue: List<QItem>, nowMs: Long): String? =
