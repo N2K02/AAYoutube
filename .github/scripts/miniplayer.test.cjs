@@ -25,8 +25,11 @@ function playerPage(options = {}) {
     removeItem(key) { qualityStorage.delete(key); },
   };
   const selectedQualities = [];
+  let nextVideoCalls = 0, previousVideoCalls = 0;
   const mockPlayer = {
     setPlaybackQualityRange(from, to) { qualityCalls.push([from, to]); },
+    nextVideo() { nextVideoCalls++; },
+    previousVideo() { previousVideoCalls++; },
   };
   let miniRequests = 0;
   const styleElements = [];
@@ -74,7 +77,7 @@ function playerPage(options = {}) {
     querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
     getElementById(id) {
       if (dom && dom.byId(id)) return dom.byId(id);
-      if (options.quality && id === 'movie_player') {
+      if ((options.quality || options.skipPlayer) && id === 'movie_player') {
         return mockPlayer;
       }
       return null;
@@ -161,6 +164,8 @@ function playerPage(options = {}) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
     get miniRequests() { return miniRequests; },
+    get nextVideoCalls() { return nextVideoCalls; },
+    get previousVideoCalls() { return previousVideoCalls; },
     emit(type, event) {
       for (const fn of callbacks.get(type) || []) fn(event);
     },
@@ -485,6 +490,55 @@ test('WebView mediaSession shim reports metadata and playlist transport actions'
   assert.equal(p.stateReports.at(-1).next, true);
   p.window.__aay.cmd('next');
   assert.equal(nextCalls, 1);
+});
+
+test('a silent YouTube Next handler receives one bounded player fallback', () => {
+  const p = playerPage({ skipPlayer: true });
+  let handlers = 0;
+  p.navigator.mediaSession.setActionHandler('nexttrack', () => { handlers++; });
+  p.window.__aay.cmd('next');
+  assert.equal(handlers, 1);
+  assert.equal(p.nextVideoCalls, 0);
+  p.flush();
+  assert.equal(p.nextVideoCalls, 1);
+});
+
+test('skip fallback cancels when YouTube navigates or the user pauses', () => {
+  const p = playerPage({ skipPlayer: true });
+  p.navigator.mediaSession.setActionHandler('nexttrack', () => {
+    p.location.search = '?v=newVideo9999';
+    p.location.href = 'https://m.youtube.com/watch?v=newVideo9999';
+  });
+  p.window.__aay.cmd('next');
+  p.flush();
+  assert.equal(p.nextVideoCalls, 0);
+  const q = playerPage({ skipPlayer: true });
+  q.navigator.mediaSession.setActionHandler('nexttrack', () => {});
+  q.window.__aay.cmd('next');
+  q.window.__aay.cmd('pause');
+  q.flush();
+  assert.equal(q.nextVideoCalls, 0);
+});
+
+test('rapid commands only allow the latest JavaScript fallback', () => {
+  const p = playerPage({ skipPlayer: true });
+  p.navigator.mediaSession.setActionHandler('nexttrack', () => {});
+  p.window.__aay.cmd('next');
+  p.window.__aay.cmd('next');
+  p.flush();
+  assert.equal(p.nextVideoCalls, 1);
+});
+
+test('Previous restarts current video after five seconds without changing tracks', () => {
+  const p = playerPage({ skipPlayer: true });
+  let handlers = 0;
+  p.navigator.mediaSession.setActionHandler('previoustrack', () => { handlers++; });
+  p.video.currentTime = 12;
+  p.window.__aay.cmd('prev');
+  p.flush();
+  assert.equal(p.video.currentTime, 0);
+  assert.equal(handlers, 0);
+  assert.equal(p.previousVideoCalls, 0);
 });
 
 test('car surface tap seeks within visible progress bar but ignores ordinary taps', () => {
