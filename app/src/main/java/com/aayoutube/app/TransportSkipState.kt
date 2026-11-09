@@ -19,10 +19,10 @@ internal class TransportSkipState {
         deadlineMs = 0L
     }
 
-    fun onPlaybackState(current: String) {
+    fun onPlaybackState(current: String, playing: Boolean) {
         // A newer queue snapshot may briefly identify an older video during
         // navigation; only the target itself confirms the transition.
-        if (current.isNotBlank() && current == target) clear()
+        if (playing && current.isNotBlank() && current == target) clear()
     }
 
     /** Previous restarts the currently established track beyond five seconds.
@@ -46,7 +46,11 @@ internal class TransportSkipState {
     private fun select(current: String, queue: List<QItem>, nowMs: Long, forward: Boolean): String? {
         if (target != null && nowMs >= deadlineMs) clear()
         val active = target
-        val candidateQueue = if (active != null && items.any { it.id == active }) items else queue
+        val candidateQueue = when {
+            active != null && queue.any { it.id == active } -> queue
+            active != null && items.any { it.id == active } -> items
+            else -> queue
+        }
         val base = active ?: current
         val selected = if (forward)
             MusicQueueNavigation.transportNext(base, candidateQueue)
