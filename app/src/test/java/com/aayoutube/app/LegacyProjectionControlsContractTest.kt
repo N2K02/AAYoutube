@@ -37,6 +37,19 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("WebHost.cmd(if (playing.playing) \"pause\" else \"play\")"))
     }
 
+    @Test fun sharedOverlayLocksTransportDuringInFlightPlayback() {
+        val bar = source("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
+        assertTrue(bar.contains("var pending by remember"))
+        assertTrue(bar.contains("val transportEnabled = pending == null"))
+        assertTrue(bar.contains("delay(5_000L)"))
+        assertTrue(bar.contains("pending?.completed(playbackId, playing)"))
+        assertTrue(bar.contains("enabled = transportEnabled"))
+        assertTrue(car.contains("playbackId = playing.id"))
+        assertTrue(phone.contains("playbackId = snap.id"))
+    }
+
     @Test fun videoAndMusicAreIndependentCarServices() {
         val manifest = source("app/src/main/AndroidManifest.xml")
         assertTrue(manifest.contains("android:name=\".LegacyProjectionService\""))
