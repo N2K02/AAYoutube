@@ -464,6 +464,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             ) {
                 FloatingVideoBar(
                     playing = playing.playing,
+                    playbackId = playing.id,
                     car = true,
                     onBack = { carBackToMini(); controlsVersion++ },
                     onHome = { carHomeToMini(); controlsVersion++ },
