@@ -266,6 +266,9 @@ fun AppRoot(activity: MainActivity) {
     // selection. Resetting ordinary state inside LaunchedEffect was one frame
     // too late, briefly displaying lyrics from the previous video.
     var foundLyrics by remember(lyricsRequest) { mutableStateOf(LyricsContent()) }
+    // A saved visibility preference must never auto-open lyrics during navigation.
+    // Each video requires an explicit lyrics-button tap.
+    var lyricsOpenedForVideo by remember(selectedWatchVideoId) { mutableStateOf(false) }
 
     // Search only after the selected Watch video has valid metadata. Searching
     // is independent of overlay visibility, so the lyrics button can still
@@ -282,7 +285,7 @@ fun AppRoot(activity: MainActivity) {
     }
     val lyricsAvailable = lyricsRequest != null &&
         foundLyrics.foundFor(lyricsRequest.videoId)
-    val lyricsOnScreen = lyricsAvailable && lyricsShown &&
+    val lyricsOnScreen = lyricsAvailable && lyricsShown && lyricsOpenedForVideo &&
         tab == Tab.Watch.ordinal && !inPip && fullscreen == null &&
         playerMode == WebHost.PlayerMode.FULL
 
@@ -426,6 +429,9 @@ fun AppRoot(activity: MainActivity) {
                 FloatingVideoBar(
                     playing = snap.playing,
                     playbackId = snap.id,
+                    transportReady = OverlayTransportPolicy.ready(
+                        snap.id, selectedWatchVideoId, snap.buffering, snap.ended
+                    ) && playerMode == WebHost.PlayerMode.FULL,
                     onBack = { goBack(); topMenuEpoch++ },
                     onHome = { goYouTubeHome(); topMenuEpoch++ },
                     onPlayPause = {
@@ -440,7 +446,10 @@ fun AppRoot(activity: MainActivity) {
                         if (canLyrics) { if (lyricsShown) "Hide lyrics" else "Show lyrics" } else "Lyrics unavailable",
                         BarSize.Phone,
                         onClick = {
-                            if (lyricsAvailable) LyricsPrefs.set(context, "show", !lyricsShown)
+                            if (lyricsAvailable) {
+                                lyricsOpenedForVideo = !lyricsOpenedForVideo
+                                LyricsPrefs.set(context, "show", lyricsOpenedForVideo)
+                            }
                             topMenuEpoch++
                         },
                         enabled = canLyrics,
@@ -465,6 +474,7 @@ fun AppRoot(activity: MainActivity) {
             Box(Modifier.align(Alignment.TopCenter).statusBarsPadding()
                 .padding(top = 30.dp)) {
                 key(lyricsRequest) { LyricsOverlay(snap, foundLyrics) {
+                    lyricsOpenedForVideo = false
                     LyricsPrefs.set(context, "show", false)
                 } }
             }
