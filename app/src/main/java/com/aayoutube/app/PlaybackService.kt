@@ -47,6 +47,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
     }
     private val queueGate = QueueUpdateGate()
+    private val transportSkips = TransportSkipState()
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
         val canNext: Boolean, val canPrev: Boolean,
@@ -114,6 +115,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             if (fresh.userPaused) recovery.cancel()
             val resume = recovery.onExistingPlayer(fresh)
             recoveringPlayback = recovery.active || fresh.recovering
+            transportSkips.onPlaybackState(fresh.id)
             snapshot = fresh
             publish(fresh)
             if (resume) send(Msg.PLAY)
@@ -413,6 +415,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onPause() {
+                    transportSkips.clear()
                     send(Msg.PAUSE)
                     snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
@@ -422,9 +425,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     // supplying a complete Mix/playlist queue. Respect the
                     // reported player when it supports skipping, otherwise
                     // navigate the native queue by ID.
-                    val target = MusicQueueNavigation.transportNext(snapshot.id, queueGate.items())
+                    val target = transportSkips.next(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
                     if (target != null) {
-                        AppLog.add("MEDIA", "Next: native queue transition")
+                        AppLog.add("MEDIA", "Next: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
                     } else {
                         AppLog.add("MEDIA", "Next: YouTube player fallback")
@@ -432,9 +435,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onSkipToPrevious() {
-                    val target = MusicQueueNavigation.transportPrevious(snapshot.id, queueGate.items())
+                    val target = transportSkips.previous(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
                     if (target != null) {
-                        AppLog.add("MEDIA", "Previous: native queue transition")
+                        AppLog.add("MEDIA", "Previous: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
                     } else {
                         AppLog.add("MEDIA", "Previous: YouTube player fallback")
@@ -443,9 +446,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onSkipToQueueItem(id: Long) {
                     val item = MusicQueueNavigation.at(id, queueGate.items()) ?: return
+                    transportSkips.clear()
                     send(Msg.OPEN, Bundle().apply { putString("id", item) })
                 }
                 override fun onStop() {
+                    transportSkips.clear()
                     send(Msg.STOP)
                     snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
@@ -464,6 +469,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 override fun onFastForward() = onSeekTo((snapshot.posMs.coerceAtLeast(0L) + 30_000L).coerceAtMost(snapshot.durMs.takeIf { it > 0 } ?: Long.MAX_VALUE))
                 override fun onRewind() = onSeekTo((snapshot.posMs - 10_000L).coerceAtLeast(0L))
                 override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
+                    transportSkips.clear()
                     when {
                         mediaId?.startsWith("v:") == true ->
                             send(Msg.OPEN, Bundle().apply { putString("id", mediaId.removePrefix("v:")) })
@@ -472,6 +478,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+                    transportSkips.clear()
                     if (query.isNullOrBlank()) onPlay()
                     else send(Msg.SEARCH, Bundle().apply { putString("q", query) })
                 }
