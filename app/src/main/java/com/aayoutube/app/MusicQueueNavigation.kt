@@ -15,6 +15,15 @@ internal object MusicQueueNavigation {
         val index = queue.indexOfFirst { it.id == current }
         return queue.getOrNull(index - 1)?.id
     }
+    /** Prefer the native queue for hardware/Android Auto transport controls.
+     * A JavaScript MediaSession handler can acknowledge a skip without advancing
+     * the YouTube page. Only trust a queue that contains the current video. */
+    fun transportNext(current: String, queue: List<QItem>): String? =
+        if (queue.any { it.id == current }) next(current, queue) else null
+
+    fun transportPrevious(current: String, queue: List<QItem>): String? =
+        if (queue.any { it.id == current }) previous(current, queue) else null
+
     fun at(position: Long, queue: List<QItem>): String? =
         if (position >= 0 && position < queue.size) queue[position.toInt()].id else null
 }
