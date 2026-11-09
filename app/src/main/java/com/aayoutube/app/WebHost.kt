@@ -1047,7 +1047,7 @@ object WebHost {
         val currentUrl = web?.url.orEmpty()
         val currentUri = runCatching { Uri.parse(currentUrl) }.getOrNull()
         val playlistId = currentUri?.takeIf {
-            it.path == "/watch" && it.getQueryParameter("v") == snapshot.value.id
+            it.path == "/watch" && allowedHost(it.host)
         }?.getQueryParameter("list")?.takeIf {
             it.length in 2..100 && it.all { ch -> ch.isLetterOrDigit() || ch == '_' || ch == '-' }
         }
