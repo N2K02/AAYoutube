@@ -19,6 +19,21 @@ class MusicQueueNavigationTest {
         assertNull(MusicQueueNavigation.previous("missing", items))
         assertNull(MusicQueueNavigation.next("", items))
     }
+    @Test fun carTransportUsesKnownQueueIndependentlyOfWebCapabilities() {
+        assertEquals("b", MusicQueueNavigation.transportNext("a", items))
+        assertEquals("a", MusicQueueNavigation.transportPrevious("b", items))
+        assertEquals("c", MusicQueueNavigation.transportNext("b", items))
+        assertNull(MusicQueueNavigation.transportNext("c", items))
+        assertNull(MusicQueueNavigation.transportPrevious("a", items))
+    }
+
+    @Test fun carTransportDoesNotJumpToUnrelatedQueueAfterStaleSnapshot() {
+        assertNull(MusicQueueNavigation.transportNext("missing", items))
+        assertNull(MusicQueueNavigation.transportPrevious("missing", items))
+        assertNull(MusicQueueNavigation.transportNext("", items))
+        assertNull(MusicQueueNavigation.transportPrevious("", emptyList()))
+    }
+
     @Test fun selectionCannotEscapeQueue() {
         assertEquals("c", MusicQueueNavigation.at(2, items))
         assertNull(MusicQueueNavigation.at(-1, items))

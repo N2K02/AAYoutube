@@ -425,6 +425,7 @@ fun AppRoot(activity: MainActivity) {
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
                 FloatingVideoBar(
                     playing = snap.playing,
+                    playbackId = snap.id,
                     onBack = { goBack(); topMenuEpoch++ },
                     onHome = { goYouTubeHome(); topMenuEpoch++ },
                     onPlayPause = {

@@ -241,7 +241,7 @@
     var unmute = function (v) {
       if (!v || !v.muted || BROWSE) return;
       // Feed previews (small videos that play by themselves) stay muted, as YouTube intends.
-      if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+      if (location.pathname !== '/watch' && location.pathname.indexOf('/live/') !== 0) return;
       if (v.closest && v.closest('ytm-inline-playback-renderer,ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-reel-shelf-renderer,[class*="inline-player"],[class*="preview"]')) return;
       var mainV = document.querySelector('#player-container-id video, #player video, video.html5-main-video');
       if (mainV && v !== mainV) return;
@@ -370,7 +370,7 @@
   }
 
   /* ---------- 2b. Queue for Android Auto: playlist / Mix, or Up next ---------- */
-  var Q = { kind: '', items: [] };
+  var Q = { kind: '', items: [], source: '' };
   function textOf(x) {
     if (!x) return '';
     if (typeof x === 'string') return x;
@@ -379,8 +379,11 @@
     if (x.runs) return x.runs.map(function (r) { return r.text; }).join('');
     return '';
   }
-  function grabQueue(o) {
+  function grabQueue(o, requestedVideoId) {
     try {
+      // Ignore late /next responses from a previous watch route.
+      var currentRoute = urlId();
+      if (requestedVideoId && currentRoute && requestedVideoId !== currentRoute) return;
       var c = o && o.contents;
       var w = c && (c.singleColumnWatchNextResults || c.twoColumnWatchNextResults);
       if (!w) return;
@@ -404,8 +407,8 @@
         }
         for (var k in n) { if (Object.prototype.hasOwnProperty.call(n, k)) walk(n[k], depth + 1); }
       })(w, 0);
-      if (pl.length) Q = { kind: 'playlist', items: pl };
-      else if (up.length) Q = { kind: 'upnext', items: up.slice(0, 25) };
+      if (pl.length) Q = { kind: 'playlist', items: pl, source: requestedVideoId || currentRoute };
+      else if (up.length) Q = { kind: 'upnext', items: up.slice(0, 25), source: requestedVideoId || currentRoute };
       else return;
       console.log('[aay] queue for Android Auto: ' + Q.kind + ', ' + Q.items.length + ' videos');
       schedReport(300);
@@ -436,7 +439,12 @@
       var url = typeof input === 'string' ? input : ((input && input.url) || '');
       var p = origFetch.apply(this, arguments);
       if (!BROWSE && /\/youtubei\/v1\/next/.test(url)) {
-        p.then(function (res) { try { res.clone().json().then(grabQueue).catch(function () {}); } catch (e) {} }).catch(function () {});
+        var requestedVideoId = urlId();
+        p.then(function (res) {
+          try { res.clone().json().then(function (data) {
+            grabQueue(data, requestedVideoId);
+          }).catch(function () {}); } catch (e) {}
+        }).catch(function () {});
       }
       if (!CFG.blockAds || !/\/youtubei\/v1\/(player|next|browse|search|get_watch)/.test(url)) return p;
       return p.then(function (res) {
@@ -739,7 +747,7 @@
   }
   function queueFor(id, mi) {
     var q = Q.items;
-    if (!q.length) return [];
+    if (!q.length || (Q.kind === 'upnext' && Q.source && id !== Q.source)) return [];
     var i = -1;
     for (var k = 0; k < q.length; k++) { if (q[k].id === id) { i = k; break; } }
     if (i < 0) {
@@ -1227,15 +1235,69 @@
   };
 
   /* ---------- 10. Commands from the app ---------- */
-  function next() {
-    if (H.nexttrack) { try { H.nexttrack(); return; } catch (e) {} }
-    var b = document.querySelector('.ytp-next-button, button[aria-label^="Next"]');
-    if (b) b.click();
+  // A YouTube MediaSession handler may return successfully without navigating.
+  // Verify one change before invoking a single alternate player control.
+  // Cancel old timers whenever a newer transport command supersedes them.
+  var skipSerial = 0;
+  function skipIdentity() {
+    var pv = playerVideo();
+    return { player: (pv && pv.video_id) || '', route: urlId() };
   }
+  function hasNavigated(origin) {
+    var now = skipIdentity();
+    return !!((now.player && now.player !== origin.player && now.player !== origin.route) ||
+      (now.route && now.route !== origin.route && now.route !== origin.player));
+  }
+  function fallbackSkip(direction) {
+    var player = document.getElementById('movie_player');
+    var method = direction === 'next' ? 'nextVideo' : 'previousVideo';
+    if (player && typeof player[method] === 'function') {
+      try { player[method](); console.log('[aay] ' + direction + ' fallback: player API'); return; }
+      catch (e) { console.log('[aay] ' + direction + ' player API failed'); }
+    }
+    var selector = direction === 'next' ?
+      '.ytp-next-button, button[aria-label^="Next"]' :
+      '.ytp-prev-button, button[aria-label^="Previous"]';
+    var button = document.querySelector(selector);
+    if (button && !button.disabled) {
+      button.click();
+      console.log('[aay] ' + direction + ' fallback: button');
+    } else console.log('[aay] ' + direction + ' fallback unavailable');
+  }
+  function skip(direction) {
+    var serial = ++skipSerial;
+    var original = skipIdentity();
+    var handler = H[direction === 'next' ? 'nexttrack' : 'previoustrack'];
+    if (typeof handler !== 'function') {
+      console.log('[aay] ' + direction + ' no media handler; player fallback');
+      fallbackSkip(direction);
+      return;
+    }
+    try {
+      handler();
+      console.log('[aay] ' + direction + ' media handler invoked');
+    } catch (e) {
+      console.log('[aay] ' + direction + ' media handler threw; player fallback');
+      fallbackSkip(direction);
+      return;
+    }
+    later(function () {
+      if (serial !== skipSerial || hasNavigated(original) ||
+          (location.pathname !== '/watch' && location.pathname.indexOf('/live/') !== 0)) return;
+      console.log('[aay] ' + direction + ' handler did not advance after 2500ms');
+      fallbackSkip(direction);
+    }, 2500);
+  }
+  function next() { skip('next'); }
   function prev() {
     var v = getVideo();
-    if (v && (v.currentTime > 5 || !H.previoustrack)) { v.currentTime = 0; return; }
-    if (H.previoustrack) { try { H.previoustrack(); } catch (e) {} }
+    if (v && v.currentTime > 5) {
+      ++skipSerial;
+      v.currentTime = 0;
+      console.log('[aay] previous restarts current video');
+      return;
+    }
+    skip('prev');
   }
 
   // Prefer YouTube's registered MediaSession Play handler, as AABrowser does.
@@ -1260,12 +1322,12 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
-        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; if (v) enforceExplicitPause(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
-        case 'next': PAUSED = false; bgWatch.explicitPause = false; next(); break;
-        case 'prev': PAUSED = false; bgWatch.explicitPause = false; prev(); break;
+        case 'next': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; next(); break;
+        case 'prev': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; prev(); break;
       }
     } catch (e) {}
     schedReport(200);

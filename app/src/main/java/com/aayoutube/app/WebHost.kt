@@ -97,6 +97,45 @@ object WebHost {
     // A /watch route can change video ID without recreating the WebView. Use
     // the current history ID to reject queued JS reports from the old video.
     private var expectedWatchVideoId: String? = null
+    // Observe transport arrival separately from IPC delivery and actual playback.
+    private var skipTraceSerial = 0
+    private var skipTraceActive = false
+    private var skipTraceExpected: String? = null
+    private var skipTraceOrigin = ""
+    private fun traceTransport(command: String, expected: String? = null) {
+        val serial = ++skipTraceSerial
+        skipTraceActive = true
+        skipTraceExpected = expected
+        skipTraceOrigin = snapshot.value.id
+        AppLog.add("MEDIA", "WebView received $command origin=$skipTraceOrigin expected=${expected.orEmpty()} serial=$serial")
+        main.postDelayed({
+            if (skipTraceSerial != serial) return@postDelayed
+            AppLog.add("MEDIA", "Transport unconfirmed after 7s: command=$command expected=${expected.orEmpty()} " +
+                "actual=${snapshot.value.id} playing=${snapshot.value.playing} " +
+                "webReady=${web != null} page=${web?.url.orEmpty().take(120)}")
+            skipTraceExpected = null
+            skipTraceActive = false
+            skipTraceSerial++
+        }, 7_000L)
+    }
+    private fun confirmTransport(current: Snap) {
+        if (!skipTraceActive) return
+        val expected = skipTraceExpected
+        if (current.id.isNotBlank() && current.playing &&
+            (if (expected != null) current.id == expected
+             else current.id != skipTraceOrigin)) {
+            AppLog.add("MEDIA", "Transport confirmed: id=${current.id} playing=true")
+            skipTraceExpected = null
+            skipTraceActive = false
+            skipTraceSerial++
+        }
+    }
+    private fun cancelTransportTrace() {
+        skipTraceActive = false
+        skipTraceSerial++
+        skipTraceExpected = null
+    }
+
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     internal val lyricsClock = MutableStateFlow(LyricsClock())
@@ -978,7 +1017,10 @@ object WebHost {
                 if (web == null) send(Msg.PLAYER_MISSING, Bundle())
                 else send(Msg.STATE, snapshot.value.toBundle())
             }
-            Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
+            Msg.OPEN -> {
+                traceTransport("OPEN", d.getString("id").orEmpty())
+                open(d.getString("id").orEmpty(), d.getLong("sec"))
+            }
             Msg.SEARCH -> search(d.getString("q").orEmpty())
             Msg.PLAY -> {
                 if (web == null || !mainFrameAllowsPlayback) {
@@ -993,6 +1035,7 @@ object WebHost {
                 } else cmd("play")
             }
             Msg.PAUSE -> {
+                cancelTransportTrace()
                 userPausedAt = SystemClock.elapsedRealtime()
                 cmd("pause")
                 send(Msg.TRANSPORT_ACK, Bundle().apply {
@@ -1001,10 +1044,17 @@ object WebHost {
                 })
             }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
-            Msg.NEXT -> cmd("next")
-            Msg.PREV -> cmd("prev")
+            Msg.NEXT -> {
+                traceTransport("NEXT")
+                cmd("next")
+            }
+            Msg.PREV -> {
+                traceTransport("PREVIOUS")
+                cmd("prev")
+            }
             Msg.RATE -> cmd("rate", d.getFloat("rate", 1f).toString())
             Msg.STOP -> {
+                cancelTransportTrace()
                 cmd("pause")
                 if (!shown) release()
                 send(Msg.TRANSPORT_ACK, Bundle().apply {
@@ -1013,6 +1063,7 @@ object WebHost {
                 })
             }
             Msg.QUIT -> {
+                cancelTransportTrace()
                 AppLog.add("LINK", "Exit")
                 BrowseHost.release()
                 runCatching {
@@ -1041,7 +1092,20 @@ object WebHost {
         }
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
         // aay=1 tells the page script to start playing as soon as the video is ready.
-        load("$base/watch?v=${Uri.encode(id)}" + (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
+        // Preserve playlist/Mix context when skipping via native media controls.
+        // Dropping list= on every OPEN turns the next item into a standalone
+        // video, which can break subsequent steering-wheel navigation.
+        val currentUrl = web?.url.orEmpty()
+        val currentUri = runCatching { Uri.parse(currentUrl) }.getOrNull()
+        val playlistId = currentUri?.takeIf {
+            it.path == "/watch" && allowedHost(it.host)
+        }?.getQueryParameter("list")?.takeIf {
+            it.length in 2..100 && it.all { ch -> ch.isLetterOrDigit() || ch == '_' || ch == '-' }
+        }
+        val playlist = playlistId?.let { "&list=" + Uri.encode(it) }.orEmpty()
+        AppLog.add("MEDIA", "Open queued video id=$id playlistContext=${playlistId != null}")
+        load("$base/watch?v=${Uri.encode(id)}" + playlist +
+            (if (startSec > 0) "&t=${startSec}s" else "") + "&aay=1")
     }
 
     /** Legacy Assistant / car voice search, routed to the MediaCompat playback search. */
@@ -1220,6 +1284,7 @@ object WebHost {
     }
 
     private fun publish(incoming: Snap) {
+        confirmTransport(incoming)
         val previous = snapshot.value
         if (incoming.userPaused && !incoming.playing) {
             playbackWanted = false

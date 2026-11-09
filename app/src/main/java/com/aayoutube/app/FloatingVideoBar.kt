@@ -19,6 +19,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,6 +41,22 @@ internal data class BarSize(val button: Dp, val icon: Dp) {
     }
 }
 
+/** Pure completion rule for the three transport buttons.
+ * In-flight actions cannot be repeated until playback acknowledges them or
+ * a bounded timeout makes controls usable again. */
+internal data class OverlayTransportLock(
+    val command: String,
+    val sourceId: String,
+    val wasPlaying: Boolean,
+) {
+    fun completed(videoId: String, playing: Boolean): Boolean = when (command) {
+        "play" -> playing && videoId.isNotBlank()
+        "pause" -> !playing
+        "next", "prev" -> videoId.isNotBlank() && videoId != sourceId
+        else -> true
+    }
+}
+
 /**
  * The video controls on the phone and on Android Auto: a small floating rail,
  * icons only (each with a content description), vertical on the left or right
@@ -44,6 +66,7 @@ internal data class BarSize(val button: Dp, val icon: Dp) {
 @Composable
 internal fun FloatingVideoBar(
     playing: Boolean,
+    playbackId: String = "",
     onBack: () -> Unit,
     onHome: () -> Unit,
     onPlayPause: () -> Unit,
@@ -55,6 +78,19 @@ internal fun FloatingVideoBar(
     extra: @Composable () -> Unit = {},
 ) {
     val size = BarSize.of(car)
+    var pending by remember { mutableStateOf<OverlayTransportLock?>(null) }
+    // Ignore duplicate taps for all three transport buttons while the page
+    // catches up. Back/Home/settings are deliberately not blocked.
+    LaunchedEffect(playbackId, playing) {
+        if (pending?.completed(playbackId, playing) == true) pending = null
+    }
+    LaunchedEffect(pending) {
+        if (pending != null) {
+            delay(5_000L)
+            pending = null // no permanent disabled controls on stalled playback
+        }
+    }
+    val transportEnabled = pending == null
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
@@ -68,10 +104,25 @@ internal fun FloatingVideoBar(
             BarIcon(Icons.Filled.Home, "YouTube home", size, onHome)
             BarIcon(
                 if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                if (playing) "Pause" else "Play", size, onPlayPause,
+                if (playing) "Pause" else "Play", size, onClick = {
+                    if (pending == null) {
+                        pending = OverlayTransportLock(if (playing) "pause" else "play", playbackId, playing)
+                        onPlayPause()
+                    }
+                }, enabled = transportEnabled,
             )
-            BarIcon(Icons.Filled.SkipPrevious, "Previous video", size, onPrevious)
-            BarIcon(Icons.Filled.SkipNext, "Next video", size, onNext)
+            BarIcon(Icons.Filled.SkipPrevious, "Previous video", size, onClick = {
+                if (pending == null) {
+                    pending = OverlayTransportLock("prev", playbackId, playing)
+                    onPrevious()
+                }
+            }, enabled = transportEnabled)
+            BarIcon(Icons.Filled.SkipNext, "Next video", size, onClick = {
+                if (pending == null) {
+                    pending = OverlayTransportLock("next", playbackId, playing)
+                    onNext()
+                }
+            }, enabled = transportEnabled)
             extra()
         }
         if (vertical) {
