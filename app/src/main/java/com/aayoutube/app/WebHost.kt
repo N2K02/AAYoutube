@@ -99,10 +99,12 @@ object WebHost {
     private var expectedWatchVideoId: String? = null
     // Observe transport arrival separately from IPC delivery and actual playback.
     private var skipTraceSerial = 0
+    private var skipTraceActive = false
     private var skipTraceExpected: String? = null
     private var skipTraceOrigin = ""
     private fun traceTransport(command: String, expected: String? = null) {
         val serial = ++skipTraceSerial
+        skipTraceActive = true
         skipTraceExpected = expected
         skipTraceOrigin = snapshot.value.id
         AppLog.add("MEDIA", "WebView received $command origin=$skipTraceOrigin expected=${expected.orEmpty()} serial=$serial")
@@ -112,21 +114,24 @@ object WebHost {
                 "actual=${snapshot.value.id} playing=${snapshot.value.playing} " +
                 "webReady=${web != null} page=${web?.url.orEmpty().take(120)}")
             skipTraceExpected = null
+            skipTraceActive = false
             skipTraceSerial++
         }, 7_000L)
     }
     private fun confirmTransport(current: Snap) {
-        if (skipTraceExpected == null && skipTraceSerial == 0) return
+        if (!skipTraceActive) return
         val expected = skipTraceExpected
         if (current.id.isNotBlank() && current.playing &&
             (if (expected != null) current.id == expected
              else current.id != skipTraceOrigin)) {
             AppLog.add("MEDIA", "Transport confirmed: id=${current.id} playing=true")
             skipTraceExpected = null
+            skipTraceActive = false
             skipTraceSerial++
         }
     }
     private fun cancelTransportTrace() {
+        skipTraceActive = false
         skipTraceSerial++
         skipTraceExpected = null
     }
