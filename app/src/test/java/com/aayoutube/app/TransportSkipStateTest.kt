@@ -26,14 +26,14 @@ class TransportSkipStateTest {
     @Test fun staleReportsDoNotUndoPendingTarget() {
         val state = TransportSkipState()
         assertEquals("b", state.next("a", queue, 1_000))
-        state.onPlaybackState("a")
+        state.onPlaybackState("a", true)
         assertEquals("c", state.next("a", queue, 1_100))
     }
 
     @Test fun arrivalAndTimeoutResetPrediction() {
         val state = TransportSkipState()
         assertEquals("b", state.next("a", queue, 1_000))
-        state.onPlaybackState("b")
+        state.onPlaybackState("b", true)
         assertEquals("c", state.next("b", queue, 1_100))
         assertEquals("b", state.next("a", queue, 10_000))
     }
@@ -59,12 +59,29 @@ class TransportSkipStateTest {
         val state = TransportSkipState()
         assertEquals("b", state.next("a", queue, 1_000L))
         assertTrue(state.hasPending(1_001L))
-        state.onPlaybackState("b")
+        state.onPlaybackState("b", true)
         assertFalse(state.hasPending(1_002L))
         assertTrue(state.shouldRestartPrevious("b", 9_000L, 1_002L))
         assertEquals("c", state.next("b", queue, 2_000L))
         assertFalse(state.hasPending(10_000L))
         assertTrue(state.shouldRestartPrevious("b", 9_000L, 10_000L))
+    }
+
+    @Test fun pendingTargetOnlyConfirmsOncePlaybackActuallyBegins() {
+        val state = TransportSkipState()
+        assertEquals("b", state.next("a", queue, 1_000L))
+        state.onPlaybackState("b", false)
+        assertTrue(state.hasPending(1_100L))
+        assertEquals("c", state.next("", emptyList(), 1_150L))
+        state.onPlaybackState("c", true)
+        assertFalse(state.hasPending(1_200L))
+    }
+
+    @Test fun newQueueSnapshotSupersedesOldPendingQueueWhenTargetStillExists() {
+        val state = TransportSkipState()
+        assertEquals("b", state.next("a", queue, 1_000L))
+        val reordered = listOf(QItem("b", "B", ""), QItem("d", "D", ""))
+        assertEquals("d", state.next("a", reordered, 1_100L))
     }
 
     @Test fun unrelatedQueueDoesNotCauseUnexpectedJump() {
