@@ -97,6 +97,40 @@ object WebHost {
     // A /watch route can change video ID without recreating the WebView. Use
     // the current history ID to reject queued JS reports from the old video.
     private var expectedWatchVideoId: String? = null
+    // Observe transport arrival separately from IPC delivery and actual playback.
+    private var skipTraceSerial = 0
+    private var skipTraceExpected: String? = null
+    private var skipTraceOrigin = ""
+    private fun traceTransport(command: String, expected: String? = null) {
+        val serial = ++skipTraceSerial
+        skipTraceExpected = expected
+        skipTraceOrigin = snapshot.value.id
+        AppLog.add("MEDIA", "WebView received $command origin=$skipTraceOrigin expected=${expected.orEmpty()} serial=$serial")
+        main.postDelayed({
+            if (skipTraceSerial != serial) return@postDelayed
+            AppLog.add("MEDIA", "Transport unconfirmed after 7s: command=$command expected=${expected.orEmpty()} " +
+                "actual=${snapshot.value.id} playing=${snapshot.value.playing} " +
+                "webReady=${web != null} page=${web?.url.orEmpty().take(120)}")
+            skipTraceExpected = null
+            skipTraceSerial++
+        }, 7_000L)
+    }
+    private fun confirmTransport(current: Snap) {
+        if (skipTraceExpected == null && skipTraceSerial == 0) return
+        val expected = skipTraceExpected
+        if (current.id.isNotBlank() && current.playing &&
+            (if (expected != null) current.id == expected
+             else current.id != skipTraceOrigin)) {
+            AppLog.add("MEDIA", "Transport confirmed: id=${current.id} playing=true")
+            skipTraceExpected = null
+            skipTraceSerial++
+        }
+    }
+    private fun cancelTransportTrace() {
+        skipTraceSerial++
+        skipTraceExpected = null
+    }
+
     val fullscreenView = MutableStateFlow<View?>(null)
     val snapshot = MutableStateFlow(Snap())
     internal val lyricsClock = MutableStateFlow(LyricsClock())
@@ -978,7 +1012,10 @@ object WebHost {
                 if (web == null) send(Msg.PLAYER_MISSING, Bundle())
                 else send(Msg.STATE, snapshot.value.toBundle())
             }
-            Msg.OPEN -> open(d.getString("id").orEmpty(), d.getLong("sec"))
+            Msg.OPEN -> {
+                traceTransport("OPEN", d.getString("id").orEmpty())
+                open(d.getString("id").orEmpty(), d.getLong("sec"))
+            }
             Msg.SEARCH -> search(d.getString("q").orEmpty())
             Msg.PLAY -> {
                 if (web == null || !mainFrameAllowsPlayback) {
@@ -993,6 +1030,7 @@ object WebHost {
                 } else cmd("play")
             }
             Msg.PAUSE -> {
+                cancelTransportTrace()
                 userPausedAt = SystemClock.elapsedRealtime()
                 cmd("pause")
                 send(Msg.TRANSPORT_ACK, Bundle().apply {
@@ -1001,10 +1039,17 @@ object WebHost {
                 })
             }
             Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
-            Msg.NEXT -> cmd("next")
-            Msg.PREV -> cmd("prev")
+            Msg.NEXT -> {
+                traceTransport("NEXT")
+                cmd("next")
+            }
+            Msg.PREV -> {
+                traceTransport("PREVIOUS")
+                cmd("prev")
+            }
             Msg.RATE -> cmd("rate", d.getFloat("rate", 1f).toString())
             Msg.STOP -> {
+                cancelTransportTrace()
                 cmd("pause")
                 if (!shown) release()
                 send(Msg.TRANSPORT_ACK, Bundle().apply {
@@ -1013,6 +1058,7 @@ object WebHost {
                 })
             }
             Msg.QUIT -> {
+                cancelTransportTrace()
                 AppLog.add("LINK", "Exit")
                 BrowseHost.release()
                 runCatching {
@@ -1233,6 +1279,7 @@ object WebHost {
     }
 
     private fun publish(incoming: Snap) {
+        confirmTransport(incoming)
         val previous = snapshot.value
         if (incoming.userPaused && !incoming.playing) {
             playbackWanted = false
