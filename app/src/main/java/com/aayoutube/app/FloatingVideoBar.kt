@@ -44,6 +44,11 @@ internal data class BarSize(val button: Dp, val icon: Dp) {
 /** Pure completion rule for the three transport buttons.
  * In-flight actions cannot be repeated until playback acknowledges them or
  * a bounded timeout makes controls usable again. */
+internal object OverlayTransportPolicy {
+    fun ready(playbackId: String, selectedVideoId: String, buffering: Boolean, ended: Boolean): Boolean =
+        playbackId.isNotBlank() && selectedVideoId == playbackId && !buffering && !ended
+}
+
 internal data class OverlayTransportLock(
     val command: String,
     val sourceId: String,
@@ -67,6 +72,7 @@ internal data class OverlayTransportLock(
 internal fun FloatingVideoBar(
     playing: Boolean,
     playbackId: String = "",
+    transportReady: Boolean = false,
     onBack: () -> Unit,
     onHome: () -> Unit,
     onPlayPause: () -> Unit,
@@ -90,7 +96,7 @@ internal fun FloatingVideoBar(
             pending = null // no permanent disabled controls on stalled playback
         }
     }
-    val transportEnabled = pending == null
+    val transportEnabled = transportReady && pending == null
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(50),
@@ -105,20 +111,20 @@ internal fun FloatingVideoBar(
             BarIcon(
                 if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 if (playing) "Pause" else "Play", size, onClick = {
-                    if (pending == null) {
+                    if (transportEnabled) {
                         pending = OverlayTransportLock(if (playing) "pause" else "play", playbackId, playing)
                         onPlayPause()
                     }
                 }, enabled = transportEnabled,
             )
             BarIcon(Icons.Filled.SkipPrevious, "Previous video", size, onClick = {
-                if (pending == null) {
+                if (transportEnabled) {
                     pending = OverlayTransportLock("prev", playbackId, playing)
                     onPrevious()
                 }
             }, enabled = transportEnabled)
             BarIcon(Icons.Filled.SkipNext, "Next video", size, onClick = {
-                if (pending == null) {
+                if (transportEnabled) {
                     pending = OverlayTransportLock("next", playbackId, playing)
                     onNext()
                 }

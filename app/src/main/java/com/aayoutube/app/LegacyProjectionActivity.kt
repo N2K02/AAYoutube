@@ -322,6 +322,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
+        val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
         val flags by Features.state.collectAsState()
         var controlsVisible by remember { mutableStateOf(true) }
         var controlsVersion by remember { mutableIntStateOf(0) }
@@ -465,6 +466,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 FloatingVideoBar(
                     playing = playing.playing,
                     playbackId = playing.id,
+                    transportReady = OverlayTransportPolicy.ready(
+                        playing.id, selectedWatchVideoId, playing.buffering, playing.ended
+                    ) && mode == WebHost.PlayerMode.FULL,
                     car = true,
                     onBack = { carBackToMini(); controlsVersion++ },
                     onHome = { carHomeToMini(); controlsVersion++ },
