@@ -422,16 +422,24 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     // supplying a complete Mix/playlist queue. Respect the
                     // reported player when it supports skipping, otherwise
                     // navigate the native queue by ID.
-                    val fallback = if (snapshot.canNext) null else
-                        MusicQueueNavigation.next(snapshot.id, queueGate.items())
-                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
-                    else send(Msg.NEXT)
+                    val target = MusicQueueNavigation.transportNext(snapshot.id, queueGate.items())
+                    if (target != null) {
+                        AppLog.add("MEDIA", "Next: native queue transition")
+                        send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else {
+                        AppLog.add("MEDIA", "Next: YouTube player fallback")
+                        send(Msg.NEXT)
+                    }
                 }
                 override fun onSkipToPrevious() {
-                    val fallback = if (snapshot.canPrev) null else
-                        MusicQueueNavigation.previous(snapshot.id, queueGate.items())
-                    if (fallback != null) send(Msg.OPEN, Bundle().apply { putString("id", fallback) })
-                    else send(Msg.PREV)
+                    val target = MusicQueueNavigation.transportPrevious(snapshot.id, queueGate.items())
+                    if (target != null) {
+                        AppLog.add("MEDIA", "Previous: native queue transition")
+                        send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else {
+                        AppLog.add("MEDIA", "Previous: YouTube player fallback")
+                        send(Msg.PREV)
+                    }
                 }
                 override fun onSkipToQueueItem(id: Long) {
                     val item = MusicQueueNavigation.at(id, queueGate.items()) ?: return
