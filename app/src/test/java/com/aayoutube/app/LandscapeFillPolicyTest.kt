@@ -9,8 +9,8 @@ class LandscapeFillPolicyTest {
     private fun on(
         landscape: Boolean = true, watchTab: Boolean = true, watchPage: Boolean = true,
         fullPlayer: Boolean = true, inPip: Boolean = false, fullscreen: Boolean = false,
-        car: Boolean = false,
-    ) = LandscapeFillPolicy.active(landscape, watchTab, watchPage, fullPlayer, inPip, fullscreen, car)
+        car: Boolean = false, dismissed: Boolean = false,
+    ) = LandscapeFillPolicy.active(landscape, watchTab, watchPage, fullPlayer, inPip, fullscreen, car, dismissed)
 
     @Test fun rotatingSidewaysOnAWatchPageFillsTheScreen() {
         assertTrue(on())
@@ -24,6 +24,17 @@ class LandscapeFillPolicyTest {
         assertFalse(on(inPip = true))
         assertFalse(on(fullscreen = true))
         assertFalse(on(car = true))
+    }
+
+    @Test fun swipeOrBackShowsTheWatchPageThenTheMiniPlayer() {
+        assertFalse("dismissed landscape video shows the page and playlist", on(dismissed = true))
+        val host = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val ui = src("app/src/main/java/com/aayoutube/app/Screens.kt")
+        assertTrue(host.contains("if (landscapeFill.value) dismissLandscapeFill() else enterMini()"))
+        assertTrue(ui.contains("WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()"))
+        assertTrue(ui.indexOf("WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()") <
+            ui.indexOf("WebHost.isOnWatchPage() -> WebHost.enterMini()"))
+        assertTrue(ui.contains("WebHost.landscapeDismissed.value = false"))
     }
 
     private fun src(path: String): String =

@@ -14,5 +14,7 @@ internal object LandscapeFillPolicy {
         inPip: Boolean,
         fullscreen: Boolean,
         car: Boolean,
-    ): Boolean = landscape && watchTab && watchPage && fullPlayer && !inPip && !fullscreen && !car
+        /** Swipe down / Back from the filled video shows the watch page and playlist. */
+        dismissed: Boolean = false,
+    ): Boolean = landscape && watchTab && watchPage && fullPlayer && !inPip && !fullscreen && !car && !dismissed
 }

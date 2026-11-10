@@ -258,11 +258,16 @@ fun AppRoot(activity: MainActivity) {
     // page layout instead and keeps YouTube's controls.
     val orientation = LocalConfiguration.current.orientation
     val watchPage by WebHost.onWatchPage.collectAsState()
+    val landDismissed by WebHost.landscapeDismissed.collectAsState()
+    LaunchedEffect(orientation) {
+        if (orientation != Configuration.ORIENTATION_LANDSCAPE) WebHost.landscapeDismissed.value = false
+    }
     val landFill = LandscapeFillPolicy.active(
         landscape = orientation == Configuration.ORIENTATION_LANDSCAPE,
         watchTab = watchTab, watchPage = watchPage,
         fullPlayer = playerMode == WebHost.PlayerMode.FULL,
         inPip = inPip, fullscreen = fullscreen != null, car = onCar || projectedToCar,
+        dismissed = landDismissed,
     )
     LaunchedEffect(landFill) { WebHost.setLandscapeFill(landFill) }
     DisposableEffect(landFill) {
@@ -369,6 +374,8 @@ fun AppRoot(activity: MainActivity) {
         when {
             equalizerOpen -> equalizerOpen = false
             fullscreen != null -> WebHost.exitFullscreen()
+            // Landscape video: Back first shows the watch page (player + playlist).
+            WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()
             tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
             tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
             // Browsing under the mini player (or after closing it): back moves through the browse page.

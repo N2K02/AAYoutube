@@ -89,6 +89,14 @@ object WebHost {
     val onWatchPage = MutableStateFlow(false)
     /** Phone held sideways on a watch page: the video fills the screen (car layout rules). */
     val landscapeFill = MutableStateFlow(false)
+    /** The user left the filled landscape video for the watch page; reset in portrait. */
+    val landscapeDismissed = MutableStateFlow(false)
+
+    /** First swipe down / Back from the landscape video: show the page with its playlist. */
+    fun dismissLandscapeFill() {
+        if (!landscapeFill.value) return
+        landscapeDismissed.value = true
+    }
     /** The selected /watch?v= ID, set by navigation rather than a delayed
      * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
     val selectedWatchVideoId = MutableStateFlow("")
@@ -762,7 +770,12 @@ object WebHost {
 
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun requestMiniFromBridge(generation: Int) {
-        main.post { if (generation == webGeneration) enterMini() }
+        main.post {
+            if (generation != webGeneration) return@post
+            // From the filled landscape video, the first swipe shows the watch page;
+            // swiping the player there again opens the mini player.
+            if (landscapeFill.value) dismissLandscapeFill() else enterMini()
+        }
     }
 
     fun setLandscapeFill(on: Boolean) {
