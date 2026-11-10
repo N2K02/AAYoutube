@@ -41,6 +41,38 @@ class ExperimentalCarVideoMonitorTest {
         assertEquals(323, d.displayId)
     }
 
+    @Test fun frameHealthTracksLivePlaybackAndResetsOnNewConnection() {
+        ExperimentalCarVideoMonitor.begin("frame-host", true)
+        ExperimentalCarVideoMonitor.decoder(
+            owner = "frame-host", decoded = 30, dropped = 0,
+            width = 1280, height = 720, paused = false,
+            monotonicMs = 1_000L, positionSeconds = 5.0,
+        )
+        assertEquals("awaiting baseline", ExperimentalCarVideoMonitor.state.value.frameHealth)
+        ExperimentalCarVideoMonitor.decoder(
+            owner = "frame-host", decoded = 160, dropped = 0,
+            width = 1280, height = 720, paused = false,
+            monotonicMs = 7_000L, positionSeconds = 11.0,
+        )
+        assertEquals("frames advancing", ExperimentalCarVideoMonitor.state.value.frameHealth)
+        ExperimentalCarVideoMonitor.decoder(
+            owner = "stale-host", decoded = 160, dropped = 0,
+            width = 1280, height = 720, paused = false,
+            monotonicMs = 14_000L, positionSeconds = 11.0,
+        )
+        assertEquals("frames advancing", ExperimentalCarVideoMonitor.state.value.frameHealth)
+        ExperimentalCarVideoMonitor.begin("fresh-host", true)
+        assertEquals("Not measured", ExperimentalCarVideoMonitor.state.value.frameHealth)
+        ExperimentalCarVideoMonitor.fallback("fresh-host", "rebind budget")
+        ExperimentalCarVideoMonitor.decoder(
+            owner = "fresh-host", decoded = 240, dropped = 0,
+            width = 1280, height = 720, paused = false,
+            monotonicMs = 20_000L, positionSeconds = 20.0,
+        )
+        assertEquals("Monitoring disabled after fallback",
+            ExperimentalCarVideoMonitor.state.value.frameHealth)
+    }
+
     @Test fun fallbackAndStaleDiagnosticsCannotOverwriteActiveHost() {
         ExperimentalCarVideoMonitor.begin("car-current", true)
         ExperimentalCarVideoMonitor.fallback("car-old", "irrelevant")
