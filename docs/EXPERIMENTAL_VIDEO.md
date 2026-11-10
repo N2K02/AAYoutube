@@ -169,3 +169,26 @@ the callback arrives or the user reconnects. Enabling the virtual-display
 test while connected is disabled, and connecting car video cancels any
 ongoing synthetic test. A failed readback leaves the standard video path
 unchanged.
+
+## Phase 6 — visual test bars in the real legacy car window
+
+**Show test bars on car** is available in Settings > Experimental video while
+a car video host is active, the feature is enabled and playback is **paused**.
+It requests a 3-second color-bar overlay rendered by the existing car
+`ComposeView` at its current display ID. The existing WebView is neither
+detached nor restarted; music/transport callbacks are untouched, and no
+privileged display or NavigationTemplate is created. The overlay automatically
+disappears after 3 seconds or when the car host stops or is replaced.
+
+After the bars disappear, the phone asks **Visible** / **Not visible**.
+The answer is saved only to the current in-memory status and CAR logcat, not
+as any picture. This tests whether the current legacy Compose window *appears*
+on the physical head unit according to the user's observation. It does **not**
+prove that Chromium video frames or a future virtual-display compositor
+reach the same display path. A paused playback snapshot is required to
+request the test so that an actively playing video is never covered by the
+diagnostic pattern.
+
+The test is disabled by default, unavailable with the experimental feature
+off, and guarded by active per-CarActivity host ownership. Multiple resume
+events do not extend a live pattern. It is intended only for use while parked.
