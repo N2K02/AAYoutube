@@ -283,6 +283,11 @@ analysis of *three distinct* evidence channels:
   frame count and the user's `Moving image visible`/`Not visible` observation.
 - The active Chromium/WebHost frame-health status and the car-window geometry.
 
+If both synthetic paths are visibly confirmed but the active Chromium
+frame-health classifier reports a suspected decoder/playback stall, the
+assessment calls out that **separate decoder issue** instead of concluding
+that media video is healthy. No automated seek, restart or reload is triggered.
+
 Human observations and buffer matches are stored as distinct nullable
 **typed booleans** for the current test, never inferred by parsing log
 messages. A new probe resets its earlier observations, and stale host/run
