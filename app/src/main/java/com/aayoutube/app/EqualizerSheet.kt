@@ -46,6 +46,7 @@ import kotlin.math.roundToInt
 internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val s by AAYSoundFx.settings.collectAsState()
     val audio by GlobalAudioEffects.status.collectAsState()
+    val tracking by AudioSessionDiscovery.status.collectAsState()
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -89,10 +90,25 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             Text(
-                "Chromium has no mRadio-style PCM hook. The deprecated Android " +
-                    "output-mix effect can affect audio from other apps and may " +
-                    "not work on this phone, Bluetooth or Android Auto. " +
-                    "An initialized effect does not guarantee audible changes.",
+                if (tracking.granted) {
+                    "Enhanced audio-session detection is enabled (ADB grant). " +
+                        tracking.message + ". A session must be uniquely attributed " +
+                        "to AAYouTube before effects are attached; no global fallback."
+                } else {
+                    "Legacy mode uses deprecated Android output-mix effects, " +
+                        "which may affect other apps. For optional per-player " +
+                        "tracking, grant DUMP once using ADB: " +
+                        "adb shell pm grant com.aayoutube.app android.permission.DUMP"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            Text(
+                "WebView exposes no mRadio PCM hook. Enhanced session tracking " +
+                    "is experimental and may be unsupported on this Android build. " +
+                    "An initialized effect does not prove audible changes, " +
+                    "including on Bluetooth or Android Auto.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 12.dp),
