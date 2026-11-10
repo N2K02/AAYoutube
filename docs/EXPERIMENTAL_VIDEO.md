@@ -270,3 +270,55 @@ NavigationTemplate's map surface is for navigation/map content, not a
 general-purpose video surface. The experiment intentionally does not
 declare navigation functionality it does not provide or reintroduce the
 previously crashing CarAppService.
+
+## Phase 9 — correlated car-rendering report
+
+The Experimental video screen now displays a compact **Rendering-path
+assessment** and a **Copy rendering report** button. This is read-only
+analysis of *three distinct* evidence channels:
+
+- The known Compose/window pattern's PixelCopy match and the user's
+  `Visible`/`Not visible` observation.
+- The known animated SurfaceView's PixelCopy match, approximate submitted
+  frame count and the user's `Moving image visible`/`Not visible` observation.
+- The active Chromium/WebHost frame-health status and the car-window geometry.
+
+Human observations and buffer matches are stored as distinct nullable
+**typed booleans** for the current test, never inferred by parsing log
+messages. A new probe resets its earlier observations, and stale host/run
+callbacks are discarded. No automatic fix, video reload, frame capture,
+surface replacement or permission escalation is triggered by an assessment.
+
+An app-window buffer match with a human `Not visible` report points
+towards a possible **car host / presentation transfer** issue. Compose
+bars visible but the animated SurfaceView not visible points towards
+possible **independent SurfaceView layer composition** differences.
+Both synthetic paths visible only establish the test patterns' appearance;
+actual Chromium video painting remains **unverified**.
+
+**Copy rendering report** writes a short text-only, privacy-reduced
+snapshot to the clipboard on explicit request, with no URLs, YouTube IDs,
+account details, host owner tokens, pixel data or screenshots. Copying
+requires conscious user action and may make the text available to other
+apps until the system clipboard expires or is overwritten. The report
+is intended to paste into a diagnostic issue or this conversation
+after testing while safely parked.
+
+### Parked-only regression procedure
+
+1. Install the latest experimental artifact after all three CI workflows
+   pass. Turn on Experimental video and reconnect Android Auto.
+2. Pause the player. Show the Compose color bars and report **Visible** or
+   **Not visible** based on the *actual car panel*, not the phone.
+3. Run **Test direct surface** and report whether the moving marker was
+   visible on the *car panel*.
+4. Review **Rendering-path assessment** and **Copy rendering report**.
+   Share only the copied text to aid diagnosis; a screenshot is not needed.
+5. Resume playback, check that the temporary overlays disappear, and verify
+   music, next/previous steering-wheel buttons and the standard renderer
+   still work. Disconnect/reconnect and verify stale test results reset.
+
+Remaining blocker: these synthetic tests do **not** supply actual
+YouTube video frames to an independent host renderer. Any such backend
+requires a legally permitted capture path, exclusive single-decoder
+ownership, supported Android Auto host APIs and physical validation.
