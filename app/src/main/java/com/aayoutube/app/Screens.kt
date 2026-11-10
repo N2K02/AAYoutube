@@ -901,6 +901,21 @@ fun ExperimentalVideoPage() {
     val directSurface by CarDirectSurfaceProbe.state.collectAsState()
     val videoSnapshot by WebHost.snapshot.collectAsState()
     val context = LocalContext.current
+    val renderEvidence = CarRenderEvidence(
+        active = diagnostics.active,
+        experimental = diagnostics.enabled,
+        windowBuffer = carPattern.windowPatternDetected,
+        windowSeen = carPattern.observedVisible,
+        surfaceBuffer = directSurface.surfacePatternDetected,
+        surfaceSeen = directSurface.observedVisible,
+        surfaceFrames = directSurface.frameCount,
+        frameHealth = diagnostics.frameHealth,
+        checks = diagnostics.checks,
+        repairs = diagnostics.repairs,
+        frameSize = diagnostics.frameSize,
+        playerSize = diagnostics.playerSize,
+    )
+    val renderAssessment = CarRenderCorrelationPolicy.assess(renderEvidence)
     DisposableEffect(Unit) {
         onDispose { CarVirtualDisplayProbe.cancel() }
     }
@@ -1132,6 +1147,38 @@ fun ExperimentalVideoPage() {
                         "This manual test reads only a tiny, temporary car-window sample. " +
                             "No image is saved. Dark pixels may be normal video, and a " +
                             "successful sample does not prove the head unit displays it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (diagnostics.active && diagnostics.enabled) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Rendering-path assessment",
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(renderAssessment.summary,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text(renderAssessment.nextStep,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick = {
+                        val clipboard = context.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE
+                        ) as? android.content.ClipboardManager
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(
+                            "AAYouTube car rendering diagnostics",
+                            CarRenderCorrelationPolicy.report(renderEvidence),
+                        ))
+                        AppLog.add("CAR", "User copied sanitized renderer correlation report")
+                    }) { Text("Copy rendering report") }
+                    Text(
+                        "Report contains aggregate diagnostic signals only—" +
+                            "no URLs, video identifiers or screenshots.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
