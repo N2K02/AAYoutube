@@ -37,6 +37,8 @@ data class FeatureFlags(
     val topMenuTimeoutSeconds: Int = TopMenuPolicy.DEFAULT_SECONDS,
     /** Floating video controls rail on the left instead of the right (phone and car). */
     val controlsOnLeft: Boolean = false,
+    /** Opt-in car-only surface recovery; never changes the media service. */
+    val experimentalVideo: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -87,6 +89,7 @@ object Features {
                 prefs.getInt("topMenuTimeoutSeconds", d.topMenuTimeoutSeconds)
             ),
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
+            experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
         )
     }
 
@@ -113,6 +116,7 @@ object Features {
             .putBoolean("resumeLastPage", n.resumeLast)
             .putInt("topMenuTimeoutSeconds", n.topMenuTimeoutSeconds)
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
+            .putBoolean("experimentalVideo", n.experimentalVideo)
             .apply()
     }
 }
