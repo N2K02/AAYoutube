@@ -70,3 +70,76 @@ assume the adapter works because it compiled.
 Android documentation:
 - https://developer.android.com/reference/android/media/audiofx/AudioEffect
 - https://developer.android.com/reference/android/media/audiofx/Equalizer
+
+## Experimental workaround: optional AAYouTube session targeting
+
+Enhanced player tracking is modelled after the ADB-assisted approach used
+by Wavelet and Poweramp Equalizer; it does **not** modify Chromium or hook
+hidden Android AudioPlaybackConfiguration APIs. It is not a guarantee that
+Android will expose WebView's actual audio session.
+
+**One-time optional setup**, after installing the latest experimental APK:
+
+```sh
+adb shell pm grant com.aayoutube.app android.permission.DUMP
+```
+
+The app declares DUMP but cannot automatically grant it. Restart the app
+or toggle Equalizer off/on after granting, then play YouTube audio.
+Permissions can be revoked:
+
+```sh
+adb shell pm revoke com.aayoutube.app android.permission.DUMP
+```
+
+While Equalizer is ON and a Chromium video reports playing, an asynchronous,
+bounded, read-only `dumpsys audio` request runs no more often than
+every eight seconds. Its 2.5-second timeout kills the subprocess if needed.
+Only `AudioPlaybackConfiguration` lines with the exact AAYouTube Unix UID
+are retained transiently; other players' records are discarded immediately.
+The parser accepts only an **active started** player, a positive audio
+session, and an unambiguous single session ID attributed to AAYouTube.
+It does not store session IDs, diagnostics dumps, audio samples, URLs,
+player identities, or device identifiers in persistent storage or logcat.
+
+If a unique own-UID session is verified, the existing Android native
+`Equalizer`, `BassBoost`, and `Virtualizer` are attached to that
+**nonzero audio session**, not the deprecated global mix. The current
+effect handles are released and recreated when the session changes.
+If an ADB-granted scan fails, is unavailable, finds multiple different
+sessions, or detects no own-UID session, the new mode **fails closed**
+(no global-mix fallback). On pause/quit, its scanner stops and effects
+are disabled/released. Chromium remains the only actual audio player.
+
+Without the optional DUMP permission, the user-enabled existing legacy
+**session 0 output-mix fallback** continues as before; it can affect other
+apps while AAYouTube is playing. Keep Equalizer OFF if that behavior is
+unwanted. Hardware support varies.
+
+### Known limits to validate on the user's device
+
+Android's public AudioPlaybackConfiguration API anonymizes player sessions.
+The detailed session ID accessor is system-only. This design reads optional
+ADB-granted service diagnostics, which OEM builds and Android releases can
+restrict; the scanner never attempts non-SDK reflection.
+
+Chromium WebView's audio may run under an isolated renderer UID rather than
+the app UID. If the real player is not attributed to the app UID, no session
+is selected. Android effects can also fail to affect some Bluetooth/Android
+Auto paths despite a successful audio-session attachment.
+
+Web Audio `createMediaElementSource` was deliberately NOT added to real
+YouTube elements: CORS-cross-origin media can emit silence, and redirecting
+an element to an AudioContext cannot be undone safely without recreating
+the media element. A muted/stuck car video would be worse than a missing EQ.
+
+The only trustworthy success criterion is an **audible** change when
+comparing Flat with Bass boost/Vocal on the same output route while audio
+and video remain smooth. Verify phone speakers, Bluetooth and Android Auto
+separately.
+
+References:
+- https://developer.android.com/reference/android/media/audiofx/AudioEffect
+- https://github.com/Pittvandewitt/Wavelet/blob/master/docs/Settings.md
+- https://forum.powerampapp.com/topic/20638-using-adb-to-allow-equaliser-permissions-for-more-audio-applications/
+- https://www.w3.org/TR/webaudio-1.1/
