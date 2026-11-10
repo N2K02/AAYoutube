@@ -25,13 +25,16 @@ internal data class ExperimentalCarVideoStatus(
     val droppedFrames: Int = -1,
     val decoderSize: String = "—",
     val decoderPaused: Boolean? = null,
+    val frameHealth: String = "Not measured",
 )
 
 internal object ExperimentalCarVideoMonitor {
     private val _state = MutableStateFlow(ExperimentalCarVideoStatus())
     val state: StateFlow<ExperimentalCarVideoStatus> = _state
+    private var previousFrame: CarVideoFrameSample? = null
 
     fun begin(owner: String, enabled: Boolean) {
+        previousFrame = null
         _state.value = ExperimentalCarVideoStatus(
             owner = owner, active = true, enabled = enabled,
             state = if (enabled) "Experimental surface checks enabled" else "Standard video",
@@ -68,29 +71,62 @@ internal object ExperimentalCarVideoMonitor {
             "16:9=${expected.width}x${expected.height}")
     }
 
-    /** Observability only: decoded frames are not proof that the head unit paints them. */
-    fun decoder(owner: String, decoded: Int, dropped: Int, width: Int, height: Int, paused: Boolean?) {
-        if (_state.value.owner != owner || !_state.value.active) return
+    /**
+     * Diagnostic-only. Never restarts playback based on frame counters.
+     * The first valid sample is a baseline; short gaps and video changes are
+     * classified explicitly instead of being reported as failed playback.
+     */
+    fun decoder(
+        owner: String,
+        decoded: Int,
+        dropped: Int,
+        width: Int,
+        height: Int,
+        paused: Boolean?,
+        monotonicMs: Long = 0L,
+        positionSeconds: Double? = null,
+        hasVideo: Boolean = true,
+    ) {
+        if (_state.value.owner != owner || !_state.value.active || !_state.value.enabled) return
+        val sample = CarVideoFrameSample(
+            monotonicMs = monotonicMs,
+            hasVideo = hasVideo,
+            paused = paused,
+            decoded = decoded,
+            dropped = dropped,
+            positionSeconds = positionSeconds?.takeIf { it.isFinite() },
+            width = width,
+            height = height,
+        )
+        val health = CarVideoFrameHealthPolicy.classify(previousFrame, sample)
+        // Resume from a new baseline after video transitions, position seeks,
+        // pause/unpause and counter resets. Keep the baseline through short
+        // successive probes so enough time can accumulate for classification.
+        if (health != CarVideoFrameHealth.TOO_SOON) previousFrame = sample
         _state.value = _state.value.copy(
             decodedFrames = decoded,
             droppedFrames = dropped,
             decoderSize = "${width}×${height}",
             decoderPaused = paused,
+            frameHealth = health.name.replace('_', ' ').lowercase(),
         )
-        AppLog.add("CAR", "Experimental video decoder frames=$decoded dropped=$dropped " +
-            "size=${width}x${height} paused=$paused")
+        AppLog.add("CAR", "Experimental video decoder health=$health " +
+            "frames=$decoded dropped=$dropped size=${width}x${height} paused=$paused")
     }
 
     fun fallback(owner: String, reason: String) {
         if (_state.value.owner != owner || !_state.value.active) return
+        previousFrame = null
         _state.value = _state.value.copy(
-            state = "Standard fallback: $reason", enabled = false
+            state = "Standard fallback: $reason", enabled = false,
+            frameHealth = "Monitoring disabled after fallback"
         )
         AppLog.add("CAR", "Experimental video fallback: $reason")
     }
 
     fun end(owner: String) {
         if (_state.value.owner != owner) return
+        previousFrame = null
         _state.value = _state.value.copy(active = false, state = "Disconnected (last session)")
         AppLog.add("CAR", "Video session ended")
     }
