@@ -143,3 +143,62 @@ References:
 - https://github.com/Pittvandewitt/Wavelet/blob/master/docs/Settings.md
 - https://forum.powerampapp.com/topic/20638-using-adb-to-allow-equaliser-permissions-for-more-audio-applications/
 - https://www.w3.org/TR/webaudio-1.1/
+
+
+## Compact UI and enhanced diagnostics — current experimental PR
+
+The Equalizer bottom sheet shows **only one status line**, a Reset
+button, the opt-in switch, supported 3D chips, presets, five bands and
+bass boost. Long explanatory paragraphs have been removed from the main
+screen. A collapsed **Details** control exposes the native effect
+status, session discovery result, number of own-player rows, scan
+duration/count and the one-time ADB grant command when relevant.
+
+While the user adjusts controls, logging is **debounced by 300ms** to
+capture the final band values without a Logcat entry for every slider
+frame. The redacted `AAYouTube-EQ` tag now records:
+
+- EQ switch, preset, five rounded dB bands, bass and 3D values.
+- Chromium playback start/pause/stop and WebView effect teardown.
+- DUMP permission state, scanner start/stop, own-UID candidate row
+  count, scan duration, truncated dumps and errors by exception *type*.
+- Native EQ/BassBoost/Virtualizer creation and control failures,
+  attachment scope (own session versus legacy mix), hardware band
+  count and aggregate apply success/failure.
+
+The logs intentionally do **not** contain playback audio, YouTube
+identifiers, URLs, audio session IDs, account details, raw system
+diagnostic dumps or other applications' session records. Diagnostics
+can confirm native effect initialization and attachment, **not audible
+changes** on a particular output route.
+
+### GitHub comparison and process ownership
+
+AAYouTube deliberately runs in **two Android processes** using the same
+app UID. The main process provides `PlaybackService` and the native
+MediaBrowser/MediaSession, not PCM audio. The `:web` process owns
+`MainActivity`, the player WebView, Settings and
+`GlobalAudioEffects`. Applying an AudioEffect in the main process
+would not magically create a usable session; effects must target the
+actual Chromium audio session ID regardless of which process creates
+them. The optional DUMP scanner runs in `:web` while playing.
+
+Relevant open-source references (research only, no GPL code copied):
+- Wavelet: <https://github.com/Pittvandewitt/Wavelet/blob/master/docs/Settings.md>
+  uses experimental ADB/DUMP-enhanced session detection.
+- OpenEQ: <https://github.com/Turbofan3360/OpenEQ>
+  explains per-session hardware effects and the unreliable global-mix
+  compatibility mode.
+- allEQ: <https://github.com/omixin/allEQ>
+  uses Android AudioEffect on session 0; Shizuku is primarily for
+  background survival, not a WebView PCM hook.
+- Transpose: <https://github.com/joh9911/Transpose>
+  uses its own Media3 playback architecture and is therefore not a
+  drop-in WebView equalizer.
+- CludesAmp: <https://github.com/Cludes/cludesamp>
+  uses Web Audio in a browser extension, but that technique should not
+  automatically be used for AAYouTube, where Chromium CORS/DRM and
+  source-element relinking can risk silence or duplicate audio.
+
+No third playback process or duplicate audio pipeline is introduced by
+this update.
