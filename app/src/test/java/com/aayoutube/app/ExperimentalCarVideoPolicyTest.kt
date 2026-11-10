@@ -47,6 +47,19 @@ class ExperimentalCarVideoPolicyTest {
     private fun source(path: String): String =
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
+    @Test fun carRecoveryBudgetCannotResetOnResumeOrFrameReattachment() {
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        assertTrue(car.contains("private var experimentalRecoveryStarted = false"))
+        val schedule = car.substringAfter("private fun scheduleExperimentalRecovery() {")
+            .substringBefore("    /** Frames decoded")
+        assertTrue(schedule.contains("experimentalRecoveryStarted) return"))
+        assertTrue(schedule.contains("experimentalRecoveryStarted = true"))
+        assertTrue(schedule.contains("frame?.isAttachedToWindow != true"))
+        assertFalse(schedule.contains("experimentalChecks = 0"))
+        assertFalse(schedule.contains("experimentalRepairs = 0"))
+        assertTrue(car.contains("experimentalRepairs >= ExperimentalCarVideoPolicy.MAX_REBINDS"))
+    }
+
     @Test fun toggleIsOptInPersistedAndDoesNotChangeMusicOrPhoneRendering() {
         val features = source("app/src/main/java/com/aayoutube/app/Features.kt")
         val screens = source("app/src/main/java/com/aayoutube/app/Screens.kt")
