@@ -16,7 +16,7 @@ class CarFrameLayout(context: Context) : FrameLayout(context) {
     private var swipeStartY = 0f
     private var swipeStartAt = 0L
     /** Optional diagnostics only; the WebView receives every original event. */
-    var onObservedGesture: ((CarVideoGesture) -> Unit)? = null
+    internal var onObservedGesture: ((CarVideoGesture) -> Unit)? = null
     private var maxDriftX = 0f
     private var maxDriftY = 0f
     private var trackingSwipe = false
