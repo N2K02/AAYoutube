@@ -192,3 +192,40 @@ diagnostic pattern.
 The test is disabled by default, unavailable with the experimental feature
 off, and guarded by active per-CarActivity host ownership. Multiple resume
 events do not extend a live pattern. It is intended only for use while parked.
+
+## Phase 7 — synthetic pattern readback correlation
+
+The **Show test bars on car** diagnostic now waits briefly for Compose
+to paint the known seven-color pattern, then issues a **single** low-resolution
+(96×54) PixelCopy against the active legacy car Window. Three samples from
+the center of each color bar are checked against expected RGB values.
+Only the number of matches and an aggregate human-readable assessment
+are kept. Every temporary bitmap is recycled, never saved or shared.
+
+The phone-side diagnostics show two **separate** observations:
+
+1. **Window readback**: whether the app's own Window buffer contains a
+   recognizable set of synthetic bars. This helps isolate composition
+   failures but cannot verify Android Auto's final presentation.
+2. **Visible / Not visible**: whether the user actually saw the bars on
+   the physical head unit. This manual observation is not inferred from
+   PixelCopy; it is kept as a distinct, in-memory result.
+
+Readback is scoped by active car owner and a unique pattern-test ID.
+Stale callbacks cannot modify a newer test. If the underlying PixelCopy
+never invokes its callback, only **one** tiny buffer can remain pending;
+there are no repeated allocations. The overlay still auto-removes after
+three seconds, immediately when playback resumes or on disconnect.
+Normal video transport and playback are untouched.
+
+Interpretation:
+- Pattern **detected in Window**, but **not visible** on the car:
+  investigate projection/host transfer or display presentation.
+- Pattern **not detected**, but **visible** to the user:
+  PixelCopy may not be observing the actual projected layer; it is not
+  evidence that the car failed to draw.
+- Pattern detected and visible: the legacy Compose presentation path
+  works for this synthetic overlay only, **not** necessarily Chromium
+  video or a future independent virtual-display renderer.
+
+These diagnostics remain experimental, parked-only and opt-in.
