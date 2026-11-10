@@ -18,6 +18,8 @@ internal data class CarVideoPatternStatus(
     val awaitingFeedback: Boolean = false,
     val message: String = "Connect experimental car video to test the display",
     val owner: String = "",
+    val testId: Int = 0,
+    val windowReadback: String = "Not checked",
 )
 
 internal object CarVideoPatternProbe {
@@ -25,6 +27,7 @@ internal object CarVideoPatternProbe {
     private val _state = MutableStateFlow(CarVideoPatternStatus())
     val state: StateFlow<CarVideoPatternStatus> = _state
     private var hide: Runnable? = null
+    private var nextTestId = 0
 
     /** The active host is always registered from its lifecycle on the main thread. */
     fun register(owner: String) {
@@ -62,8 +65,11 @@ internal object CarVideoPatternProbe {
             return
         }
         hide?.let { main.removeCallbacks(it) }
+        nextTestId++
         _state.value = _state.value.copy(
             visible = true, awaitingFeedback = false,
+            testId = nextTestId,
+            windowReadback = "Window pixel self-test not started",
             message = "Test bars displayed in the car app for 3 seconds",
         )
         AppLog.add("CAR", "Manual car test pattern requested; audio/video unchanged")
@@ -95,6 +101,20 @@ internal object CarVideoPatternProbe {
             message = "Display test stopped when playback resumed",
         )
         AppLog.add("CAR", "Car test pattern removed: video playback resumed")
+    }
+
+    /** Called only by a matched PixelCopy callback for the active test. */
+    fun windowReadback(owner: String, testId: Int, assessment: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { windowReadback(owner, testId, assessment) }
+            return
+        }
+        val current = _state.value
+        val active = ExperimentalCarVideoMonitor.state.value
+        if (!current.available || current.owner != owner ||
+            current.testId != testId || !active.active ||
+            active.owner != owner || !active.enabled) return
+        _state.value = current.copy(windowReadback = assessment)
     }
 
     fun reportSeen(seen: Boolean) {
