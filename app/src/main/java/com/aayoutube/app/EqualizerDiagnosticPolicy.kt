@@ -7,7 +7,10 @@ internal object EqualizerDiagnosticPolicy {
     fun settingSummary(s: SoundEqSettings): String {
         val safe = SoundEqPolicy.safe(s)
         val gains = safe.bands.joinToString(",") { it.roundToInt().toString() }
-        return "enabled=${safe.enabled} preset=${safe.preset} " +
+        val preset = safe.preset.takeIf {
+            it == "Custom" || SoundEqPolicy.presets.any { curve -> curve.first == it }
+        } ?: "Custom"
+        return "enabled=${safe.enabled} preset=$preset " +
             "bandsDb=[$gains] bassPct=${(safe.bass * 100).roundToInt()} " +
             "spatial=${safe.mode.name} strengthPct=${(safe.intensity * 100).roundToInt()}"
     }
