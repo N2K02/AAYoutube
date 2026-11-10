@@ -42,7 +42,7 @@
       }, true);
     } catch (e) {}
   }
-  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
+  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, isLand: false };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
   // cookies and avatar placeholders are not proof that YouTube is signed in.
@@ -1482,7 +1482,8 @@
     return off;
   }
   function carLayout() {
-    var on = !!A.isCar && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
+    var on = !!(A.isCar || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
@@ -1539,6 +1540,17 @@
     // Android Auto can take over an existing background-audio WebView.
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
+  };
+  // Phone held sideways on a watch page: the video and YouTube's controls fill the screen.
+  A.land = function (on) {
+    A.isLand = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
   };
   // Reflow against measured car dimensions after transferring a mini WebView.
   A.refitCar = function () {

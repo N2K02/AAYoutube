@@ -87,6 +87,8 @@ object WebHost {
     val canGoBack = MutableStateFlow(false)
     /** The player page shows a video (watch or live page). */
     val onWatchPage = MutableStateFlow(false)
+    /** Phone held sideways on a watch page: the video fills the screen (car layout rules). */
+    val landscapeFill = MutableStateFlow(false)
     /** The selected /watch?v= ID, set by navigation rather than a delayed
      * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
     val selectedWatchVideoId = MutableStateFlow("")
@@ -761,6 +763,13 @@ object WebHost {
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun requestMiniFromBridge(generation: Int) {
         main.post { if (generation == webGeneration) enterMini() }
+    }
+
+    fun setLandscapeFill(on: Boolean) {
+        if (landscapeFill.value == on) return
+        landscapeFill.value = on
+        noteVisibilityChange()
+        js("window.__aay&&window.__aay.land&&window.__aay.land($on)")
     }
 
     fun enterMini() {
@@ -1469,6 +1478,7 @@ object WebHost {
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
+            if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.eq&&window.__aay.eq(${AAYSoundFx.webAudioJson()})", null)
             sameVideoReloadPosition?.let { (videoId, positionMs) ->

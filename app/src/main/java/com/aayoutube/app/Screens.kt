@@ -5,6 +5,7 @@ package com.aayoutube.app
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -130,6 +131,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -251,7 +253,27 @@ fun AppRoot(activity: MainActivity) {
     val playerMode by WebHost.mode.collectAsState()
     val flags by Features.state.collectAsState()
     val watchTab = tab == Tab.Watch.ordinal
-    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null)
+    // Rotating sideways while watching fills the screen with the video (like the YouTube app);
+    // rotating back restores the page. Chromium's own fullscreen needs a tap, so this uses the
+    // page layout instead and keeps YouTube's controls.
+    val orientation = LocalConfiguration.current.orientation
+    val watchPage by WebHost.onWatchPage.collectAsState()
+    val landFill = LandscapeFillPolicy.active(
+        landscape = orientation == Configuration.ORIENTATION_LANDSCAPE,
+        watchTab = watchTab, watchPage = watchPage,
+        fullPlayer = playerMode == WebHost.PlayerMode.FULL,
+        inPip = inPip, fullscreen = fullscreen != null, car = onCar || projectedToCar,
+    )
+    LaunchedEffect(landFill) { WebHost.setLandscapeFill(landFill) }
+    DisposableEffect(landFill) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (landFill) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
     var topMenuVisible by rememberSaveable { mutableStateOf(true) }
     var topMenuEpoch by remember { mutableIntStateOf(0) }
     // Every return to the video opens the menu briefly; Settings and all
@@ -574,7 +596,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 
     // Keep the WebPane host's dimensions stable across Settings transitions.
     // Inset only the phone WebView content, never Android Auto, PiP or native fullscreen.
-    val phoneSafeArea = !onCar && !projectedToCar && !inPip &&
+    val landFill by WebHost.landscapeFill.collectAsState()
+    val phoneSafeArea = !onCar && !projectedToCar && !inPip && !landFill &&
         WebHost.fullscreenView.collectAsState().value == null
     Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier)) {
         // Browse page (behind): made the first time the mini player opens.

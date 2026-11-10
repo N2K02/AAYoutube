@@ -936,3 +936,20 @@ test('mini player re-fits a video YouTube moved outside the small window', () =>
   p.runIntervals();
   assert.equal(p.classNames.has('aay-video-only'), true, 'small-window layout is reapplied');
 });
+
+test('phone landscape fills the screen with the video without car behaviour', () => {
+  const p = playerPage({ dom: watchPageDom() });
+  p.window.__aay.land(true);
+  assert.ok(p.classNames.has('aay-car'), 'video and controls fill the screen');
+  assert.equal(p.window.__aay.isCar, false, 'car gestures, quality and background rules stay off');
+  p.window.__aay.mini(true);
+  assert.equal(p.classNames.has('aay-car'), false, 'the mini player never uses the fill layout');
+  p.window.__aay.mini(false);
+  assert.ok(p.classNames.has('aay-car'));
+  p.window.__aay.land(false);
+  assert.equal(p.classNames.has('aay-car'), false, 'rotating back restores the page');
+  p.window.__aay.land(true);
+  p.location.pathname = '/';
+  p.window.__aay.land(true);
+  assert.equal(p.classNames.has('aay-car'), false, 'only watch pages fill the screen');
+});
