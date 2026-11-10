@@ -116,12 +116,22 @@ internal object CarRenderCorrelationPolicy {
             false -> "no"
             null -> "not measured"
         }
-        val safeFrame = input.frameSize.take(36)
-            .filter { it.isDigit() || it == '×' || it == 'x' || it == '—' }
-        val safePlayer = input.playerSize.take(36)
-            .filter { it.isDigit() || it == '×' || it == 'x' || it == '—' }
-        val health = input.frameHealth.take(60)
-            .filter { it.isLetter() || it == ' ' || it == '_' || it == '-' }
+        val sizePattern = Regex("""[0-9]{1,5}[×x][0-9]{1,5}""")
+        fun safeSize(value: String): String =
+            if (sizePattern.matches(value)) value else "unknown"
+        val safeFrame = safeSize(input.frameSize)
+        val safePlayer = safeSize(input.playerSize)
+        // Frame health is an internal enum description. Reject everything
+        // else instead of allowing unexpected strings into the clipboard.
+        val allowedHealth = setOf(
+            "not measured", "no video", "paused", "buffering or seeking",
+            "awaiting baseline", "too soon", "counter reset",
+            "frames advancing", "decoder stall suspected",
+            "playback stall suspected", "frame counter unavailable",
+            "monitoring disabled after fallback",
+        )
+        val health = input.frameHealth.lowercase()
+            .takeIf { it in allowedHealth } ?: "unrecognized"
         return buildString {
             appendLine("AAYouTube Experimental Car Rendering Report")
             appendLine("Active: ${input.active}; experimental: ${input.experimental}")
