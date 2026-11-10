@@ -108,6 +108,9 @@ object WebHost {
     // A /watch route can change video ID without recreating the WebView. Use
     // the current history ID to reject queued JS reports from the old video.
     private var expectedWatchVideoId: String? = null
+    // The video navigated away from: only its late reports are stale. The page
+    // address can lag behind the player (Mix/autoplay), so any other ID is current.
+    private var staleReportId: String? = null
     // Observe transport arrival separately from IPC delivery and actual playback.
     private var skipTraceSerial = 0
     private var skipTraceActive = false
@@ -827,6 +830,8 @@ object WebHost {
     fun expandPlayer() {
         if (mode.value == PlayerMode.FULL) return
         AppLog.add("VIEW", "Mini player expanded")
+        // Like the YouTube app: expanding sideways shows the watch page and playlist.
+        onFullscreenClosed()
         noteVisibilityChange()
         mode.value = PlayerMode.FULL
         js("window.__aay&&window.__aay.mini(false)")
@@ -1285,7 +1290,7 @@ object WebHost {
         main.post {
             if (generation != webGeneration) return@post
             if (s.id.isNotBlank() && (!mainFrameAllowsPlayback ||
-                    (expectedWatchVideoId != null && expectedWatchVideoId != s.id))) {
+                    PlaybackReportPolicy.stale(s.id, expectedWatchVideoId, staleReportId))) {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
@@ -1471,6 +1476,7 @@ object WebHost {
             // here too, not just on YouTube's same-document SPA transitions.
             val route = runCatching { Uri.parse(url).path }.getOrNull()
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            staleReportId = previous.id.takeIf { it.isNotBlank() && it != incomingId }
             expectedWatchVideoId = incomingId?.takeIf { route == "/watch" && it.isNotBlank() }
             selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
@@ -1529,7 +1535,10 @@ object WebHost {
             val parsed = runCatching { Uri.parse(url) }.getOrNull()
             val route = parsed?.path
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
-            expectedWatchVideoId = parsed?.getQueryParameter("v")
+            val newVideo = parsed?.getQueryParameter("v")
+            if (newVideo != expectedWatchVideoId)
+                staleReportId = snapshot.value.id.takeIf { it.isNotBlank() && it != newVideo }
+            expectedWatchVideoId = newVideo
                 ?.takeIf { route == "/watch" && it.isNotBlank() }
             selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             onWatchPage.value = mainFrameAllowsPlayback

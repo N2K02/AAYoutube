@@ -19,10 +19,10 @@ class AppHeaderPolicyTest {
     }
 
     @Test
-    fun fullscreenNeverShowsHeader() {
-        assertFalse(showAAYoutubeHeader(true, false, false, true))
-        assertFalse(showAAYoutubeHeader(false, false, false, true))
-        assertFalse(showAAYoutubeHeader(false, true, false, true))
+    fun fullscreenShowsHeaderOnTouch() {
+        assertTrue(showAAYoutubeHeader(true, false, false, true))
+        assertTrue(showAAYoutubeHeader(false, false, false, true))
+        assertTrue(showAAYoutubeHeader(false, true, false, true))
     }
 
     @Test

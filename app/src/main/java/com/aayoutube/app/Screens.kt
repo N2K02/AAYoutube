@@ -279,6 +279,7 @@ fun AppRoot(activity: MainActivity) {
         onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
     val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
+    // Entering fullscreen must not flash the menu; it appears on the next touch.
     var topMenuVisible by rememberSaveable { mutableStateOf(true) }
     var topMenuEpoch by remember { mutableIntStateOf(0) }
     // Every return to the video opens the menu briefly; Settings and all
