@@ -35,6 +35,9 @@ class LandscapeFillPolicyTest {
         assertTrue(ui.indexOf("WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()") <
             ui.indexOf("WebHost.isOnWatchPage() -> WebHost.enterMini()"))
         assertTrue(ui.contains("WebHost.landscapeDismissed.value = false"))
+        // Closing YouTube's own fullscreen while sideways must not fall back into the fill layout.
+        assertTrue(host.contains("private fun onFullscreenClosed()"))
+        assertTrue(host.split("onFullscreenClosed()").size >= 4)
     }
 
     private fun src(path: String): String =

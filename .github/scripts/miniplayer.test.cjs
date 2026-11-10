@@ -953,3 +953,28 @@ test('phone landscape fills the screen with the video without car behaviour', ()
   p.window.__aay.land(true);
   assert.equal(p.classNames.has('aay-car'), false, 'only watch pages fill the screen');
 });
+
+function swipeDown(p, target) {
+  const t = target || { closest: () => null };
+  p.emit('touchstart', { touches: [{ clientX: 100, clientY: 50 }], target: t });
+  p.emit('touchend', { changedTouches: [{ clientX: 105, clientY: 200 }], target: t });
+}
+
+test('landscape fill: swipe down anywhere asks native for the watch page step', () => {
+  const p = playerPage({ dom: watchPageDom() });
+  p.window.__aay.land(true);
+  const before = p.miniRequests;
+  swipeDown(p); // controls overlay target, not inside the video wrappers
+  assert.equal(p.miniRequests, before + 1);
+});
+
+test('YouTube fullscreen: swipe down exits fullscreen instead of opening the mini player', () => {
+  const p = playerPage();
+  let exits = 0;
+  p.document.fullscreenElement = {};
+  p.document.exitFullscreen = () => { exits++; };
+  const before = p.miniRequests;
+  swipeDown(p);
+  assert.equal(exits, 1);
+  assert.equal(p.miniRequests, before, 'the watch page is shown first, like the YouTube app');
+});

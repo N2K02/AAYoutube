@@ -279,13 +279,14 @@
     var swipeStart = null;
     document.addEventListener('touchstart', function(e) {
       swipeStart = null;
-      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar ||
-          document.fullscreenElement || document.webkitFullscreenElement) return;
+      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar) return;
       if (!/^\/(watch|live\/)/.test(location.pathname)) return;
       var target = e.target;
       if (!target || !target.closest) return;
-      var player = target.closest('.html5-video-player,#player-container-id,#player,' +
-        'ytm-player,ytm-watch-player,ytm-player-component,video');
+      // Full screen (YouTube's own, or the landscape fill): the whole screen is the player.
+      var full = !!(document.fullscreenElement || document.webkitFullscreenElement || A.isLand);
+      var player = full || target.closest('.html5-video-player,#player-container-id,#player,' +
+        'ytm-player,ytm-watch-player,ytm-player-component,#player-control-container,video');
       if (!player) return;
       swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
     }, { capture: true, passive: true });
@@ -296,6 +297,11 @@
       var dx = e.changedTouches[0].clientX - start.x;
       var dy = e.changedTouches[0].clientY - start.y;
       if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+      // Like the YouTube app: swipe down from full screen shows the watch page first.
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (err) {}
+        return;
+      }
       console.log('[aay] player swipe down -> mini');
       try { if (window.AAYNative) window.AAYNative.mini(); }
       catch (err) { console.warn('[aay] mini bridge failed', err); }

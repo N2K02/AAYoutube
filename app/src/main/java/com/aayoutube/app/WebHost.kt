@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.content.Context
 import android.net.Uri
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -971,6 +972,13 @@ object WebHost {
         customCallback = null
         fullscreenView.value = null
         cb?.onCustomViewHidden()
+        onFullscreenClosed()
+    }
+
+    /** Leaving YouTube's fullscreen while sideways shows the watch page, not our fill layout. */
+    private fun onFullscreenClosed() {
+        if (app.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
+            landscapeDismissed.value = true
     }
 
     // ---------------------------------------------------------------- freeze / release
@@ -1601,6 +1609,7 @@ object WebHost {
         override fun onHideCustomView() {
             customCallback = null
             fullscreenView.value = null
+            onFullscreenClosed()
             AppLog.add("VIEW", "Fullscreen player closed")
         }
 
