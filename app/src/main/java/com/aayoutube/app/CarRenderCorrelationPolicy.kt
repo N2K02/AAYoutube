@@ -35,6 +35,7 @@ internal enum class CarRenderFinding {
     BUFFER_READBACK_MISMATCH,
     AWAITING_DIRECT_SURFACE_OBSERVATION,
     SYNTHETIC_LAYERS_OBSERVED,
+    DECODER_STALL_SUSPECTED,
 }
 
 internal data class CarRenderAssessment(
@@ -76,10 +77,21 @@ internal object CarRenderCorrelationPolicy {
             else
                 "Check SurfaceView attachment, readback and car host layer support.",
         )
+        input.windowSeen == true && input.surfaceSeen == true &&
+            input.frameHealth in setOf("decoder stall suspected", "playback stall suspected") ->
+            CarRenderAssessment(
+                CarRenderFinding.DECODER_STALL_SUSPECTED,
+                "Both synthetic layers were visible; Chromium playback may be stalled",
+                "Repeat Check decoder health while media is playing. Do not infer " +
+                    "a working video path from synthetic bars.",
+            )
         input.windowSeen == true && input.surfaceSeen == true -> CarRenderAssessment(
             CarRenderFinding.SYNTHETIC_LAYERS_OBSERVED,
             "Both synthetic rendering paths were seen on the car",
-            "Check actual Chromium video separately; synthetic success does not prove video paint.",
+            if (input.frameHealth == "frames advancing")
+                "Chromium frame counters advanced, but physical video paint remains unverified."
+            else
+                "Check actual Chromium video separately; synthetic success does not prove video paint.",
         )
         input.windowSeen == true && input.surfaceBuffer == false &&
             input.surfaceSeen == null -> CarRenderAssessment(
