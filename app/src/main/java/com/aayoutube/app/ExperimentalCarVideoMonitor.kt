@@ -55,7 +55,9 @@ internal object ExperimentalCarVideoMonitor {
         visibleArea: CarVideoBounds,
     ) {
         if (_state.value.owner != owner || !_state.value.active) return
-        val expected = CarVideoViewportPolicy.fit16by9(frameWidth, frameHeight)
+        val expected = CarVideoViewportPolicy.fitVisible16by9(
+            frameWidth, frameHeight, visibleArea
+        )
         _state.value = _state.value.copy(
             state = state, checks = checks, repairs = repairs,
             displayId = displayId,
