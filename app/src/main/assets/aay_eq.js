@@ -7,6 +7,10 @@
 //         -> mid/side widening | 8D orbit pan -> delayed low-passed cross-feed
 //         -> dry + reverb send -> mRadio soft limiter -> speakers
 //
+// Only the stages the current settings use are connected, because Chromium
+// renders this graph on a realtime thread: idle stages would still cost CPU
+// and cause audible dropouts (Chromium "SyncReader::Read timed out").
+//
 // Safety: a media element is routed into Web Audio only after the user enables
 // the equalizer, only for MediaSource (blob:) playback (cross-origin progressive
 // media would be silenced by CORS tainting), and only once the AudioContext is
@@ -44,12 +48,13 @@
   }
 
   function impulse(feedback, damp) {
-    // Freeverb-like decay: four ~28 ms combs at the given feedback.
+    // Freeverb-like decay of four ~28 ms combs at this feedback. Capped at
+    // 1.2 s: the convolver is the costliest node and runs on the realtime thread.
     var key = feedback + ':' + damp;
     if (EQ.ir === key) return;
     EQ.ir = key;
     var ctx = EQ.ctx, rate = ctx.sampleRate;
-    var t60 = Math.min(3, Math.max(0.3, 3 * 0.028 / -Math.log10(Math.max(0.01, Math.min(0.97, feedback)))));
+    var t60 = Math.min(1.2, Math.max(0.3, 3 * 0.028 / -Math.log10(Math.max(0.01, Math.min(0.97, feedback)))));
     var len = Math.floor(rate * t60), buf = ctx.createBuffer(2, len, rate);
     for (var ch = 0; ch < 2; ch++) {
       var d = buf.getChannelData(ch), lp = 0, a = 0.2 + 0.75 * damp;
@@ -58,96 +63,151 @@
         d[i] = lp * Math.exp(-6.9 * i / len);
       }
     }
-    EQ.g.verb.buffer = buf;
+    EQ.g.verb.buffer = buf; // costly kernel setup: only when the tail actually changes
   }
 
+  // Every node is created once; only the stages the current settings need are
+  // wired. Unwired nodes are never pulled, so Flat + Off costs no DSP at all.
   function build() {
-    var ctx = EQ.ctx, g = {};
-    var gain = function (v) { var n = ctx.createGain(); n.gain.value = v; return n; };
-    g.input = gain(1);
+    var ctx = EQ.ctx, g = { all: [], plan: '' };
+    var keep = function (n) { g.all.push(n); return n; };
+    var gain = function (v) { var n = keep(ctx.createGain()); n.gain.value = v; return n; };
+    g.input = ctx.createGain();
     // Like mRadio, play mono streams as stereo: the splitter below does not upmix.
     g.input.channelCount = 2; g.input.channelCountMode = 'explicit'; g.input.channelInterpretation = 'speakers';
+    keep(g.input);
+    g.pre = gain(1);
     g.bands = (EQ.cfg && EQ.cfg.bandHz || [60, 230, 910, 3600, 14000]).map(function (hz) {
-      var f = ctx.createBiquadFilter(); f.type = 'peaking'; f.frequency.value = hz; f.Q.value = 0.9; f.gain.value = 0; return f;
+      var f = keep(ctx.createBiquadFilter()); f.type = 'peaking'; f.frequency.value = hz; f.Q.value = 0.9; f.gain.value = 0; return f;
     });
-    g.shelf = ctx.createBiquadFilter(); g.shelf.type = 'lowshelf'; g.shelf.frequency.value = 120; g.shelf.gain.value = 0;
-    var node = g.input;
-    g.bands.forEach(function (f) { node.connect(f); node = f; });
-    node.connect(g.shelf);
+    g.shelf = keep(ctx.createBiquadFilter()); g.shelf.type = 'lowshelf'; g.shelf.frequency.value = 120; g.shelf.gain.value = 0;
 
-    var split = ctx.createChannelSplitter(2);
-    g.shelf.connect(split);
-    var mid = gain(1), side = gain(1);
-    var lm = gain(0.5), rm = gain(0.5), ls = gain(0.5), rs = gain(-0.5);
-    split.connect(lm, 0); split.connect(rm, 1); split.connect(ls, 0); split.connect(rs, 1);
-    lm.connect(mid); rm.connect(mid); ls.connect(side); rs.connect(side);
-
-    var wl = gain(1), wr = gain(1);
-    g.matrix = gain(1); mid.connect(g.matrix); g.matrix.connect(wl); g.matrix.connect(wr);
-    g.side = gain(1); side.connect(g.side); g.side.connect(wl);
-    var inv = gain(-1); g.side.connect(inv); inv.connect(wr);
-
-    // 8D orbit: equal-power pan of the mid driven by a 1/9 Hz sine.
-    g.orbitIn = gain(0); mid.connect(g.orbitIn);
-    g.pan = ctx.createStereoPanner(); g.pan.pan.value = 0;
-    g.orbitIn.connect(g.pan);
-    var amp = gain(Math.SQRT2), ps = ctx.createChannelSplitter(2);
-    g.pan.connect(amp); amp.connect(ps); ps.connect(wl, 0); ps.connect(wr, 1);
-    g.osc = ctx.createOscillator(); g.osc.frequency.value = 1 / 9;
-    g.orbitDepth = gain(0); g.osc.connect(g.orbitDepth); g.orbitDepth.connect(g.pan.pan);
-    g.osc.start();
-
-    // Headphone 3D cross-feed: each ear also hears the other side, late and muffled.
+    g.split = keep(ctx.createChannelSplitter(2));
+    g.mid = gain(1); g.sideRaw = gain(1);
+    g.lm = gain(0.5); g.rm = gain(0.5); g.ls = gain(0.5); g.rs = gain(-0.5);
+    g.wl = gain(1); g.wr = gain(1); g.side = gain(1); g.inv = gain(-1);
     g.accL = gain(1); g.accR = gain(1);
-    wl.connect(g.accL); wr.connect(g.accR);
-    var mk = function (from, to) {
-      var d = ctx.createDelay(0.05), lp = ctx.createBiquadFilter(), cg = gain(0);
+    g.merge = keep(ctx.createChannelMerger(2));
+    var cross = function () {
+      var d = keep(ctx.createDelay(0.05)), lp = keep(ctx.createBiquadFilter()), cg = gain(0);
       d.delayTime.value = 0; lp.type = 'lowpass'; lp.frequency.value = 700; lp.Q.value = 0.7;
-      from.connect(d); d.connect(lp); lp.connect(cg); cg.connect(to);
-      return { d: d, g: cg };
+      return { d: d, lp: lp, g: cg };
     };
-    g.toL = mk(wr, g.accL); g.toR = mk(wl, g.accR);
+    g.toL = cross(); g.toR = cross();
+    g.pan = keep(ctx.createStereoPanner()); g.pan.pan.value = 0;
+    g.amp = gain(Math.SQRT2); g.ps = keep(ctx.createChannelSplitter(2));
+    g.orbitDepth = gain(0); g.osc = null;
 
-    var merge = ctx.createChannelMerger(2);
-    g.accL.connect(merge, 0, 0); g.accR.connect(merge, 0, 1);
-    g.limitIn = gain(1);
-    merge.connect(g.limitIn);
-    g.pre = ctx.createDelay(0.1); g.verb = ctx.createConvolver(); g.wet = gain(0);
-    merge.connect(g.pre); g.pre.connect(g.verb); g.verb.connect(g.wet); g.wet.connect(g.limitIn);
-
-    g.shaper = ctx.createWaveShaper(); g.post = gain(1);
-    g.limitIn.connect(g.shaper); g.shaper.connect(g.post); g.post.connect(ctx.destination);
+    g.verbIn = gain(1); // mRadio feeds its reverb the mono sum
+    g.verbIn.channelCount = 1; g.verbIn.channelCountMode = 'explicit'; g.verbIn.channelInterpretation = 'speakers';
+    g.preDelay = keep(ctx.createDelay(0.1)); g.verb = keep(ctx.createConvolver()); g.wet = gain(0);
+    g.sum = gain(1);
+    g.limitIn = gain(0.5); g.shaper = keep(ctx.createWaveShaper()); g.shaper.curve = LIMIT_CURVE;
+    g.out = gain(1);
+    g.out.connect(ctx.destination);
     EQ.g = g;
+  }
+
+  function planOf(c) {
+    var on = !!(c && c.enabled);
+    if (!on) return { key: 'pass' };
+    var eq = c.bassDb > 0 || c.bands.some(function (b) { return b !== 0; });
+    var orbit = c.orbit > 0, cross = c.crossGain > 0, wet = c.wet > 0;
+    var space = orbit || cross || Math.abs(c.sideGain - 1) > 1e-4;
+    var limit = !!c.limiter;
+    return { eq: eq, space: space, orbit: orbit, cross: cross, wet: wet, limit: limit,
+      key: [eq, space, orbit, cross, wet, limit].join() };
+  }
+
+  function wire(p) {
+    var g = EQ.g, ctx = EQ.ctx;
+    g.all.forEach(function (n) { if (n !== g.out) try { n.disconnect(); } catch (e) {} });
+    if (g.osc) { try { g.osc.stop(); g.osc.disconnect(); } catch (e) {} g.osc = null; }
+    var n = g.input;
+    if (p.eq) {
+      n.connect(g.pre); n = g.pre;
+      g.bands.forEach(function (f) { n.connect(f); n = f; });
+      n.connect(g.shelf); n = g.shelf;
+    }
+    if (p.space) {
+      n.connect(g.split);
+      g.split.connect(g.lm, 0); g.split.connect(g.rm, 1); g.split.connect(g.ls, 0); g.split.connect(g.rs, 1);
+      g.lm.connect(g.mid); g.rm.connect(g.mid); g.ls.connect(g.sideRaw); g.rs.connect(g.sideRaw);
+      g.sideRaw.connect(g.side); g.side.connect(g.wl); g.side.connect(g.inv); g.inv.connect(g.wr);
+      if (p.orbit) {
+        g.mid.connect(g.pan); g.pan.connect(g.amp); g.amp.connect(g.ps);
+        g.ps.connect(g.wl, 0); g.ps.connect(g.wr, 1);
+        g.osc = ctx.createOscillator();
+        g.osc.frequency.value = 1 / ((EQ.cfg && EQ.cfg.orbitPeriod) || 9);
+        g.osc.connect(g.orbitDepth); g.orbitDepth.connect(g.pan.pan); g.osc.start();
+      } else {
+        g.mid.connect(g.wl); g.mid.connect(g.wr);
+      }
+      g.wl.connect(g.accL); g.wr.connect(g.accR);
+      if (p.cross) {
+        [[g.wr, g.toL, g.accL], [g.wl, g.toR, g.accR]].forEach(function (x) {
+          x[0].connect(x[1].d); x[1].d.connect(x[1].lp); x[1].lp.connect(x[1].g); x[1].g.connect(x[2]);
+        });
+      }
+      g.accL.connect(g.merge, 0, 0); g.accR.connect(g.merge, 0, 1);
+      n = g.merge;
+    }
+    n.connect(g.sum);
+    if (p.wet) { n.connect(g.verbIn); g.verbIn.connect(g.preDelay); g.preDelay.connect(g.verb); g.verb.connect(g.wet); g.wet.connect(g.sum); }
+    if (p.limit) { g.sum.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
+    else g.sum.connect(g.out);
+  }
+
+  // Values only: smoothed, and only when they differ, so slider drags stay cheap.
+  function setIf(p, v, last) {
+    if (!p || !isFinite(v) || last[0] === v) return;
+    last[0] = v;
+    set(p, v);
+  }
+  var LAST = {};
+  function slot(k) { return LAST[k] || (LAST[k] = [NaN]); }
+
+  function values(c) {
+    var g = EQ.g;
+    setIf(g.pre.gain, c.preamp, slot('pre'));
+    g.bands.forEach(function (f, i) {
+      setIf(f.Q, c.q || 0.9, slot('q' + i));
+      setIf(f.gain, c.bands[i] || 0, slot('b' + i));
+    });
+    setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'));
+    setIf(g.shelf.gain, c.bassDb, slot('sg'));
+    setIf(g.side.gain, c.orbit > 0 ? c.orbitKeep : c.sideGain, slot('side'));
+    setIf(g.orbitDepth.gain, c.orbit * 0.8, slot('od'));
+    [g.toL, g.toR].forEach(function (x, i) {
+      setIf(x.g.gain, c.crossGain, slot('cg' + i));
+      setIf(x.d.delayTime, c.crossDelay || 0, slot('cd' + i));
+    });
+    setIf(g.accL.gain, c.crossNorm, slot('nL'));
+    setIf(g.accR.gain, c.crossNorm, slot('nR'));
+    setIf(g.preDelay.delayTime, c.pre || 0, slot('pd'));
+    setIf(g.wet.gain, c.wet * 0.6, slot('wet'));
+    if (c.wet > 0) impulse(c.feedback, c.damp);
   }
 
   function apply() {
     var g = EQ.g, c = EQ.cfg;
     if (!g || !c) return;
-    var on = !!c.enabled;
-    set(g.input.gain, on ? c.preamp : 1);
-    g.bands.forEach(function (f, i) {
-      set(f.Q, c.q || 0.9);
-      set(f.gain, on ? (c.bands[i] || 0) : 0);
-    });
-    set(g.shelf.frequency, c.bassHz || 120);
-    set(g.shelf.gain, on ? c.bassDb : 0);
-    var orbit = on ? (c.orbit || 0) : 0;
-    set(g.matrix.gain, orbit > 0 ? 0 : 1);
-    set(g.orbitIn.gain, orbit > 0 ? 1 : 0);
-    set(g.side.gain, orbit > 0 ? c.orbitKeep : (on ? c.sideGain : 1));
-    set(g.orbitDepth.gain, orbit * 0.8);
-    if (c.orbitPeriod > 0) set(g.osc.frequency, 1 / c.orbitPeriod);
-    var cross = on ? c.crossGain : 0;
-    [g.toL, g.toR].forEach(function (x) { set(x.g.gain, cross); set(x.d.delayTime, c.crossDelay || 0); });
-    set(g.accL.gain, on ? c.crossNorm : 1);
-    set(g.accR.gain, on ? c.crossNorm : 1);
-    var wet = on ? c.wet : 0;
-    if (wet > 0) impulse(c.feedback, c.damp);
-    set(g.pre.delayTime, c.pre || 0);
-    set(g.wet.gain, wet * 0.6);
-    var limit = on && !!c.limiter;
-    g.shaper.curve = limit ? LIMIT_CURVE : null;
-    set(g.limitIn.gain, limit ? 0.5 : 1);
+    var p = planOf(c);
+    if (p.key === g.plan) { if (c.enabled) values(c); return; }
+    // Stage change: fade out, rewire, fade in, so switching modes cannot click.
+    var ctx = EQ.ctx, now = ctx.currentTime, first = !g.plan;
+    g.plan = p.key;
+    clearTimeout(g.rewire);
+    // Hidden pages throttle timers; never leave the output faded out there.
+    if (first || document.hidden) { if (c.enabled) values(c); wire(p); try { g.out.gain.cancelScheduledValues(now); g.out.gain.value = 1; } catch (e) {} return; }
+    try { g.out.gain.cancelScheduledValues(now); g.out.gain.setTargetAtTime(0, now, 0.008); } catch (e) {}
+    g.rewire = setTimeout(function () {
+      var cur = planOf(EQ.cfg);
+      if (EQ.cfg.enabled) values(EQ.cfg);
+      wire(cur);
+      g.plan = cur.key;
+      try { var t = ctx.currentTime; g.out.gain.cancelScheduledValues(t); g.out.gain.setTargetAtTime(1, t, 0.015); } catch (e) {}
+    }, 50);
   }
 
   function attach(v) {

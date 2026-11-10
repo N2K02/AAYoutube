@@ -136,6 +136,15 @@ class WebAudioEqPolicyTest {
         assertTrue(js.contains("EQ.hooked.has(v)"))
         assertTrue(js.contains("function keepRunning()"))
         assertTrue(js.contains("window.__AAY_BROWSE"))
+        // Realtime-thread budget: only active stages are wired, the reverb tail is
+        // capped, kernels rebuild only on change, and hidden pages never stay faded.
+        assertTrue(js.contains("function planOf(c)"))
+        assertTrue(js.contains("if (!on) return { key: 'pass' }"))
+        assertTrue(js.contains("if (p.wet) {"))
+        assertTrue(js.contains("Math.min(1.2,"))
+        assertTrue(js.contains("if (EQ.ir === key) return;"))
+        assertTrue(js.contains("document.hidden"))
+        assertTrue(js.contains("last[0] === v"))
         // Mono YouTube streams must reach both ears (the splitter does not upmix).
         assertTrue(js.contains("g.input.channelCountMode = 'explicit'"))
         assertTrue(js.contains("N.eqStatus(s)"))
