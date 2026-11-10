@@ -1,11 +1,11 @@
 package com.aayoutube.app
 
-import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.SystemClock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.TimeUnit
@@ -26,6 +26,9 @@ internal data class SessionDiscoveryStatus(
     val granted: Boolean = false,
     val sessionId: Int? = null,
     val message: String = "Enhanced player tracking not enabled",
+    val scans: Int = 0,
+    val lastDurationMs: Long = 0L,
+    val ownPlayerRows: Int = 0,
 )
 
 internal object AudioSessionDiscovery {
@@ -38,6 +41,7 @@ internal object AudioSessionDiscovery {
     private var active = false
     private var processing = false
     private var generation = 0
+    private var scanCount = 0
     @Volatile private var process: java.lang.Process? = null
     private var scheduled: Runnable? = null
 
@@ -67,6 +71,8 @@ internal object AudioSessionDiscovery {
         if (active) return
         active = true
         generation++
+        scanCount = 0
+        AppLog.add("EQ", "session discovery started with ADB DUMP grant")
         _status.value = SessionDiscoveryStatus(
             granted = true, message = "Checking for AAYouTube's active audio session",
         )
@@ -78,6 +84,8 @@ internal object AudioSessionDiscovery {
             main.post { stop() }
             return
         }
+        if (!active && _status.value.sessionId == null) return
+        if (active) AppLog.add("EQ", "session discovery stopped")
         active = false
         generation++
         scheduled?.let { main.removeCallbacks(it) }
@@ -91,12 +99,16 @@ internal object AudioSessionDiscovery {
         if (appContext == null) return
         processing = true
         val serial = generation
+        val scanStarted = SystemClock.elapsedRealtime()
         val ownUidTag = "u/pid:${Process.myUid()}/"
         val timeout = Runnable { process?.destroyForcibly() }
         Thread({
             var spawned: java.lang.Process? = null
             var candidate: Int? = null
             var readable = false
+            var ownRows = 0
+            var truncated = false
+            var errorType = "none"
             try {
                 val p = ProcessBuilder("dumpsys", "audio")
                     .redirectErrorStream(true).start()
@@ -108,20 +120,32 @@ internal object AudioSessionDiscovery {
                 val owned = ArrayList<String>(32)
                 p.inputStream.bufferedReader().use { stream ->
                     var lines = 0
-                    while (lines++ < 12_000) {
+                    while (true) {
                         val line = stream.readLine() ?: break
+                        if (++lines > 12_000) {
+                            truncated = true
+                            break
+                        }
                         if (line.contains(ownUidTag) &&
                             line.contains("sessionId:") &&
-                            line.length <= 2048) owned += line
-                        if (owned.size >= 256) break
+                            line.length <= 2048) {
+                            ownRows++
+                            owned += line
+                        }
+                        if (owned.size >= 256) {
+                            truncated = true
+                            break
+                        }
                     }
                 }
-                readable = p.waitFor(150, TimeUnit.MILLISECONDS) && p.exitValue() == 0
+                readable = !truncated &&
+                    p.waitFor(150, TimeUnit.MILLISECONDS) && p.exitValue() == 0
                 if (readable) {
                     candidate = AudioSessionCandidatePolicy.select(
                         owned.asSequence(), Process.myUid())
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                errorType = e.javaClass.simpleName
                 // Missing or restricted dumpsys access is normal on OEM builds.
             } finally {
                 main.removeCallbacks(timeout)
@@ -129,6 +153,10 @@ internal object AudioSessionDiscovery {
                 if (process === spawned) process = null
                 val result = candidate
                 val success = readable
+                val resultRows = ownRows
+                val wasTruncated = truncated
+                val failure = errorType
+                val elapsed = (SystemClock.elapsedRealtime() - scanStarted).coerceAtLeast(0L)
                 main.post {
                     processing = false
                     if (serial != generation) {
@@ -140,9 +168,17 @@ internal object AudioSessionDiscovery {
                     }
                     if (!active) return@post
                     val previous = _status.value.sessionId
+                    scanCount++
+                    AppLog.add("EQ", "session scan #$scanCount " +
+                        EqualizerDiagnosticPolicy.discovery(true, success, result != null) +
+                        " ownPlayerRows=$resultRows durationMs=$elapsed " +
+                        "truncated=$wasTruncated failure=$failure")
                     _status.value = SessionDiscoveryStatus(
                         granted = true,
                         sessionId = result,
+                        scans = scanCount,
+                        lastDurationMs = elapsed,
+                        ownPlayerRows = resultRows,
                         message = when {
                             !success -> "Audio-service dump unavailable; targeted EQ disabled"
                             result == null ->
