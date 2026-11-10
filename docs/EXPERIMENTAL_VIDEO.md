@@ -144,3 +144,28 @@ car renderer, and the PR is not to be merged until parked-car verification.
 
 The GPL-3.0 AnyAuto code is a research reference only; its rendering
 implementation is not copied into this app.
+
+## Phase 5 — manual car-window readback (not head-unit validation)
+
+A **Check car-window pixels** control appears in Experimental video
+diagnostics when the experimental flag is on and the car video host is
+connected. It requests `PixelCopy` from the existing legacy car `Window`
+for the visible frame region. The result is downscaled to 96×54 pixels, analyzed
+in memory for the percentage of very dark pixels and brightness variation,
+and the temporary bitmap is destroyed. Pixel values, URLs, photos and
+screenshots are never saved, uploaded or logged. This is a **manual** action,
+not background screen capture.
+
+The app reports a dark/uniform result as **inconclusive**, since a dark
+scene, secure video layer or a separate compositor can produce such a
+sample while a head unit renders perfectly. Even a varied window image
+cannot guarantee that the Android Auto host paints those pixels on the
+physical display. The result is never used to restart playback.
+
+The active host alone may register a sample callback. Changing car windows
+unregisters the old callback, and any pending result from a stale host is
+ignored. A platform readback timeout blocks repeated allocations until
+the callback arrives or the user reconnects. Enabling the virtual-display
+test while connected is disabled, and connecting car video cancels any
+ongoing synthetic test. A failed readback leaves the standard video path
+unchanged.
