@@ -898,6 +898,7 @@ fun ExperimentalVideoPage() {
     val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
     val carWindowProbe by CarWindowPixelProbe.state.collectAsState()
     val carPattern by CarVideoPatternProbe.state.collectAsState()
+    val directSurface by CarDirectSurfaceProbe.state.collectAsState()
     val videoSnapshot by WebHost.snapshot.collectAsState()
     val context = LocalContext.current
     DisposableEffect(Unit) {
@@ -1026,7 +1027,7 @@ fun ExperimentalVideoPage() {
                         onClick = { CarVideoPatternProbe.request() },
                         enabled = diagnostics.enabled && carPattern.available &&
                             !carPattern.visible && !videoSnapshot.playing &&
-                            !carWindowProbe.running,
+                            !carWindowProbe.running && !directSurface.visible,
                     ) { Text(if (carPattern.visible) "Showing test bars…" else "Show test bars on car") }
                     Text(
                         "Window readback: " + carPattern.windowReadback,
@@ -1056,6 +1057,58 @@ fun ExperimentalVideoPage() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
+                        "Direct Surface rendering test",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Renders an animated synthetic pattern through a separate " +
+                            "SurfaceView layer for five seconds, without creating " +
+                            "another video player or changing audio.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        directSurface.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { CarDirectSurfaceProbe.request() },
+                        enabled = diagnostics.enabled && directSurface.available &&
+                            !directSurface.visible && !videoSnapshot.playing &&
+                            !carPattern.visible && !carWindowProbe.running,
+                    ) {
+                        Text(if (directSurface.visible)
+                            "Rendering moving pattern…" else "Test direct surface")
+                    }
+                    Text(
+                        "Submitted: ${directSurface.frameCount} frames · " +
+                            "~${directSurface.estimatedFps} fps · " +
+                            "max gap ${directSurface.maxFrameGapMs} ms",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        directSurface.readback,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (directSurface.awaitingFeedback) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                CarDirectSurfaceProbe.reportSeen(true)
+                            }) { Text("Moving image visible") }
+                            OutlinedButton(onClick = {
+                                CarDirectSurfaceProbe.reportSeen(false)
+                            }) { Text("Not visible") }
+                        }
+                    }
+                    Text(
+                        "This checks SurfaceView composition, not YouTube video " +
+                            "or physical-screen frames. Test only while parked.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
                         "Car-window pixels: " + carWindowProbe.message,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1070,7 +1123,8 @@ fun ExperimentalVideoPage() {
                     OutlinedButton(
                         onClick = { CarWindowPixelProbe.request() },
                         enabled = diagnostics.enabled && carWindowProbe.available &&
-                            !carWindowProbe.running && !carPattern.visible,
+                            !carWindowProbe.running && !carPattern.visible &&
+                            !directSurface.visible,
                     ) {
                         Text(if (carWindowProbe.running) "Checking…" else "Check car-window pixels")
                     }
