@@ -45,6 +45,7 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val tracking by AudioSessionDiscovery.status.collectAsState()
     val playback by WebHost.snapshot.collectAsState()
     val webAudio by AAYSoundFx.webAudio.collectAsState()
+    val latency by AAYSoundFx.latencyMs.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
     val inPlayer = webAudio == WebAudioEqState.ACTIVE
     val fallback = webAudio == WebAudioEqState.UNSUPPORTED
@@ -106,7 +107,9 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     when (webAudio) {
                         WebAudioEqState.ACTIVE ->
                             "In-player DSP: YouTube audio runs through mRadio's EQ, bass shelf, " +
-                                "3D and limiter inside AAYouTube only. No ADB needed."
+                                "3D and limiter inside AAYouTube only. No ADB needed." +
+                                (latency?.let { " Added audio delay ≈ $it ms." } ?: "") +
+                                " Turning the switch off reloads the video at the same position."
                         WebAudioEqState.UNSUPPORTED ->
                             "In-player DSP unavailable for this stream; using Android native " +
                                 "effects fallback (Wide/Headphone 3D only)."

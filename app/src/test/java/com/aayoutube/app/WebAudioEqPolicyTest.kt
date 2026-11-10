@@ -115,6 +115,26 @@ class WebAudioEqPolicyTest {
         assertFalse(WebAudioEqPolicy.nativeFallbackAllowed(WebAudioEqState.OFF))
     }
 
+    @Test fun activeStatusCarriesMeasuredOutputDelay() {
+        assertEquals(WebAudioEqState.ACTIVE, WebAudioEqPolicy.status("active:48"))
+        assertEquals(48, WebAudioEqPolicy.latencyMs("active:48"))
+        assertEquals(null, WebAudioEqPolicy.latencyMs("active"))
+        assertEquals(null, WebAudioEqPolicy.latencyMs("active:0"))
+        assertEquals(null, WebAudioEqPolicy.latencyMs("active:99999"))
+        assertEquals(null, WebAudioEqPolicy.latencyMs("waiting:48"))
+        assertEquals(null, WebAudioEqPolicy.latencyMs(null))
+    }
+
+    @Test fun switchingOffWhileRoutedReloadsOnlyThen() {
+        val on = SoundEqSettings(enabled = true)
+        val off = on.copy(enabled = false)
+        assertTrue(WebAudioEqPolicy.releaseNeedsReload(on, off, WebAudioEqState.ACTIVE))
+        assertFalse(WebAudioEqPolicy.releaseNeedsReload(on, off, WebAudioEqState.WAITING))
+        assertFalse(WebAudioEqPolicy.releaseNeedsReload(on, off, WebAudioEqState.UNSUPPORTED))
+        assertFalse(WebAudioEqPolicy.releaseNeedsReload(off, on, WebAudioEqState.ACTIVE))
+        assertFalse(WebAudioEqPolicy.releaseNeedsReload(on, on.copy(bass = 0.5f), WebAudioEqState.ACTIVE))
+    }
+
     private fun src(path: String): String =
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
@@ -144,6 +164,10 @@ class WebAudioEqPolicyTest {
         assertTrue(js.contains("Math.min(1.2,"))
         assertTrue(js.contains("if (EQ.ir === key) return;"))
         assertTrue(js.contains("document.hidden"))
+        assertTrue(js.contains("EQ.ctx.suspend()"))
+        assertTrue(js.contains("if (EQ.idle && anyPlaying()) EQ.idle = false;"))
+        assertTrue(js.contains("c.feedback + '/' + c.damp"))
+        assertTrue(js.contains("__aayEqProbe"))
         assertTrue(js.contains("last[0] === v"))
         // Mono YouTube streams must reach both ears (the splitter does not upmix).
         assertTrue(js.contains("g.input.channelCountMode = 'explicit'"))
@@ -155,10 +179,14 @@ class WebAudioEqPolicyTest {
         val fx = src("app/src/main/java/com/aayoutube/app/AAYSoundFx.kt")
         val native = src("app/src/main/java/com/aayoutube/app/GlobalAudioEffects.kt")
         assertTrue(host.contains("app.assets.open(\"aay_eq.js\")"))
-        assertTrue(host.contains("window.__AAY_EQ="))
+        // Settings come only from live pushes, so a reload can never re-route with stale state.
+        assertFalse(host.contains("window.__AAY_EQ="))
+        assertFalse(src("app/src/main/assets/aay_eq.js").contains("window.__AAY_EQ"))
         assertTrue(host.contains("fun eqStatus(status: String)"))
         assertTrue(host.contains("window.__aay.eq(\${AAYSoundFx.webAudioJson()})"))
         assertTrue(fx.contains("WebHost.applyEq(WebAudioEqPolicy.params(safe).toJson())"))
+        assertTrue(fx.contains("WebAudioEqPolicy.releaseNeedsReload(before, safe, _webAudio.value)"))
+        assertTrue(fx.contains("WebHost.reload()"))
         assertTrue(fx.contains("GlobalAudioEffects.nativeFallback(WebAudioEqPolicy.nativeFallbackAllowed(state))"))
         assertTrue(native.contains("if (!nativeAllowed) {"))
         assertTrue(native.contains("private var nativeAllowed = false"))

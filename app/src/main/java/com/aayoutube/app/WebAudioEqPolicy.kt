@@ -139,13 +139,27 @@ internal object WebAudioEqPolicy {
     }
 
     /** Status reported by the page script; anything unknown is treated as not attached. */
-    fun status(raw: String?): WebAudioEqState = when (raw) {
+    fun status(raw: String?): WebAudioEqState = when (raw?.substringBefore(':')) {
         "active" -> WebAudioEqState.ACTIVE
         "waiting" -> WebAudioEqState.WAITING
         "unsupported" -> WebAudioEqState.UNSUPPORTED
         "off" -> WebAudioEqState.OFF
         else -> WebAudioEqState.UNSUPPORTED
     }
+
+    /** Added output delay in ms from "active:<ms>", or null when not reported/implausible. */
+    fun latencyMs(raw: String?): Int? {
+        if (raw == null || !raw.startsWith("active:")) return null
+        return raw.substringAfter(':').toIntOrNull()?.takeIf { it in 1..2000 }
+    }
+
+    /**
+     * A media element routed into Web Audio cannot be handed back to Chromium's
+     * normal audio path, so switching the EQ off while routed reloads the
+     * document (WebHost keeps the same-video position).
+     */
+    fun releaseNeedsReload(before: SoundEqSettings, after: SoundEqSettings, state: WebAudioEqState): Boolean =
+        before.enabled && !after.enabled && state == WebAudioEqState.ACTIVE
 
     /** Native output-mix/session effects only run when the in-player DSP could not attach. */
     fun nativeFallbackAllowed(state: WebAudioEqState): Boolean =

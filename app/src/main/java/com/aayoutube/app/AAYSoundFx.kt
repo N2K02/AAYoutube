@@ -2,8 +2,6 @@ package com.aayoutube.app
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Handler
-import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -22,6 +20,8 @@ internal object AAYSoundFx {
     val settings: StateFlow<SoundEqSettings> = _settings
     private val _webAudio = MutableStateFlow(WebAudioEqState.OFF)
     val webAudio: StateFlow<WebAudioEqState> = _webAudio
+    private val _latencyMs = MutableStateFlow<Int?>(null)
+    val latencyMs: StateFlow<Int?> = _latencyMs
 
     fun webAudioJson(): String = WebAudioEqPolicy.params(_settings.value).toJson()
 
@@ -29,16 +29,10 @@ internal object AAYSoundFx {
     fun onWebAudioStatus(raw: String) {
         val state = WebAudioEqPolicy.status(raw)
         _webAudio.value = state
+        _latencyMs.value = WebAudioEqPolicy.latencyMs(raw)
         GlobalAudioEffects.nativeFallback(WebAudioEqPolicy.nativeFallbackAllowed(state))
     }
 
-    // Coalesce rapid slider events: log the final curve after inactivity.
-    private val diagnosticsHandler = Handler(Looper.getMainLooper())
-    private val reportSettings = Runnable {
-        AppLog.add("EQ", "settings " +
-            EqualizerDiagnosticPolicy.settingSummary(_settings.value))
-    }
-    private var lastPlayback: Boolean? = null
 
     fun init(context: Context) {
         if (prefs != null) return
@@ -59,14 +53,13 @@ internal object AAYSoundFx {
             ))
         }.getOrDefault(SoundEqSettings())
         AudioSessionDiscovery.init(context)
-        AppLog.add("EQ", "initialized process=web " +
-            EqualizerDiagnosticPolicy.settingSummary(_settings.value))
         GlobalAudioEffects.refresh(_settings.value)
     }
 
     fun update(change: (SoundEqSettings) -> SoundEqSettings) {
-        val safe = SoundEqPolicy.safe(change(_settings.value))
-        if (safe == _settings.value) return
+        val before = _settings.value
+        val safe = SoundEqPolicy.safe(change(before))
+        if (safe == before) return
         _settings.value = safe
         prefs?.edit()?.putString("v1", JSONObject()
             .put("enabled", safe.enabled)
@@ -76,10 +69,15 @@ internal object AAYSoundFx {
             .put("intensity", safe.intensity.toDouble())
             .put("preset", safe.preset)
             .toString())?.apply()
-        WebHost.applyEq(WebAudioEqPolicy.params(safe).toJson())
         GlobalAudioEffects.refresh(safe)
-        diagnosticsHandler.removeCallbacks(reportSettings)
-        diagnosticsHandler.postDelayed(reportSettings, 300L)
+        if (WebAudioEqPolicy.releaseNeedsReload(before, safe, _webAudio.value)) {
+            // Hand YouTube audio back to Chromium's normal output path.
+            _webAudio.value = WebAudioEqState.OFF
+            _latencyMs.value = null
+            WebHost.reload()
+        } else {
+            WebHost.applyEq(WebAudioEqPolicy.params(safe).toJson())
+        }
     }
 
     fun setBand(index: Int, db: Float) =
@@ -92,20 +90,13 @@ internal object AAYSoundFx {
 
     /** Called from existing WebView playback reports, never from media service. */
     fun onPlaybackChanged(playing: Boolean) {
-        if (lastPlayback != playing) {
-            lastPlayback = playing
-            AppLog.add("EQ", "chromium playback=$playing")
-        }
         GlobalAudioEffects.playback(playing)
     }
 
     /** Disables output-mix effects when the WebView is stopped or quitting. */
     fun shutdown() {
-        diagnosticsHandler.removeCallbacks(reportSettings)
-        lastPlayback = null
         _webAudio.value = WebAudioEqState.OFF
         GlobalAudioEffects.nativeFallback(false)
-        AppLog.add("EQ", "web player released; native effects stopped")
         GlobalAudioEffects.release()
     }
 }

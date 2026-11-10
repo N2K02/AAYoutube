@@ -40,13 +40,6 @@ internal object GlobalAudioEffects {
     private var nativeAllowed = false
     private var attempted = false
     private var attachedSession: Int? = null
-    private var lastOutcome: String? = null
-
-    private fun logOutcome(value: String) {
-        if (lastOutcome == value) return
-        lastOutcome = value
-        AppLog.add("EQ", value)
-    }
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
@@ -93,7 +86,6 @@ internal object GlobalAudioEffects {
         if (!settings.enabled || !playing || !nativeAllowed ||
             !AudioSessionDiscovery.hasPermission()) return
         if (attachedSession != sessionId) {
-            logOutcome("verified session changed available=${sessionId != null}")
             releaseEffects()
         }
         main.removeCallbacks(applyTask)
@@ -111,7 +103,6 @@ internal object GlobalAudioEffects {
         // Preserve the opt-in preference across WebView recreation. Only
         // retire the native effect handles and playback state.
         releaseEffects()
-        logOutcome("native effects released with web player")
         _status.value = AudioFxStatus(message = "Equalizer stopped")
     }
 
@@ -130,16 +121,13 @@ internal object GlobalAudioEffects {
     }
 
     private fun <T : android.media.audiofx.AudioEffect> create(
-        name: String, factory: () -> T,
+        factory: () -> T,
     ): T? = runCatching {
         val effect = factory()
         if (effect.hasControl()) effect else {
-            AppLog.add("EQ", "create $name: no effect control")
             effect.release()
             null
         }
-    }.onFailure {
-        AppLog.add("EQ", "create $name: ${it.javaClass.simpleName}")
     }.getOrNull()
 
     private fun applyNow() {
@@ -147,7 +135,6 @@ internal object GlobalAudioEffects {
             AudioSessionDiscovery.stop()
             releaseEffects()
             _status.value = AudioFxStatus(message = "Equalizer is off")
-            logOutcome("native EQ switched off")
             return
         }
         if (!nativeAllowed) {
@@ -166,7 +153,6 @@ internal object GlobalAudioEffects {
             _status.value = AudioFxStatus(
                 message = "Waiting for YouTube audio playback",
             )
-            logOutcome("native EQ idle: Chromium audio paused")
             return
         }
         // With ADB-granted DUMP we target ONLY a uniquely verified active
@@ -186,18 +172,15 @@ internal object GlobalAudioEffects {
             _status.value = AudioFxStatus(
                 message = AudioSessionDiscovery.status.value.message,
             )
-            logOutcome("native EQ not attached: no unique verified own-player session")
             return
         }
         if (attachedSession != selectedSession) releaseEffects()
         if (!attempted) {
             attempted = true
             attachedSession = selectedSession
-            equalizer = create("equalizer") { Equalizer(0, selectedSession) }
-            bassBoost = create("bass") { BassBoost(0, selectedSession) }
-            virtualizer = create("virtualizer") { Virtualizer(0, selectedSession) }
-            AppLog.add("EQ", "native effects created scope=" +
-                if (targeting) "own-session" else "global-mix")
+            equalizer = create { Equalizer(0, selectedSession) }
+            bassBoost = create { BassBoost(0, selectedSession) }
+            virtualizer = create { Virtualizer(0, selectedSession) }
         }
 
         val eq = equalizer
@@ -212,8 +195,6 @@ internal object GlobalAudioEffects {
             }
             eq.enabled = true
             eq.enabled && eq.hasControl()
-        }.onFailure {
-            AppLog.add("EQ", "apply equalizer failed=${it.javaClass.simpleName}")
         }.getOrDefault(false)
 
         val bassOkay = if (!eqOkay || bassBoost == null) false else runCatching {
@@ -225,8 +206,6 @@ internal object GlobalAudioEffects {
                 }
             }
             bassBoost?.hasControl() == true
-        }.onFailure {
-            AppLog.add("EQ", "apply bass failed=${it.javaClass.simpleName}")
         }.getOrDefault(false)
 
         // Native Virtualizer is only an approximation of mRadio's Wide and
@@ -245,8 +224,6 @@ internal object GlobalAudioEffects {
                 }
             }
             virtualizer?.hasControl() == true
-        }.onFailure {
-            AppLog.add("EQ", "apply virtualizer failed=${it.javaClass.simpleName}")
         }.getOrDefault(false)
 
         _status.value = AudioFxStatus(
@@ -271,14 +248,5 @@ internal object GlobalAudioEffects {
         if (!eqOkay && eq != null) runCatching { eq.enabled = false }
         if (!bassOkay) runCatching { bassBoost?.enabled = false }
         if (!virtualOkay) runCatching { virtualizer?.enabled = false }
-        logOutcome("native apply " + EqualizerDiagnosticPolicy.outcome(
-            attached = eq != null,
-            scoped = targeting,
-            equalizer = eqOkay,
-            bass = bassOkay,
-            spatial = virtualOkay,
-            hardwareBands = runCatching { eq?.numberOfBands?.toInt() ?: 0 }
-                .getOrDefault(0),
-        ) + " " + EqualizerDiagnosticPolicy.settingSummary(settings))
     }
 }

@@ -72,7 +72,6 @@ internal object AudioSessionDiscovery {
         active = true
         generation++
         scanCount = 0
-        AppLog.add("EQ", "session discovery started with ADB DUMP grant")
         _status.value = SessionDiscoveryStatus(
             granted = true, message = "Checking for AAYouTube's active audio session",
         )
@@ -85,7 +84,6 @@ internal object AudioSessionDiscovery {
             return
         }
         if (!active && _status.value.sessionId == null) return
-        if (active) AppLog.add("EQ", "session discovery stopped")
         active = false
         generation++
         scheduled?.let { main.removeCallbacks(it) }
@@ -172,10 +170,6 @@ internal object AudioSessionDiscovery {
                     if (!active) return@post
                     val previous = _status.value.sessionId
                     scanCount++
-                    AppLog.add("EQ", "session scan #$scanCount " +
-                        EqualizerDiagnosticPolicy.discovery(true, success, result != null) +
-                        " ownPlayerRows=$resultRows durationMs=$elapsed " +
-                        "truncated=$wasTruncated failure=$failure")
                     _status.value = SessionDiscoveryStatus(
                         granted = true,
                         sessionId = result,

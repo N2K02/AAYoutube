@@ -110,6 +110,10 @@ jobs:
         run: |
           node --check app/src/main/assets/aay.js
           node --test .github/scripts/miniplayer.test.cjs
+          node --check app/src/main/assets/aay_eq.js
+          # Real Web Audio checks of the in-player equalizer (levels, routing, idle suspend).
+          npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/eq" node-web-audio-api@1.0.9
+          NODE_PATH="$RUNNER_TEMP/eq/node_modules" node --test .github/scripts/equalizer.test.cjs
 
       - name: Build APK
         env:

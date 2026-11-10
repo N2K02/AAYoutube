@@ -28,8 +28,24 @@ Safety rules in the page script:
 - An element is routed only after the AudioContext is running; if Chromium
   later suspends the context it is resumed immediately on state change and
   on every `playing` event.
-- Once routed, turning the switch off sets the graph to pass-through
-  (flat, no limiter) until the page is reloaded.
+- Only the stages the current settings use are wired (Flat + Off is a
+  straight pass-through); Chromium renders the graph on a realtime thread,
+  and idle stages caused dropouts. Stage changes, including Hall <-> Cinema
+  reverb-tail swaps, fade out/in over ~50 ms.
+- When every routed video is paused or ended for 2 s the AudioContext is
+  suspended, so the audio output closes; `play` resumes it.
+- A routed element cannot be returned to Chromium's normal path, so
+  switching the EQ **off** while active reloads the page; WebHost keeps the
+  same-video position (from 10 s).
+- The page uses only live settings pushed by the app, never a copy baked
+  into the injected script, so a reload cannot re-route with stale state.
+- A non-MediaSource clip enables the native fallback only if it is still
+  playing after 4 s (previews and short ads do not).
+- Details shows the measured added audio delay (`baseLatency +
+  outputLatency`). Video is not delayed to match; check lip-sync there.
+- `.github/scripts/equalizer.test.cjs` runs the graph on a real Web Audio
+  implementation in CI (levels, mono upmix, limiter, idle suspend,
+  fallback hysteresis, faded reverb swaps).
 
 The page reports `off`, `waiting`, `active` or `unsupported` through
 `AAYNative.eqStatus`. **Android native effects (below) run only when the
@@ -193,23 +209,10 @@ screen. A collapsed **Details** control exposes the native effect
 status, session discovery result, number of own-player rows, scan
 duration/count and the one-time ADB grant command when relevant.
 
-While the user adjusts controls, logging is **debounced by 300ms** to
-capture the final band values without a Logcat entry for every slider
-frame. The redacted `AAYouTube-EQ` tag now records:
-
-- EQ switch, preset, five rounded dB bands, bass and 3D values.
-- Chromium playback start/pause/stop and WebView effect teardown.
-- DUMP permission state, scanner start/stop, own-UID candidate row
-  count, scan duration, truncated dumps and errors by exception *type*.
-- Native EQ/BassBoost/Virtualizer creation and control failures,
-  attachment scope (own session versus legacy mix), hardware band
-  count and aggregate apply success/failure.
-
-The logs intentionally do **not** contain playback audio, YouTube
-identifiers, URLs, audio session IDs, account details, raw system
-diagnostic dumps or other applications' session records. Diagnostics
-can confirm native effect initialization and attachment, **not audible
-changes** on a particular output route.
+The equalizer writes **no logs** (Kotlin or page script); a contract
+test enforces this. Diagnose dropouts with McpAdbAndroidLogger instead:
+Chromium's own `SyncReader::Read timed out, audio glitch count=N` line
+shows whether the realtime audio thread misses deadlines.
 
 ### GitHub comparison and process ownership
 

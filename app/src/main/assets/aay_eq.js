@@ -19,12 +19,21 @@
   if (window.__AAY_BROWSE || window.top !== window || window.__aayEqInstalled) return;
   window.__aayEqInstalled = true;
   var C = window.AudioContext || window.webkitAudioContext;
-  var EQ = { cfg: window.__AAY_EQ || null, ctx: null, g: null, hooked: new WeakSet(), count: 0, status: '', ir: '' };
+  // cfg holds live settings only, pushed by the app (never a stale install-time copy).
+  var EQ = { cfg: null, ctx: null, g: null, hooked: new WeakSet(), els: [], count: 0, status: '', ir: '', idle: false, idleTimer: 0, latency: -1 };
 
+  // Added output delay of the routed path, so lip-sync can be checked in Details.
+  function latencyMs() {
+    var c = EQ.ctx;
+    if (!c) return -1;
+    var l = (c.baseLatency || 0) + (c.outputLatency || 0);
+    return isFinite(l) && l > 0 ? Math.round(l * 1000) : -1;
+  }
   function report(s) {
-    if (EQ.status === s) return;
-    EQ.status = s;
-    try { var N = window.AAYNative; if (N && typeof N.eqStatus === 'function') N.eqStatus(s); } catch (e) {}
+    var msg = s === 'active' && latencyMs() >= 0 ? s + ':' + latencyMs() : s;
+    if (EQ.status === s && EQ.sent === msg) return;
+    EQ.status = s; EQ.sent = msg;
+    try { var N = window.AAYNative; if (N && typeof N.eqStatus === 'function') N.eqStatus(msg); } catch (e) {}
   }
   function want() { return !!(EQ.cfg && EQ.cfg.enabled); }
   function settled() { return EQ.count ? (want() ? 'active' : 'off') : (want() ? 'waiting' : 'off'); }
@@ -116,7 +125,9 @@
     var space = orbit || cross || Math.abs(c.sideGain - 1) > 1e-4;
     var limit = !!c.limiter;
     return { eq: eq, space: space, orbit: orbit, cross: cross, wet: wet, limit: limit,
-      key: [eq, space, orbit, cross, wet, limit].join() };
+      // The tail is part of the key: replacing a convolver kernel while audible
+      // glitches, so Hall <-> Cinema also fades around the swap.
+      key: [eq, space, orbit, cross, wet ? c.feedback + '/' + c.damp : 0, limit].join() };
   }
 
   function wire(p) {
@@ -214,7 +225,18 @@
     if (!v || EQ.hooked.has(v)) return;
     if (!want()) { report(settled()); return; }
     var src = v.currentSrc || v.src || '';
-    if (src.indexOf('blob:') !== 0) { if (!EQ.count) report('unsupported'); return; }
+    if (src.indexOf('blob:') !== 0) {
+      // Hysteresis: a short non-MediaSource clip (preview, ad) must not switch on
+      // the system-mix fallback. Only a clip still playing after 4 s counts.
+      if (!EQ.count && !v.__aayEqProbe) {
+        v.__aayEqProbe = setTimeout(function () {
+          v.__aayEqProbe = 0;
+          var now = v.currentSrc || v.src || '';
+          if (!EQ.count && want() && !v.paused && !v.ended && now.indexOf('blob:') !== 0) report('unsupported');
+        }, 4000);
+      }
+      return;
+    }
     if (!C) { report('unsupported'); return; }
     if (!EQ.ctx) {
       try {
@@ -230,6 +252,7 @@
       try {
         ctx.createMediaElementSource(v).connect(EQ.g.input);
         EQ.hooked.add(v);
+        EQ.els.push(v);
         EQ.count++;
         apply();
         report(settled());
@@ -241,12 +264,41 @@
     setTimeout(function () { if (!EQ.hooked.has(v) && ctx.state !== 'running' && !EQ.count) report('unsupported'); }, 3000);
   }
 
-  // A routed element is silent while the context is suspended: resume at once.
+  function anyPlaying() {
+    for (var i = 0; i < EQ.els.length; i++) if (!EQ.els[i].paused && !EQ.els[i].ended) return true;
+    return false;
+  }
+  // A routed element is silent while the context is suspended: resume at once,
+  // unless we suspended it ourselves because nothing routed is playing.
   function keepRunning() {
-    if (EQ.ctx && EQ.count && EQ.ctx.state !== 'running' && EQ.ctx.state !== 'closed') {
-      try { EQ.ctx.resume(); } catch (e) {}
+    if (EQ.idle && anyPlaying()) EQ.idle = false;
+    if (EQ.ctx && EQ.count && !EQ.idle && EQ.ctx.state !== 'running' && EQ.ctx.state !== 'closed') {
+      try { EQ.ctx.resume().then(function () { if (EQ.status === 'active') report('active'); }, function () {}); } catch (e) {}
     }
   }
+  // Paused or ended: stop rendering after a grace period so the device's audio
+  // output closes (battery, and Android no longer sees an active player).
+  function idleCheck() {
+    clearTimeout(EQ.idleTimer);
+    EQ.idleTimer = setTimeout(function () {
+      if (!EQ.ctx || !EQ.count || anyPlaying() || EQ.ctx.state !== 'running') return;
+      EQ.idle = true;
+      try { EQ.ctx.suspend(); } catch (e) {}
+    }, 2000);
+  }
+  function wake(e) {
+    var t = e.target;
+    if (!(t instanceof HTMLMediaElement)) return;
+    clearTimeout(EQ.idleTimer);
+    EQ.idle = false;
+    keepRunning();
+  }
+  document.addEventListener('play', wake, true);
+  ['pause', 'ended', 'emptied'].forEach(function (n) {
+    document.addEventListener(n, function (e) {
+      if (e.target instanceof HTMLMediaElement && EQ.hooked.has(e.target)) idleCheck();
+    }, true);
+  });
 
   function scan() {
     var list = document.getElementsByTagName('video');
@@ -256,6 +308,8 @@
   document.addEventListener('playing', function (e) {
     var t = e.target;
     if (!(t instanceof HTMLMediaElement)) return;
+    clearTimeout(EQ.idleTimer);
+    EQ.idle = false;
     keepRunning();
     attach(t);
   }, true);

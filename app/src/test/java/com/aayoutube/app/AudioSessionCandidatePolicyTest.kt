@@ -86,7 +86,7 @@ class AudioSessionCandidatePolicyTest {
         assertTrue(locator.contains("destroyForcibly()"))
         assertTrue(locator.contains("serial != generation"))
         assertFalse(locator.contains("Log.i("))
-        assertTrue(locator.contains("AppLog.add(\"EQ\""))
+        assertFalse(locator.contains("AppLog.add(\"EQ\""))
         assertTrue(locator.contains("ownPlayerRows"))
         assertTrue(locator.contains("lastDurationMs"))
         assertTrue(locator.contains("line.contains(ownUidTag)"))

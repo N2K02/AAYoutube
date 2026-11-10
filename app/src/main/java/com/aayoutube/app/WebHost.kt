@@ -311,7 +311,7 @@ object WebHost {
         val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
             app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
         return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) +
-            ";window.__AAY_EQ=" + AAYSoundFx.webAudioJson() + ";\n" + source
+            ";\n" + source
     }
 
     /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
