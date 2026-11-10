@@ -897,6 +897,8 @@ fun ExperimentalVideoPage() {
     val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
     val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
     val carWindowProbe by CarWindowPixelProbe.state.collectAsState()
+    val carPattern by CarVideoPatternProbe.state.collectAsState()
+    val videoSnapshot by WebHost.snapshot.collectAsState()
     val context = LocalContext.current
     DisposableEffect(Unit) {
         onDispose { CarVirtualDisplayProbe.cancel() }
@@ -1011,6 +1013,41 @@ fun ExperimentalVideoPage() {
                     }, enabled = diagnostics.enabled) {
                         Text("Check decoder health")
                     }
+                    Text(
+                        "Car display visual test",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        carPattern.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { CarVideoPatternProbe.request() },
+                        enabled = diagnostics.enabled && carPattern.available &&
+                            !carPattern.visible && !videoSnapshot.playing,
+                    ) { Text(if (carPattern.visible) "Showing test bars…" else "Show test bars on car") }
+                    if (videoSnapshot.playing) Text(
+                        "Pause playback before showing the short test image.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (carPattern.awaitingFeedback) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(true) }) {
+                                Text("Visible")
+                            }
+                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(false) }) {
+                                Text("Not visible")
+                            }
+                        }
+                    }
+                    Text(
+                        "Test bars appear for 3 seconds only in the existing car window; " +
+                            "the app does not record a screenshot or stop audio.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Text(
                         "Car-window pixels: " + carWindowProbe.message,
                         style = MaterialTheme.typography.bodySmall,
