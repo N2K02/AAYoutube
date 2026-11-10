@@ -20,6 +20,8 @@ internal data class CarDirectSurfaceStatus(
     val estimatedFps: Int = 0,
     val maxFrameGapMs: Long = 0,
     val readback: String = "Not checked",
+    val surfacePatternDetected: Boolean? = null,
+    val observedVisible: Boolean? = null,
     val message: String = "Connect experimental car video for direct-surface test",
 )
 
@@ -74,6 +76,7 @@ internal object CarDirectSurfaceProbe {
             visible = true, awaitingFeedback = false, runId = nextRunId,
             frameCount = 0, estimatedFps = 0, maxFrameGapMs = 0,
             readback = "Waiting for first surface frame",
+            surfacePatternDetected = null, observedVisible = null,
             message = "Rendering moving test pattern in car window for five seconds",
         )
         AppLog.add("CAR", "Synthetic direct SurfaceView test started; WebView unchanged")
@@ -111,16 +114,20 @@ internal object CarDirectSurfaceProbe {
     }
 
     /** A readback of this specific SurfaceView (not the full car Window). */
-    fun readback(owner: String, runId: Int, result: String) {
+    fun readback(
+        owner: String, runId: Int, result: String, detected: Boolean? = null,
+    ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post { readback(owner, runId, result) }
+            main.post { readback(owner, runId, result, detected) }
             return
         }
         val current = _state.value
         val host = ExperimentalCarVideoMonitor.state.value
         if (current.owner != owner || current.runId != runId ||
             !current.available || host.owner != owner || !host.active) return
-        _state.value = current.copy(readback = result)
+        _state.value = current.copy(
+            readback = result, surfacePatternDetected = detected,
+        )
         AppLog.add("CAR", "Direct SurfaceView synthetic readback: " + result)
     }
 
@@ -134,7 +141,7 @@ internal object CarDirectSurfaceProbe {
         if (!current.awaitingFeedback || !current.available ||
             current.owner != host.owner || !host.active) return
         _state.value = current.copy(
-            awaitingFeedback = false,
+            awaitingFeedback = false, observedVisible = seen,
             message = if (seen) "Moving surface pattern visible (user confirmed)"
                 else "Moving surface pattern NOT visible (user reported)",
         )
