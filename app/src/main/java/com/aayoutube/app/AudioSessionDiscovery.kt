@@ -88,9 +88,10 @@ internal object AudioSessionDiscovery {
 
     private fun scan() {
         if (!active || processing || !hasPermission()) return
-        val ctx = appContext ?: return
+        if (appContext == null) return
         processing = true
         val serial = generation
+        val ownUidTag = "u/pid:${Process.myUid()}/"
         val timeout = Runnable { process?.destroyForcibly() }
         Thread({
             var spawned: java.lang.Process? = null
@@ -109,7 +110,7 @@ internal object AudioSessionDiscovery {
                     var lines = 0
                     while (lines++ < 12_000) {
                         val line = stream.readLine() ?: break
-                        if (line.contains("u/pid:") &&
+                        if (line.contains(ownUidTag) &&
                             line.contains("sessionId:") &&
                             line.length <= 2048) owned += line
                         if (owned.size >= 256) break
