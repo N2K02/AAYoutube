@@ -97,6 +97,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var experimentalVideoEnabled = false
     private var experimentalChecks = 0
     private var experimentalRepairs = 0
+    /** One retry budget per CarActivity instance, never reset by onResume/rebind. */
+    private var experimentalRecoveryStarted = false
     private var carInput: LegacyCarInput? = null
     private var lastWidth = 0
     private var lastHeight = 0
@@ -221,10 +223,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     private fun scheduleExperimentalRecovery() {
+        if (!experimentalVideoEnabled || !carStarted ||
+            !WebHost.isActiveCarHost(carToken) || experimentalRecoveryStarted) return
+        val frame = playerContainer
+        if (frame?.isAttachedToWindow != true || frame.display == null) return
+        // Only a newly created car activity can start a fresh retry budget.
+        // Repeated onResume, WebView rebinding and surface callbacks cannot.
+        experimentalRecoveryStarted = true
         handler.removeCallbacks(experimentalRecovery)
-        if (!experimentalVideoEnabled) return
-        experimentalChecks = 0
-        experimentalRepairs = 0
         handler.postDelayed(experimentalRecovery, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
     }
 
