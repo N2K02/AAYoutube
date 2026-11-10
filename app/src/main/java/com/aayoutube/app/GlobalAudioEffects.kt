@@ -24,6 +24,7 @@ internal data class AudioFxStatus(
     val equalizerAvailable: Boolean = false,
     val bassAvailable: Boolean = false,
     val virtualizerAvailable: Boolean = false,
+    val sessionScoped: Boolean = false,
     val message: String = "Equalizer is off",
 )
 
@@ -35,6 +36,7 @@ internal object GlobalAudioEffects {
     private var settings = SoundEqSettings()
     private var playing = false
     private var attempted = false
+    private var attachedSession: Int? = null
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
@@ -61,12 +63,27 @@ internal object GlobalAudioEffects {
         main.postDelayed(applyTask, if (isPlaying) 50L else 0L)
     }
 
+    /** Called only when the own-UID system dump yields a unique active session. */
+    fun onVerifiedSessionChanged(sessionId: Int?) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { onVerifiedSessionChanged(sessionId) }
+            return
+        }
+        if (!settings.enabled || !playing || !AudioSessionDiscovery.hasPermission()) return
+        if (attachedSession != sessionId) {
+            releaseEffects()
+            main.removeCallbacks(applyTask)
+            main.post(applyTask)
+        }
+    }
+
     fun release() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             main.post { release() }
             return
         }
         main.removeCallbacks(applyTask)
+        AudioSessionDiscovery.stop()
         playing = false
         // Preserve the opt-in preference across WebView recreation. Only
         // retire the native effect handles and playback state.
@@ -85,6 +102,7 @@ internal object GlobalAudioEffects {
         bassBoost = null
         virtualizer = null
         attempted = false
+        attachedSession = null
     }
 
     private fun <T : android.media.audiofx.AudioEffect> create(factory: () -> T): T? =
@@ -98,11 +116,13 @@ internal object GlobalAudioEffects {
 
     private fun applyNow() {
         if (!settings.enabled) {
+            AudioSessionDiscovery.stop()
             releaseEffects()
             _status.value = AudioFxStatus(message = "Equalizer is off")
             return
         }
         if (!playing) {
+            AudioSessionDiscovery.stop()
             // Never leave deprecated global-mix effects active after playback
             // stops: they could change audio from unrelated apps.
             runCatching { equalizer?.enabled = false }
@@ -116,14 +136,35 @@ internal object GlobalAudioEffects {
             )
             return
         }
+        // With ADB-granted DUMP we target ONLY a uniquely verified active
+        // AAYouTube session. If discovery is ambiguous or inaccessible,
+        // fail closed instead of silently falling back to system-wide EQ.
+        // Without the optional grant retain the user's legacy mode.
+        val targeting = AudioSessionDiscovery.hasPermission()
+        val selectedSession = if (targeting) {
+            AudioSessionDiscovery.start()
+            AudioSessionDiscovery.status.value.sessionId
+        } else {
+            AudioSessionDiscovery.stop()
+            0
+        }
+        if (selectedSession == null) {
+            releaseEffects()
+            _status.value = AudioFxStatus(
+                message = AudioSessionDiscovery.status.value.message,
+            )
+            return
+        }
+        if (attachedSession != selectedSession) releaseEffects()
         if (!attempted) {
             attempted = true
-            equalizer = create { Equalizer(0, 0) }
-            bassBoost = create { BassBoost(0, 0) }
-            virtualizer = create { Virtualizer(0, 0) }
-            AppLog.add("AUDIO", "Experimental global-mix audio effects availability: " +
-                "eq=${equalizer != null}, bass=${bassBoost != null}, " +
-                "virtualizer=${virtualizer != null} (route unverified)")
+            attachedSession = selectedSession
+            equalizer = create { Equalizer(0, selectedSession) }
+            bassBoost = create { BassBoost(0, selectedSession) }
+            virtualizer = create { Virtualizer(0, selectedSession) }
+            AppLog.add("AUDIO",
+                "Experimental audio effects mode=" +
+                    if (targeting) "verified app session" else "legacy global mix")
         }
 
         val eq = equalizer
@@ -174,11 +215,18 @@ internal object GlobalAudioEffects {
             equalizerAvailable = eqOkay,
             bassAvailable = bassOkay,
             virtualizerAvailable = virtualOkay,
-            message = if (eqOkay)
-                "Android output-mix EQ initialized. Actual Chromium/Android Auto " +
-                    "routing and audible effect are not verified."
+            sessionScoped = targeting,
+            message = if (eqOkay && targeting)
+                "Audio effects attached to verified AAYouTube session. " +
+                    "Audible effect and Bluetooth/Android Auto route still need testing."
+            else if (eqOkay)
+                "Legacy output-mix EQ initialized. It may affect other apps. " +
+                    "Actual Chromium/Android Auto routing is not verified."
+            else if (targeting)
+                "AAYouTube session identified, but native audio effects were " +
+                    "not controllable on this route."
             else
-                "Android output-mix equalizer unavailable or not controllable " +
+                "Legacy output-mix equalizer unavailable or not controllable " +
                     "on this device. WebView offers no supported PCM attachment.",
         )
         if (!eqOkay && eq != null) runCatching { eq.enabled = false }
