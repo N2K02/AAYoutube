@@ -445,6 +445,20 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 CarVideoPatternProbe.stopForPlayback(carToken)
             }
         }
+        // The static bars must be drawn before PixelCopy reads the same window.
+        // This samples ONLY the synthetic test, and never runs while playing.
+        LaunchedEffect(carTestPattern.visible, carTestPattern.testId, activeHost) {
+            if (carTestPattern.visible && activeHost == carToken &&
+                experimentalVideoEnabled) {
+                delay(450L)
+                if (CarVideoPatternProbe.state.value.visible &&
+                    CarVideoPatternProbe.state.value.testId == carTestPattern.testId &&
+                    WebHost.isActiveCarHost(carToken) && !WebHost.snapshot.value.playing) {
+                    CarVideoPatternReadback.capture(
+                        carToken, carTestPattern.testId, carWindow())
+                }
+            }
+        }
         var controlsVisible by remember { mutableStateOf(true) }
         var controlsVersion by remember { mutableIntStateOf(0) }
         LaunchedEffect(controlsVisible, controlsVersion, flags.topMenuTimeoutSeconds) {
