@@ -8,6 +8,7 @@ package com.aayoutube.app
 internal object ExperimentalCarVideoPolicy {
     const val CHECK_DELAY_MS = 2_500L
     const val MAX_CHECKS = 4
+    const val MAX_REBINDS = 2
 
     fun needsRebind(
         enabled: Boolean,
