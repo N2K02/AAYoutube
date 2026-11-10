@@ -268,6 +268,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 WebHost.showCarControls()
             }
         }
+        frame.onObservedGesture = if (experimentalVideoEnabled)
+            ({ gesture: CarVideoGesture ->
+                AppLog.add("CAR", "Experimental passive car gesture=" + gesture.name)
+            }) else null
         val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
@@ -510,6 +514,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { frame ->
                         frame.onSwipeDown = null
                         frame.onVideoTap = null
+                        frame.onObservedGesture = null
                         WebHost.detach(frame)
                         if (playerContainer === frame) playerContainer = null
                     },
