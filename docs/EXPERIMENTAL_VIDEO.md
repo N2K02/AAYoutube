@@ -122,3 +122,25 @@ requests, touch injection, or a trusted-display GPU compositor. Those require
 independent host and licensing checks and would be inappropriate to label
 "working" from unit tests alone. No automatic video playback is enabled for
 driving use.
+
+## Phase 4 — isolated, public-API virtual-display proof
+
+**Test virtual display** appears in Settings > Experimental video when the
+switch is on and there is no active car-video session. It creates a small
+private `VirtualDisplay` (640×360), uses an `ImageReader` surface, opens a
+`Presentation` that draws a solid synthetic color, and verifies that the
+expected color arrives in the reader buffer. The short test always releases
+the presentation, virtual display, reader, callbacks and worker thread;
+leaving the page cancels it. This uses public Android APIs and **does not**
+need Shizuku, request display privileges or start a second WebView/audio
+player.
+
+A pass demonstrates only local synthetic display composition. It does NOT
+prove that Android Auto will expose a NavigationTemplate surface, accept
+virtual-display frames, show YouTube video, or deliver touch to that display.
+A failure is reported as unavailable rather than changing the real player.
+The regular legacy video path remains the only production and experimental
+car renderer, and the PR is not to be merged until parked-car verification.
+
+The GPL-3.0 AnyAuto code is a research reference only; its rendering
+implementation is not copied into this app.
