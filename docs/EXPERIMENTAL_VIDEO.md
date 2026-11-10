@@ -97,3 +97,28 @@ its existing WebView. Reintroducing that host path should be a separately
 testable backend that cannot run concurrently with legacy video, and should
 only be offered after parked-car and licensing validation. A toggle must never
 claim an unavailable renderer is running.
+
+## Phase 3 — frame-health evidence and visible-region diagnostics
+
+- The CAR render probe compares HTML video decoded-frame counters and playback
+  clock samples from the **same active car host**, using monotonic timestamps.
+  It differentiates baseline, paused, buffering/seeking, too-soon samples,
+  counter resets, advancing frames and **suspected** decoder/playback stalls.
+- A suspected stall is not automatic proof of a black car screen: Android Auto
+  could fail to paint frames that Chromium decoded, or Chromium could be
+  buffering. The classifier never reloads, seeks, duplicates media, or starts a
+  second renderer. Settings shows the status and offers a manual
+  **Check video rendering** action that only collects diagnostics.
+- Surface size in the diagnostics now uses `getLocalVisibleRect`, which
+  produces coordinates local to the legacy car frame. The 16:9 reference region
+  fits inside that clipped rectangle, falling back to full size when the
+  reported rectangle is invalid.
+- Fresh car connections reset the frame-sample baseline; old host callbacks
+  cannot overwrite the current session. Tests cover seeks, pauses, buffering,
+  time windows, counter resets, stale hosts and clipped viewports.
+
+**Not included:** a second live AnyAuto navigation service, Shizuku privilege
+requests, touch injection, or a trusted-display GPU compositor. Those require
+independent host and licensing checks and would be inappropriate to label
+"working" from unit tests alone. No automatic video playback is enabled for
+driving use.
