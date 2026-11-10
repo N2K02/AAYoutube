@@ -7,7 +7,7 @@ class SettingsConsistencyContractTest {
     private fun src(p: String) = listOf(File(p), File("../$p")).first { it.isFile }.readText()
     @Test fun settingsHaveLyricsAndUpdatesWithoutInAppLogs() {
         val ui = src("app/src/main/java/com/aayoutube/app/Screens.kt")
-        assertTrue(ui.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update)"))
+        assertTrue(ui.contains("listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update)"))
         assertTrue(ui.contains("if (destination == Tab.Update) HorizontalDivider()"))
         assertFalse(ui.contains("Tab.Logs"))
     }
