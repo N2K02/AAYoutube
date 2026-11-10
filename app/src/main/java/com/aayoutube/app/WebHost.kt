@@ -544,6 +544,10 @@ object WebHost {
                     width = size?.optInt(0, 0) ?: 0,
                     height = size?.optInt(1, 0) ?: 0,
                     paused = if (info.isNull("paused")) null else info.optBoolean("paused"),
+                    monotonicMs = SystemClock.elapsedRealtime(),
+                    positionSeconds = info.optDouble("t", Double.NaN)
+                        .takeIf { it.isFinite() },
+                    hasVideo = info.optBoolean("hasVideo", false),
                 )
             }.onFailure {
                 AppLog.add("CAR", "Experimental decoder probe unavailable: " +
