@@ -81,7 +81,10 @@ internal object CarVideoPatternReadback {
                             val samples = IntArray(WIDTH * HEIGHT)
                             bitmap.getPixels(samples, 0, WIDTH, 0, 0, WIDTH, HEIGHT)
                             val result = CarVideoPatternPixelPolicy.analyze(samples, WIDTH, HEIGHT)
-                            CarVideoPatternProbe.windowReadback(owner, testId, result.assessment)
+                            CarVideoPatternProbe.windowReadback(
+                                owner, testId, result.assessment,
+                                detected = result.matched >= 17,
+                            )
                             AppLog.add("CAR", "Synthetic car-window bars matched=" +
                                 result.matched + "/" + result.samples +
                                 " (does not prove physical car display)")
