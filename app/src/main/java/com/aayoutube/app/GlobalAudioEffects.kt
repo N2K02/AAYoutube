@@ -261,6 +261,6 @@ internal object GlobalAudioEffects {
             spatial = virtualOkay,
             hardwareBands = runCatching { eq?.numberOfBands?.toInt() ?: 0 }
                 .getOrDefault(0),
-        ))
+        ) + " " + EqualizerDiagnosticPolicy.settingSummary(settings))
     }
 }
