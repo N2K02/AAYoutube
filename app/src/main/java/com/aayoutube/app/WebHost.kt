@@ -533,7 +533,9 @@ object WebHost {
             })()""".trimIndent()
         ) { result ->
             AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
-            if (Features.current.experimentalVideo) runCatching {
+            if (ExperimentalCarVideoMonitor.state.value.enabled &&
+                ExperimentalCarVideoMonitor.state.value.owner == probeCarHost
+            ) runCatching {
                 // evaluateJavascript wraps a JSON.stringify return as a JSON string.
                 // Decode only geometry and frame counters, never URL or document text.
                 val raw = org.json.JSONTokener(result).nextValue() as? String ?: return@runCatching
