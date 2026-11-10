@@ -38,7 +38,8 @@ class SoundEqPolicyTest {
         assertEquals(listOf(12f, 0f, -12f, 0f, 0f), cleaned.bands)
         assertEquals(0f, cleaned.bass, 0f)
         assertEquals(0f, cleaned.intensity, 0f)
-        assertEquals(SoundSpaceMode.OFF, cleaned.mode)
+        // All mRadio modes are real now: the in-player DSP implements them.
+        assertEquals(SoundSpaceMode.ORBIT_8D, cleaned.mode)
         val edited = SoundEqPolicy.setBand(cleaned, 3, 99f)
         assertEquals(12f, edited.bands[3], 0f)
         assertEquals("Custom", edited.preset)
@@ -59,7 +60,7 @@ class SoundEqPolicyTest {
         assertEquals(0.toShort(), SoundEqPolicy.strength(Float.NaN))
     }
 
-    @Test fun unsupportedPcmOnly3dModesAreNotMisrepresented() {
+    @Test fun nativeFallbackOnlyApproximatesVirtualizerModes() {
         assertTrue(SoundSpaceMode.WIDE.systemApproximation)
         assertTrue(SoundSpaceMode.HEADPHONE_3D.systemApproximation)
         assertFalse(SoundSpaceMode.HALL.systemApproximation)

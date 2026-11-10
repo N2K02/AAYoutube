@@ -308,8 +308,27 @@ object WebHost {
     // ---------------------------------------------------------------- the page script
 
     internal fun script(): String {
-        val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
+        val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
+            app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
+        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) +
+            ";window.__AAY_EQ=" + AAYSoundFx.webAudioJson() + ";\n" + source
+    }
+
+    /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
+    fun applyEq(json: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { applyEq(json) }
+            return
+        }
+        js("window.__aay&&window.__aay.eq&&window.__aay.eq($json)")
+    }
+
+    fun onJsEqStatus(status: String, generation: Int) {
+        if (generation != webGeneration) return
+        main.post {
+            if (generation != webGeneration) return@post
+            AAYSoundFx.onWebAudioStatus(status)
+        }
     }
 
     private fun installScript(w: WebView) {
@@ -1451,6 +1470,7 @@ object WebHost {
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.eq&&window.__aay.eq(${AAYSoundFx.webAudioJson()})", null)
             sameVideoReloadPosition?.let { (videoId, positionMs) ->
                 if (runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull() == videoId) {
                     val seconds = positionMs / 1000.0
@@ -1608,6 +1628,12 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun quality(value: String) {
         WebHost.requestQualityFromBridge(value, generation)
+    }
+
+    /** In-player Web Audio equalizer state: off, waiting, active or unsupported. */
+    @JavascriptInterface
+    fun eqStatus(status: String) {
+        WebHost.onJsEqStatus(status, generation)
     }
 
     /** Swipe down on the playing video. */

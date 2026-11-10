@@ -44,9 +44,15 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val audio by GlobalAudioEffects.status.collectAsState()
     val tracking by AudioSessionDiscovery.status.collectAsState()
     val playback by WebHost.snapshot.collectAsState()
+    val webAudio by AAYSoundFx.webAudio.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
+    val inPlayer = webAudio == WebAudioEqState.ACTIVE
+    val fallback = webAudio == WebAudioEqState.UNSUPPORTED
     val shortStatus = when {
         !s.enabled -> "Off"
+        inPlayer -> "Active · in-player mRadio DSP"
+        !fallback && !playback.playing -> "Waiting for playback"
+        !fallback -> "Connecting to player audio"
         audio.running && audio.sessionScoped -> "EQ initialized · app session"
         audio.running -> "EQ initialized · system mix"
         !playback.playing -> "Waiting for playback"
@@ -87,7 +93,7 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                 Text(
                     shortStatus,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (audio.running) MaterialTheme.colorScheme.primary
+                    color = if (inPlayer || audio.running) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
@@ -97,22 +103,36 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
             }
             if (showDiagnostics) {
                 Text(
+                    when (webAudio) {
+                        WebAudioEqState.ACTIVE ->
+                            "In-player DSP: YouTube audio runs through mRadio's EQ, bass shelf, " +
+                                "3D and limiter inside AAYouTube only. No ADB needed."
+                        WebAudioEqState.UNSUPPORTED ->
+                            "In-player DSP unavailable for this stream; using Android native " +
+                                "effects fallback (Wide/Headphone 3D only)."
+                        WebAudioEqState.WAITING -> "In-player DSP waiting for YouTube playback."
+                        WebAudioEqState.OFF -> "In-player DSP idle."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (fallback) Text(
                     audio.message,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
+                if (fallback) Text(
                     tracking.message,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
+                if (fallback) Text(
                     "Session checks: ${tracking.scans} · own-player rows: " +
                         "${tracking.ownPlayerRows} · last: ${tracking.lastDurationMs} ms",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
+                if (fallback) Text(
                     if (tracking.granted)
                         "Player tracking: ADB enabled"
                     else
@@ -120,27 +140,28 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    "Audio route not verified · logs tagged AAYouTube-EQ. " +
-                        "Global mix can affect other apps.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
+                Spacer(Modifier.size(8.dp))
             }
 
             EqSection("3D sound")
             EqChipRow {
-                SoundSpaceMode.entries.filter { mode -> mode.systemApproximation }
-                    .forEach { mode ->
-                        FilterChip(
-                            selected = s.mode == mode,
-                            onClick = { AAYSoundFx.update { it.copy(mode = mode) } },
-                            label = { Text(mode.label) },
-                        )
-                    }
+                // All mRadio modes run in the in-player DSP. The native fallback
+                // can only approximate those with mode.systemApproximation.
+                SoundSpaceMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = s.mode == mode,
+                        enabled = !fallback || mode.systemApproximation,
+                        onClick = { AAYSoundFx.update { it.copy(mode = mode) } },
+                        label = { Text(mode.label) },
+                    )
+                }
             }
             if (s.mode != SoundSpaceMode.OFF) {
+                Text(
+                    s.mode.blurb,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 EqSlider(
                     label = "Strength",
                     value = s.intensity,

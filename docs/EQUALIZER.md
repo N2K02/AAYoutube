@@ -1,4 +1,43 @@
-# AAYouTube equalizer — mRadio UI port, Chromium limitations
+# AAYouTube equalizer — mRadio DSP inside the YouTube player
+
+## Primary engine: in-player Web Audio (no ADB, this app only)
+
+`assets/aay_eq.js` runs mRadio's `SoundEngine` signal path as a native Web
+Audio graph on YouTube's own `<video>` element inside the WebView:
+
+    preamp -> 5x RBJ peaking (60/230/910/3,600/14,000 Hz, Q 0.9)
+           -> 120 Hz low shelf (Bass boost, up to +9 dB)
+           -> mid/side widening | 8D equal-power orbit (9 s lap)
+           -> Headphone 3D cross-feed (0.27 ms, 700 Hz low-pass)
+           -> dry + reverb send (Hall / Cinema / Headphone 3D / 8D)
+           -> mRadio soft limiter (tanh above 0.8)
+
+`WebAudioEqPolicy` computes every parameter exactly as mRadio's
+`SoundEngine.apply()` does (unit tested), and the page applies them with
+30 ms smoothing. All six mRadio 3D modes work. Only built-in nodes are used
+(no AudioWorklet module or ScriptProcessor), so YouTube's CSP cannot block
+it and DSP runs on Chromium's audio thread. Mono streams are upmixed to
+stereo like mRadio. Reverb is a generated convolution tail whose decay
+follows mRadio's comb feedback/damping, not a sample-exact Freeverb; 8D
+uses level panning without mRadio's small inter-ear delay and rear muffling.
+
+Safety rules in the page script:
+- Nothing is routed while the switch is off (the default).
+- Only MediaSource (`blob:`) playback is routed; progressive cross-origin
+  media would be silenced by CORS tainting, so it is reported unsupported.
+- An element is routed only after the AudioContext is running; if Chromium
+  later suspends the context it is resumed immediately on state change and
+  on every `playing` event.
+- Once routed, turning the switch off sets the graph to pass-through
+  (flat, no limiter) until the page is reloaded.
+
+The page reports `off`, `waiting`, `active` or `unsupported` through
+`AAYNative.eqStatus`. **Android native effects (below) run only when the
+page reports `unsupported`**, so the curve is never applied twice.
+
+---
+
+# Native fallback (previous implementation)
 
 ## What is implemented
 

@@ -4,27 +4,27 @@ import kotlin.math.ln
 import kotlin.math.roundToInt
 
 /**
- * mRadio-inspired 5-band controls and preset curves. The mRadio PCM
- * SoundProcessor cannot attach to a Chromium WebView's private audio path.
- * This policy only maps the same five controls onto Android AudioEffect
- * bands, when the platform permits an output-mix effect.
+ * mRadio's 5-band controls, presets and 3D modes. [WebAudioEqPolicy] turns them
+ * into the in-player Web Audio DSP; this policy also maps the five bands onto
+ * Android AudioEffect bands for the native fallback.
  */
 internal enum class SoundSpaceMode(
     val label: String,
     val blurb: String,
+    /** Whether the native fallback can approximate it (Virtualizer). */
     val systemApproximation: Boolean,
 ) {
     OFF("Off", "Plain stereo, as YouTube sends it.", true),
-    WIDE("Wide", "Approximate widening using Android's virtualizer, if available.", true),
+    WIDE("Wide", "Pushes the sound out beyond the speakers or earbuds.", true),
     HEADPHONE_3D("Headphone 3D",
-        "Approximate headphone virtualization, when supported by Android.", true),
-    HALL("Concert hall", "mRadio's PCM reverb is unavailable for WebView playback.", false),
-    CINEMA("Cinema", "mRadio's PCM spatial DSP is unavailable for WebView playback.", false),
-    ORBIT_8D("8D orbit", "mRadio's moving PCM audio effect is unavailable for WebView playback.", false),
+        "Puts the music in front of you, like speakers in a room. Best on headphones.", true),
+    HALL("Concert hall", "Adds the space and echo of a large hall.", false),
+    CINEMA("Cinema", "Wide, deep and enveloping.", false),
+    ORBIT_8D("8D orbit", "The sound slowly circles around your head. Best on headphones.", false),
 }
 
 internal data class SoundEqSettings(
-    /** Explicit opt-in: the deprecated output-mix effect can affect other apps. */
+    /** Explicit opt-in, off by default. */
     val enabled: Boolean = false,
     val bands: List<Float> = List(5) { 0f },
     val bass: Float = 0f,
@@ -55,7 +55,6 @@ internal object SoundEqPolicy {
         },
         bass = value.bass.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0f,
         intensity = value.intensity.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0.6f,
-        mode = value.mode.takeIf { it.systemApproximation } ?: SoundSpaceMode.OFF,
         preset = value.preset.take(32),
     )
 

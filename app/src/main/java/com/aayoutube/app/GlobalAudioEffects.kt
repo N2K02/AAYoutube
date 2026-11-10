@@ -35,6 +35,9 @@ internal object GlobalAudioEffects {
 
     private var settings = SoundEqSettings()
     private var playing = false
+    // Off until the page reports the in-player Web Audio DSP cannot attach,
+    // so the curve is never applied twice.
+    private var nativeAllowed = false
     private var attempted = false
     private var attachedSession: Int? = null
     private var lastOutcome: String? = null
@@ -70,13 +73,25 @@ internal object GlobalAudioEffects {
         main.postDelayed(applyTask, if (isPlaying) 50L else 0L)
     }
 
+    fun nativeFallback(allowed: Boolean) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { nativeFallback(allowed) }
+            return
+        }
+        if (nativeAllowed == allowed) return
+        nativeAllowed = allowed
+        main.removeCallbacks(applyTask)
+        main.post(applyTask)
+    }
+
     /** Called only when the own-UID system dump yields a unique active session. */
     fun onVerifiedSessionChanged(sessionId: Int?) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             main.post { onVerifiedSessionChanged(sessionId) }
             return
         }
-        if (!settings.enabled || !playing || !AudioSessionDiscovery.hasPermission()) return
+        if (!settings.enabled || !playing || !nativeAllowed ||
+            !AudioSessionDiscovery.hasPermission()) return
         if (attachedSession != sessionId) {
             logOutcome("verified session changed available=${sessionId != null}")
             releaseEffects()
@@ -133,6 +148,14 @@ internal object GlobalAudioEffects {
             releaseEffects()
             _status.value = AudioFxStatus(message = "Equalizer is off")
             logOutcome("native EQ switched off")
+            return
+        }
+        if (!nativeAllowed) {
+            AudioSessionDiscovery.stop()
+            releaseEffects()
+            _status.value = AudioFxStatus(
+                message = "mRadio DSP runs inside the YouTube player; native effects not used",
+            )
             return
         }
         if (!playing) {

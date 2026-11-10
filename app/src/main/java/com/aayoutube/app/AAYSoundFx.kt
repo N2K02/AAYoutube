@@ -11,14 +11,26 @@ import org.json.JSONObject
 
 /**
  * mRadio-style settings saved locally in the WebView process.
- * Unlike mRadio's ExoPlayer, Chromium does not supply us PCM buffers or an
- * exposed per-track audio session. The Android output-mix adapter is explicitly
- * optional and defaults to OFF.
+ * Primary engine: mRadio's DSP chain as a Web Audio graph on YouTube's own
+ * media element (assets/aay_eq.js), so only AAYouTube audio is processed.
+ * Android's native effects are a fallback only when that graph cannot attach.
+ * Defaults to OFF.
  */
 internal object AAYSoundFx {
     private var prefs: SharedPreferences? = null
     private val _settings = MutableStateFlow(SoundEqSettings())
     val settings: StateFlow<SoundEqSettings> = _settings
+    private val _webAudio = MutableStateFlow(WebAudioEqState.OFF)
+    val webAudio: StateFlow<WebAudioEqState> = _webAudio
+
+    fun webAudioJson(): String = WebAudioEqPolicy.params(_settings.value).toJson()
+
+    /** Page script report. Native effects run only if the in-player DSP is unsupported. */
+    fun onWebAudioStatus(raw: String) {
+        val state = WebAudioEqPolicy.status(raw)
+        _webAudio.value = state
+        GlobalAudioEffects.nativeFallback(WebAudioEqPolicy.nativeFallbackAllowed(state))
+    }
 
     // Coalesce rapid slider events: log the final curve after inactivity.
     private val diagnosticsHandler = Handler(Looper.getMainLooper())
@@ -64,6 +76,7 @@ internal object AAYSoundFx {
             .put("intensity", safe.intensity.toDouble())
             .put("preset", safe.preset)
             .toString())?.apply()
+        WebHost.applyEq(WebAudioEqPolicy.params(safe).toJson())
         GlobalAudioEffects.refresh(safe)
         diagnosticsHandler.removeCallbacks(reportSettings)
         diagnosticsHandler.postDelayed(reportSettings, 300L)
@@ -90,6 +103,8 @@ internal object AAYSoundFx {
     fun shutdown() {
         diagnosticsHandler.removeCallbacks(reportSettings)
         lastPlayback = null
+        _webAudio.value = WebAudioEqState.OFF
+        GlobalAudioEffects.nativeFallback(false)
         AppLog.add("EQ", "web player released; native effects stopped")
         GlobalAudioEffects.release()
     }
