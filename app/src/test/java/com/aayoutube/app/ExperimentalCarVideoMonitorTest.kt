@@ -23,7 +23,15 @@ class ExperimentalCarVideoMonitorTest {
             playerWidth = 800, playerHeight = 480,
             visibleArea = CarVideoBounds(0, 0, 800, 480),
         )
+        ExperimentalCarVideoMonitor.decoder(
+            owner = "car-geometry", decoded = 245, dropped = 3,
+            width = 1920, height = 1080, paused = false,
+        )
         val d = ExperimentalCarVideoMonitor.state.value
+        assertEquals(245, d.decodedFrames)
+        assertEquals(3, d.droppedFrames)
+        assertEquals("1920×1080", d.decoderSize)
+        assertEquals(false, d.decoderPaused)
         assertTrue(d.active)
         assertTrue(d.enabled)
         assertEquals(3, d.checks)
