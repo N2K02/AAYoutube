@@ -997,6 +997,7 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        AAYSoundFx.onPlaybackChanged(false)
         selectedWatchVideoId.value = ""
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
@@ -1333,6 +1334,7 @@ object WebHost {
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
         snapshot.value = s
+        AAYSoundFx.onPlaybackChanged(s.playing)
         if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
         if (!s.playing && !shown) scheduleFreeze()
@@ -1425,6 +1427,7 @@ object WebHost {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 snapshot.value = Snap()
+                AAYSoundFx.onPlaybackChanged(false)
                 send(Msg.STATE, Snap().toBundle())
                 AppLog.add("PLAY", "Navigation cleared previous media session")
             }
