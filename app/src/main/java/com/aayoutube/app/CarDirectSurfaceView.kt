@@ -204,7 +204,8 @@ internal class CarDirectSurfaceView(
                             val result = CarVideoPatternPixelPolicy.analyze(pixels, 96, 54)
                             CarDirectSurfaceProbe.readback(owner, runId,
                                 "Direct surface buffer: ${result.matched}/${result.samples} " +
-                                    "synthetic color samples matched (not head-unit proof)")
+                                    "synthetic color samples matched (not head-unit proof)",
+                                detected = result.matched >= 17)
                         } else {
                             CarDirectSurfaceProbe.readback(owner, runId,
                                 "Direct surface PixelCopy result=$code (inconclusive)")
