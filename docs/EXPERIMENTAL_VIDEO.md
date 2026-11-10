@@ -50,3 +50,50 @@ validate WebView paint, head unit touch, decoder health, or host restrictions.
 
 Do not expose an unavailable backend as if it worked. No in-motion video
 permission is implied by this flag.
+
+## Phase 2 — passive rendering instrumentation and safe preview
+
+- A geometry-only preview in Settings simulates common Android Auto head-unit
+  viewports (800×480, 1280×720, 1920×1080 and 1024×600) and letterboxes a
+  16:9 video without launching a second player. The same pure geometry policy
+  runs in JVM tests.
+- The active legacy car session reports its display ID, WebView/frame size,
+  global visible area and a reference video rectangle to an in-memory
+  diagnostics card. Stale car hosts cannot replace the newest diagnostic state.
+- When the experimental flag is on, the existing Chromium render probes also
+  expose decoded/dropped frame counts, video pixel size and paused state.
+  These are **diagnostics, not a black-frame detector**. They do not restart
+  a healthy WebView or authorize switching output.
+- Input events are **observed, not injected or intercepted**. Pure gesture
+  tests guard against false taps after drags and multi-pointer touches; the
+  original MotionEvent continues to YouTube's WebView unchanged.
+- Rebind recovery is capped at two attempts over four timed checks. Reaching
+  the limit or an exception disables further experimental checks for that car
+  session and reports standard fallback. The saved user toggle is unchanged.
+- The current live renderer is still **legacy projection**, not AnyAuto's
+  Shizuku/NavigationTemplate virtual-display compositor. GPL-licensed
+  upstream implementation was **not** copied.
+
+### Phone-only headless preview/screenshot
+
+Build and install the debug APK, then connect a phone with USB debugging:
+
+```bash
+bash tools/car-video-preview-capture.sh /tmp/aay-car-preview.png
+```
+
+The script launches a **debug-only** preview intent on the phone and captures
+its screenshot. It restarts the phone activity; do not run it while listening to
+media. It does **not** launch an Android Auto host, inspect car SurfaceCallbacks,
+test the GPU video compositor, or assert real YouTube frame decoding.
+
+### Hardware prerequisites for future independent renderer
+
+A second real renderer needs a supported host surface, input routing, single
+player ownership across host teardown and permitted API/privilege behavior.
+AnyAuto uses an AndroidX NavigationTemplate with Shizuku shell privileges.
+AAYouTube removed the same navigation-template path after it interfered with
+its existing WebView. Reintroducing that host path should be a separately
+testable backend that cannot run concurrently with legacy video, and should
+only be offered after parked-car and licensing validation. A toggle must never
+claim an unavailable renderer is running.
