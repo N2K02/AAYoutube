@@ -35,6 +35,10 @@ class EqualizerDiagnosticPolicyTest {
         assertTrue(log.contains("bandsDb=[12,0,-12,0,0]"))
         assertTrue(log.contains("bassPct=0"))
         assertTrue(log.contains("strengthPct=60"))
+        val maliciousPreset = EqualizerDiagnosticPolicy.settingSummary(
+            SoundEqSettings(preset = "https://private.invalid/token"))
+        assertTrue(maliciousPreset.contains("preset=Custom"))
+        assertFalse(maliciousPreset.contains("private.invalid"))
     }
 
     @Test fun engineAndDiscoveryLogsOmitSessionIdentifiers() {
