@@ -964,11 +964,24 @@ fun ExperimentalVideoPage() {
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "Decoder paused: ${diagnostics.decoderPaused ?: "unknown"}. " +
-                        "Decoded frames do not guarantee a visible car-screen image.",
+                    "Frame health: ${diagnostics.frameHealth}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Text(
+                    "Decoder paused: ${diagnostics.decoderPaused ?: "unknown"}. " +
+                        "Frame health is diagnostic only and does not prove a visible car image.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (diagnostics.active) {
+                    OutlinedButton(onClick = {
+                        WebHost.logCarRenderProbe()
+                        AppLog.add("CAR", "User requested manual render probe")
+                    }) {
+                        Text("Check video rendering")
+                    }
+                }
             }
         }
         Text(
