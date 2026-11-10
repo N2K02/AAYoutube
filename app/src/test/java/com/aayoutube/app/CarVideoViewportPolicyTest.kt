@@ -23,6 +23,24 @@ class CarVideoViewportPolicyTest {
         assertTrue(result.bottom <= 1045)
     }
 
+    @Test fun realVisibleAreaUsesLocalCoordinatesAndRejectsInvalidClips() {
+        assertEquals(CarVideoBounds(0, 71, 600, 337),
+            CarVideoViewportPolicy.fitVisible16by9(800, 480,
+                CarVideoBounds(0, 0, 600, 480)))
+        assertEquals(CarVideoBounds(150, 57, 650, 365),
+            CarVideoViewportPolicy.fitVisible16by9(800, 480,
+                CarVideoBounds(150, 20, 650, 440)))
+        assertEquals(CarVideoViewportPolicy.fit16by9(800, 480),
+            CarVideoViewportPolicy.fitVisible16by9(800, 480,
+                CarVideoBounds(-20, 0, 800, 480)))
+        assertEquals(CarVideoViewportPolicy.fit16by9(800, 480),
+            CarVideoViewportPolicy.fitVisible16by9(800, 480,
+                CarVideoBounds(100, 0, 800, 480)))
+        assertEquals(CarVideoViewportPolicy.fit16by9(800, 480),
+            CarVideoViewportPolicy.fitVisible16by9(800, 480,
+                CarVideoBounds(0, 0, 0, 480)))
+    }
+
     @Test fun invalidSizesNeverProduceNegativeOrOverflowingRectangles() {
         assertEquals(CarVideoBounds(0, 0, 0, 0),
             CarVideoViewportPolicy.fit16by9(-5, 100))
