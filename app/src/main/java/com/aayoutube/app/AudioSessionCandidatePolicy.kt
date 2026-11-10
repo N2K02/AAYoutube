@@ -26,8 +26,7 @@ internal object AudioSessionCandidatePolicy {
         for (line in dump) {
             if (++inspected > 12_000) break
             if (!line.contains("sessionId:") || !line.contains("u/pid:")) continue
-            if (!line.contains("AudioPlaybackConfiguration") &&
-                !line.contains("piid:")) continue
+            if (!line.contains("AudioPlaybackConfiguration piid:")) continue
             val candidateUid = owner.find(line)?.groupValues?.get(1)?.toIntOrNull()
                 ?: continue
             if (candidateUid != ownUid) continue
