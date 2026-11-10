@@ -52,6 +52,14 @@ internal object CarVideoPatternProbe {
         }
         val owner = _state.value.owner
         val active = ExperimentalCarVideoMonitor.state.value
+        // A manual generic Window PixelCopy must finish before the known
+        // synthetic pattern is shown, otherwise it may sample the wrong scene.
+        if (CarWindowPixelProbe.state.value.running) {
+            _state.value = _state.value.copy(
+                message = "Finish the previous window readback before testing color bars",
+            )
+            return
+        }
         if (!CarVideoPatternPolicy.canShow(
                 requestedOwner = owner.takeIf { _state.value.available },
                 activeOwner = active.owner,
