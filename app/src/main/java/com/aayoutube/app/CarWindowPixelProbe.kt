@@ -119,10 +119,12 @@ internal object CarWindowPixelProbe {
             available = true, running = true, message = "Sampling the current car window…")
         request.timeout = Runnable {
             if (pending === request) {
-                pending = null
+                // Keep the request pending until the system callback or car
+                // disconnects. PixelCopy may still own the bitmap; allowing
+                // unlimited retries here could accumulate buffers.
                 _state.value = CarWindowPixelProbeStatus(
-                    available = true,
-                    message = "Car-window readback timed out (inconclusive)")
+                    available = true, running = true,
+                    message = "Window readback timed out; reconnect to retry")
                 AppLog.add("CAR", "Manual window pixel readback timed out")
             }
             // PixelCopy may still own bitmap; its eventual callback recycles it.
