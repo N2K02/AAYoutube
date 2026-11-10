@@ -22,7 +22,9 @@ follows mRadio's comb feedback/damping, not a sample-exact Freeverb; 8D
 uses level panning without mRadio's small inter-ear delay and rear muffling.
 
 Safety rules in the page script:
-- Nothing is routed while the switch is off (the default).
+- Nothing is routed while the switch is off (the default), nor while it
+  is on with Flat bands, no bass and 3D Off: Chromium's native audio path
+  is kept until a setting actually changes the sound (no CPU/battery cost).
 - Only MediaSource (`blob:`) playback is routed; progressive cross-origin
   media would be silenced by CORS tainting, so it is reported unsupported.
 - An element is routed only after the AudioContext is running; if Chromium

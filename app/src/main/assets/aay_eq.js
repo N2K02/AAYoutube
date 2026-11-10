@@ -36,6 +36,13 @@
     try { var N = window.AAYNative; if (N && typeof N.eqStatus === 'function') N.eqStatus(msg); } catch (e) {}
   }
   function want() { return !!(EQ.cfg && EQ.cfg.enabled); }
+  // Flat + 3D Off changes nothing: keep Chromium's native audio path (no Web
+  // Audio rendering, CPU or battery cost) until a setting actually alters sound.
+  function needsRoute() {
+    if (!want()) return false;
+    var p = planOf(EQ.cfg);
+    return !!(p.eq || p.space || p.wet || p.limit);
+  }
   function settled() { return EQ.count ? (want() ? 'active' : 'off') : (want() ? 'waiting' : 'off'); }
 
   function soft(x) { // mRadio SoundEngine.soft()
@@ -224,6 +231,7 @@
   function attach(v) {
     if (!v || EQ.hooked.has(v)) return;
     if (!want()) { report(settled()); return; }
+    if (!needsRoute()) { if (!EQ.count) report('waiting'); return; }
     var src = v.currentSrc || v.src || '';
     if (src.indexOf('blob:') !== 0) {
       // Hysteresis: a short non-MediaSource clip (preview, ad) must not switch on
@@ -319,7 +327,7 @@
     if (!cfg || typeof cfg !== 'object') return;
     EQ.cfg = cfg;
     apply();
-    if (want()) scan();
+    if (needsRoute()) scan();
     if (!want()) report('off');
     else if (!(EQ.status === 'unsupported' && !EQ.count)) report(settled());
   };

@@ -97,11 +97,21 @@ test('switch off: nothing is routed into Web Audio', () => {
   assert.deepEqual(p.statuses, ['off']);
 });
 
-test('flat is transparent and reports active with measured output delay', async () => {
+test('enabled but Flat + Off keeps the native audio path (no Web Audio cost)', () => {
   const p = page();
   p.eq({ ...BASE });
+  assert.equal(p.calls.routed, 0);
+  assert.equal(p.statuses.at(-1), 'waiting');
+  p.eq({ ...BASE, bands: [0, 0, 3, 0, 0], limiter: true }); // first real change routes
   assert.equal(p.calls.routed, 1);
   assert.equal(p.statuses.at(-1), 'active:50');
+});
+
+test('routed graph set back to flat is transparent', async () => {
+  const p = page();
+  p.eq({ ...BASE, bands: [0, 0, 3, 0, 0], limiter: true });
+  p.eq({ ...BASE });
+  p.runTimers(4000);
   const r = await p.render();
   near(db(r.L.rms, 0.5 / Math.SQRT2), 0, 0.05, 'flat level');
 });
@@ -155,7 +165,7 @@ test('soft limiter never exceeds full scale', async () => {
 
 test('paused playback suspends rendering and play resumes it', () => {
   const p = page();
-  p.eq({ ...BASE });
+  p.eq({ ...BASE, sideGain: 1.6, limiter: true });
   p.video.paused = true;
   p.fire('pause');
   p.runTimers(2000);
@@ -169,7 +179,7 @@ test('paused playback suspends rendering and play resumes it', () => {
 
 test('short non-MediaSource clip never switches on the system fallback', () => {
   const p = page({ src: 'https://example.invalid/preview.mp4' });
-  p.eq({ ...BASE });
+  p.eq({ ...BASE, sideGain: 1.6, limiter: true });
   assert.equal(p.calls.routed, 0);
   assert.ok(!p.statuses.includes('unsupported'));
   p.video.paused = true; // clip ends before the 4 s probe
@@ -179,7 +189,7 @@ test('short non-MediaSource clip never switches on the system fallback', () => {
 
 test('long non-MediaSource playback falls back after 4 s', () => {
   const p = page({ src: 'https://example.invalid/progressive.mp4' });
-  p.eq({ ...BASE });
+  p.eq({ ...BASE, sideGain: 1.6, limiter: true });
   p.runTimers(4000);
   assert.equal(p.statuses.at(-1), 'unsupported');
   assert.equal(p.calls.routed, 0);
