@@ -93,6 +93,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var playerContainer: CarFrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
+    /** Snapshotted at activity creation; never change renderer behavior mid-playback. */
+    private var experimentalVideoEnabled = false
+    private var experimentalChecks = 0
     private var carInput: LegacyCarInput? = null
     private var lastWidth = 0
     private var lastHeight = 0
@@ -132,6 +135,50 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
     private val renderProbe = Runnable {
         if (carStarted && WebHost.isActiveCarHost(carToken)) WebHost.logCarRenderProbe()
+    }
+
+    /**
+     * AnyAuto-inspired surface resilience, not an AnyAuto/Shizuku renderer.
+     * A bounded watchdog checks only the native View hierarchy and display ID.
+     * The existing WebHost attachment remains the sole video/decoder owner.
+     */
+    private val experimentalRecovery = object : Runnable {
+        override fun run() {
+            if (!experimentalVideoEnabled || !carStarted ||
+                !WebHost.isActiveCarHost(carToken) || WebHost.fullscreenView.value != null) return
+            val frame = playerContainer
+            val player = frame?.getChildAt(0) as? WebView
+            val repair = frame != null && ExperimentalCarVideoPolicy.needsRebind(
+                enabled = experimentalVideoEnabled,
+                activeCarHost = WebHost.isActiveCarHost(carToken),
+                frameAttached = frame.isAttachedToWindow,
+                frameWidth = frame.width,
+                frameHeight = frame.height,
+                frameDisplayId = frame.display?.displayId ?: -1,
+                playerAttached = player?.isAttachedToWindow == true,
+                playerWidth = player?.width ?: 0,
+                playerHeight = player?.height ?: 0,
+                playerDisplayId = player?.display?.displayId ?: -1,
+            )
+            if (repair && frame != null) {
+                AppLog.add("CAR", "Experimental video: invalid/missing car WebView, rechecking attachment")
+                bindVideoToCarFrame(frame)
+                WebHost.refitCarViewport()
+            }
+            experimentalChecks++
+            if (experimentalChecks < ExperimentalCarVideoPolicy.MAX_CHECKS) {
+                handler.postDelayed(this, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
+            } else {
+                AppLog.add("CAR", "Experimental video: checks complete; standard projection preserved")
+            }
+        }
+    }
+
+    private fun scheduleExperimentalRecovery() {
+        handler.removeCallbacks(experimentalRecovery)
+        if (!experimentalVideoEnabled) return
+        experimentalChecks = 0
+        handler.postDelayed(experimentalRecovery, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
     }
 
     /** Frames decoded vs. painted, over the first seconds of a car bind. */
@@ -192,6 +239,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             frame.isFocusableInTouchMode = true
             frame.requestFocus()
             scheduleRenderProbes()
+            scheduleExperimentalRecovery()
         }
         val display = frame.display?.displayId ?: -1
         val childDisplay = player.display?.displayId ?: -1
@@ -208,6 +256,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video CarActivity launching")
         setTheme(R.style.Theme_AAYoutube)
         super.onCreate(bundle)
+        experimentalVideoEnabled = Features.current.experimentalVideo
+        AppLog.add("CAR", "Experimental video at connection=" + experimentalVideoEnabled)
         CarMode.resetToCarScreen(this)
         savedController.performRestore(bundle)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
@@ -571,6 +621,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.requestLink = relink
         connectMedia()
         attachIfNeeded()
+        scheduleExperimentalRecovery()
     }
 
     override fun onResume() {
@@ -583,6 +634,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         handler.removeCallbacks(refit)
         handler.postDelayed(refit, 180L)
         scheduleRenderProbes()
+        scheduleExperimentalRecovery()
     }
 
     private fun attachIfNeeded() {
