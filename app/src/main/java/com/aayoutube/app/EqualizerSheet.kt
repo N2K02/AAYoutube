@@ -43,12 +43,15 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val s by AAYSoundFx.settings.collectAsState()
     val audio by GlobalAudioEffects.status.collectAsState()
     val tracking by AudioSessionDiscovery.status.collectAsState()
+    val playback by WebHost.snapshot.collectAsState()
     var showDiagnostics by remember { mutableStateOf(false) }
     val shortStatus = when {
         !s.enabled -> "Off"
         audio.running && audio.sessionScoped -> "Active · AAYouTube session"
         audio.running -> "Active · system mix"
-        !WebHost.snapshot.value.playing -> "Waiting for playback"
+        !playback.playing -> "Waiting for playback"
+        tracking.granted && tracking.scans > 0 && tracking.sessionId == null ->
+            "No compatible audio session"
         tracking.granted && tracking.sessionId == null -> "Searching for player audio"
         else -> "Audio effect unavailable"
     }
@@ -104,6 +107,12 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
+                    "Session checks: ${tracking.scans} · own-player rows: " +
+                        "${tracking.ownPlayerRows} · last: ${tracking.lastDurationMs} ms",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
                     if (tracking.granted)
                         "Player tracking: ADB enabled"
                     else
@@ -113,7 +122,8 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Audio route is not verified; system mix may affect other apps.",
+                    "Audio route not verified · logs tagged AAYouTube-EQ. " +
+                        "Global mix can affect other apps.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
