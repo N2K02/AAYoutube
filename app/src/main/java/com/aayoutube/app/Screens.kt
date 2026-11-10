@@ -145,11 +145,12 @@ fun Context.findActivity(): MainActivity? {
 private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
-    ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
     Lyrics("Lyrics", Icons.Filled.Info),
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
+    // Append to preserve previously saved tab ordinals when updating the app.
+    ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
 }
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
