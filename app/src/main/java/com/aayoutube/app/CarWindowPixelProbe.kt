@@ -81,7 +81,9 @@ internal object CarWindowPixelProbe {
         val owner = activeOwner
         if (pending != null || owner == null || carCapture == null ||
             ExperimentalCarVideoMonitor.state.value.owner != owner ||
-            !ExperimentalCarVideoMonitor.state.value.enabled) return
+            !ExperimentalCarVideoMonitor.state.value.enabled ||
+            CarVideoPatternProbe.state.value.visible ||
+            CarDirectSurfaceProbe.state.value.visible) return
         carCapture?.invoke()
     }
 
@@ -94,7 +96,9 @@ internal object CarWindowPixelProbe {
             main.post { capture(owner, window, frame) }
             return
         }
-        if (owner != activeOwner || pending != null) return
+        if (owner != activeOwner || pending != null ||
+            CarVideoPatternProbe.state.value.visible ||
+            CarDirectSurfaceProbe.state.value.visible) return
         if (window == null || frame == null || !frame.isAttachedToWindow ||
             frame.width <= 0 || frame.height <= 0) {
             failure("Window or car view not ready")
