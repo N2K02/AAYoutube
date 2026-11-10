@@ -24,9 +24,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -36,27 +33,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-/** Compact mRadio-style controls. Optional diagnostics are hidden by default. */
+/** Compact mRadio-style controls: switch, 3D modes, presets, bands, bass. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val s by AAYSoundFx.settings.collectAsState()
-    val audio by GlobalAudioEffects.status.collectAsState()
-    val playback by WebHost.snapshot.collectAsState()
     val webAudio by AAYSoundFx.webAudio.collectAsState()
-    val latency by AAYSoundFx.latencyMs.collectAsState()
-    var showDiagnostics by remember { mutableStateOf(false) }
-    val inPlayer = webAudio == WebAudioEqState.ACTIVE
+    // Native fallback can only approximate some 3D modes.
     val fallback = webAudio == WebAudioEqState.UNSUPPORTED
-    val shortStatus = when {
-        !s.enabled -> "Off"
-        inPlayer -> "Active · in-player mRadio DSP"
-        !fallback && !playback.playing -> "Waiting for playback"
-        !fallback -> "Connecting to player audio"
-        audio.running -> "EQ initialized · system mix"
-        !playback.playing -> "Waiting for playback"
-        else -> "Audio effect unavailable"
-    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -85,42 +69,7 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     },
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    shortStatus,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (inPlayer || audio.running) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(onClick = { showDiagnostics = !showDiagnostics }) {
-                    Text(if (showDiagnostics) "Hide details" else "Details")
-                }
-            }
-            if (showDiagnostics) {
-                Text(
-                    when (webAudio) {
-                        WebAudioEqState.ACTIVE ->
-                            "In-player DSP: YouTube audio runs through mRadio's EQ, bass shelf, " +
-                                "3D and limiter inside AAYouTube only. No ADB needed." +
-                                (latency?.let { " Added audio delay ≈ $it ms." } ?: "") +
-                                " Turning the switch off reloads the video at the same position."
-                        WebAudioEqState.UNSUPPORTED ->
-                            "In-player DSP unavailable for this stream; using Android native " +
-                                "effects fallback (Wide/Headphone 3D only)."
-                        WebAudioEqState.WAITING -> "In-player DSP waiting for YouTube playback."
-                        WebAudioEqState.OFF -> "In-player DSP idle."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (fallback) Text(
-                    audio.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.size(8.dp))
-            }
+            Spacer(Modifier.size(12.dp))
 
             EqSection("3D sound")
             EqChipRow {

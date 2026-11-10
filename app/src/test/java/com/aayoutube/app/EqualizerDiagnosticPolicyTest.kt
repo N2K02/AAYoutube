@@ -9,12 +9,14 @@ class EqualizerDiagnosticPolicyTest {
     private fun src(path: String): String =
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
-    @Test fun UIIsConciseAndDebugTextIsCollapsedByDefault() {
+    @Test fun UIShowsOnlyControlsWithoutStatusOrDetailsText() {
         val ui = src("app/src/main/java/com/aayoutube/app/EqualizerSheet.kt")
-        assertTrue(ui.contains("var showDiagnostics by remember { mutableStateOf(false) }"))
-        assertTrue(ui.contains("if (showDiagnostics)"))
-        assertTrue(ui.contains("Hide details"))
-        assertTrue(ui.contains("Details"))
+        assertFalse(ui.contains("showDiagnostics"))
+        assertFalse(ui.contains("Hide details"))
+        assertFalse(ui.contains("\"Details\""))
+        assertFalse(ui.contains("In-player DSP"))
+        assertFalse(ui.contains("shortStatus"))
+        assertTrue(ui.contains("TextButton(onClick = { AAYSoundFx.reset() })"))
         assertTrue(ui.contains("SoundEqPolicy.bandHz"))
         assertTrue(ui.contains("SoundEqPolicy.presets"))
         assertTrue(ui.contains("SoundSpaceMode.entries.forEach"))

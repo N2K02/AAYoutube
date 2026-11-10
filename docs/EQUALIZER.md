@@ -41,8 +41,10 @@ Safety rules in the page script:
   into the injected script, so a reload cannot re-route with stale state.
 - A non-MediaSource clip enables the native fallback only if it is still
   playing after 4 s (previews and short ads do not).
-- Details shows the measured added audio delay (`baseLatency +
-  outputLatency`). Video is not delayed to match; check lip-sync there.
+- The page reports the measured added audio delay (`baseLatency +
+  outputLatency`) with its status. Video is not delayed to match.
+- The sheet shows only the controls (switch, Reset, 3D modes, presets,
+  bands, bass): no status line or details text.
 - `.github/scripts/equalizer.test.cjs` runs the graph on a real Web Audio
   implementation in CI (levels, mono upmix, limiter, idle suspend,
   fallback hysteresis, faded reverb swaps).
