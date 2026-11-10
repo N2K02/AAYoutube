@@ -904,11 +904,16 @@ fun ExperimentalVideoPage() {
     val renderEvidence = CarRenderEvidence(
         active = diagnostics.active,
         experimental = diagnostics.enabled,
-        windowBuffer = carPattern.windowPatternDetected,
-        windowSeen = carPattern.observedVisible,
-        surfaceBuffer = directSurface.surfacePatternDetected,
-        surfaceSeen = directSurface.observedVisible,
-        surfaceFrames = directSurface.frameCount,
+        windowBuffer = if (carPattern.owner == diagnostics.owner)
+            carPattern.windowPatternDetected else null,
+        windowSeen = if (carPattern.owner == diagnostics.owner)
+            carPattern.observedVisible else null,
+        surfaceBuffer = if (directSurface.owner == diagnostics.owner)
+            directSurface.surfacePatternDetected else null,
+        surfaceSeen = if (directSurface.owner == diagnostics.owner)
+            directSurface.observedVisible else null,
+        surfaceFrames = if (directSurface.owner == diagnostics.owner)
+            directSurface.frameCount else 0,
         frameHealth = diagnostics.frameHealth,
         checks = diagnostics.checks,
         repairs = diagnostics.repairs,
