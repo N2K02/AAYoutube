@@ -13,6 +13,7 @@ class AAYoutubeApp : Application() {
             AppLog.init(this)
             Features.init(this)
             LyricsPrefs.init(this)
+            AAYSoundFx.init(this)
             WebHost.init(this)
             BrowseHost.init(this)
         } else {
