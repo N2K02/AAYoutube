@@ -56,6 +56,22 @@ class AudioSessionCandidatePolicyTest {
     private fun source(path: String) =
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
+    @Test fun pausedPlayerReleasesAllNativeEffectHandles() {
+        val engine = source("app/src/main/java/com/aayoutube/app/GlobalAudioEffects.kt")
+        val paused = engine.substringAfter("if (!playing) {")
+            .substringBefore("// With ADB-granted DUMP")
+        assertTrue(paused.contains("AudioSessionDiscovery.stop()"))
+        assertTrue(paused.contains("releaseEffects()"))
+        assertFalse(paused.contains("equalizerAvailable = equalizer != null"))
+    }
+
+    @Test fun sessionScannerAllowsBoundedDumpsysTeardown() {
+        val scanner = source("app/src/main/java/com/aayoutube/app/AudioSessionDiscovery.kt")
+        assertTrue(scanner.contains("p.waitFor(500, TimeUnit.MILLISECONDS)"))
+        assertTrue(scanner.contains("DUMP_TIMEOUT_MS = 2_500L"))
+        assertTrue(scanner.contains("if (serial != generation)"))
+    }
+
     @Test fun elevatedDiscoveryIsOptionalAsyncAndNeverLogsRawDumps() {
         val locator = source("app/src/main/java/com/aayoutube/app/AudioSessionDiscovery.kt")
         val effects = source("app/src/main/java/com/aayoutube/app/GlobalAudioEffects.kt")
