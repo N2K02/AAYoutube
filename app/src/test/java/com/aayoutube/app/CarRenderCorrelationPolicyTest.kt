@@ -87,6 +87,8 @@ class CarRenderCorrelationPolicyTest {
         assertFalse(result.contains("password"))
         assertFalse(result.contains("bearer"))
         assertFalse(result.contains("private.example"))
+        assertTrue(result.contains("Decoder health: unrecognized"))
+        assertTrue(result.contains("Frame: unknown; WebView: unknown"))
         assertTrue(result.contains("no physical screen or live video success inferred"))
     }
 
