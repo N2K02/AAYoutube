@@ -73,7 +73,9 @@ internal object CarVirtualDisplayProbe {
             ) ?: error("VirtualDisplay unavailable")
             val target = display.display ?: error("Virtual display has no Display")
             window = Presentation(context, target).apply {
-                setContentView(FrameLayout(context).apply {
+                // A Presentation must inflate its content with the target
+                // display's Context, not the original phone Activity context.
+                setContentView(FrameLayout(this.context).apply {
                     setBackgroundColor(android.graphics.Color.rgb(
                         CarVirtualDisplayPixelPolicy.RED,
                         CarVirtualDisplayPixelPolicy.GREEN,
