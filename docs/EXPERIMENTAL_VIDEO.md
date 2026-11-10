@@ -229,3 +229,44 @@ Interpretation:
   video or a future independent virtual-display renderer.
 
 These diagnostics remain experimental, parked-only and opt-in.
+
+## Phase 8 — isolated direct SurfaceView compositor path
+
+**Test direct surface** is a separate parked-only, manual diagnostic available
+when experimental car video is connected and the media snapshot is paused.
+
+Unlike the static Compose color bars, this test creates a short-lived
+`SurfaceView` inside **the same legacy car activity**, layered above its
+unchanged WebView. A worker `HandlerThread` submits a seven-bar pattern with
+a moving marker at approximately 30 fps for no more than five seconds.
+The test records frame submissions, approximate submission fps and maximum
+inter-frame gap. A single low-resolution `PixelCopy` from the **SurfaceView**
+(not from YouTube or the phone display) checks whether known synthetic colors
+exist in that layer's buffer. No video is captured, encoded or replayed. The
+audio/media session and steering wheel controls are never modified.
+
+The surface is immediately removed and its drawing worker stopped on playback
+resumption, car host stop/replacement, experiment fallback, or timeout. An
+in-flight PixelCopy buffer is released by its callback, not while the
+compositor might still be using it. AndroidView `onRelease` also cleans up
+the surface worker independently of the timeout. All callbacks are checked
+against the active host token and individual test run ID.
+
+The user separately reports **Moving image visible** / **Not visible** based
+on the real head unit. Frame submission and PixelCopy success prove neither
+that the host received the frames nor that the physical panel displayed
+them. In particular, a `SurfaceView` can be composed on a distinct layer
+not mirrored by some Android Auto hosts, which is why this test is useful.
+
+**Scope boundary:** This is an alternate *synthetic* surface compositor, NOT
+an alternate video player, Shizuku trusted virtual display, Android Auto
+NavigationTemplate service, or live video mirroring solution. Without a
+supported parked-video host API, validated capture/permission path and
+hardware feedback, those capabilities cannot be assumed or shipped safely.
+
+As of November 2026, official Android Auto parked video distribution still
+depends on Google enabling compatible Android Auto host/device support.
+NavigationTemplate's map surface is for navigation/map content, not a
+general-purpose video surface. The experiment intentionally does not
+declare navigation functionality it does not provide or reintroduce the
+previously crashing CarAppService.
