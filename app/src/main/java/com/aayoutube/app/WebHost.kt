@@ -529,6 +529,24 @@ object WebHost {
             })()""".trimIndent()
         ) { result ->
             AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
+            if (Features.current.experimentalVideo) runCatching {
+                // evaluateJavascript wraps a JSON.stringify return as a JSON string.
+                // Decode only geometry and frame counters, never URL or document text.
+                val raw = org.json.JSONTokener(result).nextValue() as? String ?: return@runCatching
+                val info = JSONObject(raw)
+                val size = info.optJSONArray("videoSize")
+                ExperimentalCarVideoMonitor.decoder(
+                    owner = activeCarHost.value.orEmpty(),
+                    decoded = info.optInt("frames", -1),
+                    dropped = info.optInt("dropped", -1),
+                    width = size?.optInt(0, 0) ?: 0,
+                    height = size?.optInt(1, 0) ?: 0,
+                    paused = if (info.isNull("paused")) null else info.optBoolean("paused"),
+                )
+            }.onFailure {
+                AppLog.add("CAR", "Experimental decoder probe unavailable: " +
+                    it.javaClass.simpleName)
+            }
         }
         // What is painted over the video: the hit-test stack at the centre down to
         // the <video>, plus any full-screen opaque fixed/absolute box that does not
