@@ -13,7 +13,10 @@ class CarVideoFrameHealthTest {
         position: Double? = 10.0,
         width: Int = 1920,
         height: Int = 1080,
-    ) = CarVideoFrameSample(ms, video, paused, frames, dropped, position, width, height)
+        ready: Int = 4,
+        seeking: Boolean = false,
+    ) = CarVideoFrameSample(ms, video, paused, frames, dropped, position,
+        width, height, ready, seeking)
 
     @Test fun doesNotDiagnosePauseOrMissingVideoAsBlackOrStalled() {
         val previous = sample()
@@ -25,6 +28,10 @@ class CarVideoFrameHealthTest {
             CarVideoFrameHealthPolicy.classify(previous, sample(ms = 6000, paused = true)))
         assertEquals(CarVideoFrameHealth.PAUSED,
             CarVideoFrameHealthPolicy.classify(previous, sample(ms = 6000, paused = null)))
+        assertEquals(CarVideoFrameHealth.BUFFERING_OR_SEEKING,
+            CarVideoFrameHealthPolicy.classify(previous, sample(ms = 6000, ready = 2)))
+        assertEquals(CarVideoFrameHealth.BUFFERING_OR_SEEKING,
+            CarVideoFrameHealthPolicy.classify(previous, sample(ms = 6000, seeking = true)))
         assertEquals(CarVideoFrameHealth.AWAITING_BASELINE,
             CarVideoFrameHealthPolicy.classify(null, sample()))
     }
