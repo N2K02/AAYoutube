@@ -186,7 +186,9 @@ internal object AudioSessionDiscovery {
                             else -> "AAYouTube audio session found; targeting native effects"
                         },
                     )
-                    if (previous != result) {
+                    // Also refresh the native UI after the first unsuccessful
+                    // scan. Otherwise the EQ can say "Searching" forever.
+                    if (previous != result || scanCount == 1) {
                         GlobalAudioEffects.onVerifiedSessionChanged(result)
                     }
                     scheduled = Runnable { scheduled = null; scan() }
