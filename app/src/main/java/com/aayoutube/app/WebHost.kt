@@ -490,6 +490,8 @@ object WebHost {
         // Also reports the element painted at the screen centre (a page overlay
         // covering the video), the real page visibility and whether frames
         // keep decoding, so a black car screen can be classified from logcat.
+        // Capture the owner now: delayed JS responses must not update a newer car host.
+        val probeCarHost = activeCarHost.value.orEmpty()
         w.evaluateJavascript(
             """(function(){
                 // Reconnects and SPA navigation can drop the document's car class.
@@ -536,7 +538,7 @@ object WebHost {
                 val info = JSONObject(raw)
                 val size = info.optJSONArray("videoSize")
                 ExperimentalCarVideoMonitor.decoder(
-                    owner = activeCarHost.value.orEmpty(),
+                    owner = probeCarHost,
                     decoded = info.optInt("frames", -1),
                     dropped = info.optInt("dropped", -1),
                     width = size?.optInt(0, 0) ?: 0,
