@@ -123,8 +123,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // stopped instance until another lifecycle event happens.
         WebHost.showOnCar(true, carToken)
         ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
-        if (experimentalVideoEnabled) CarWindowPixelProbe.register(carToken) {
-            CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+        if (experimentalVideoEnabled) {
+            CarWindowPixelProbe.register(carToken) {
+                CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+            }
+            CarVideoPatternProbe.register(carToken)
         }
         WebHost.onCarQuit = carQuitCallback
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
@@ -179,6 +182,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     status = "Fallback: rebind budget exhausted"
                     experimentalVideoEnabled = false
                     CarWindowPixelProbe.unregister(carToken)
+                    CarVideoPatternProbe.unregister(carToken)
                     ExperimentalCarVideoMonitor.fallback(carToken, "rebind budget exhausted")
                 } else {
                     experimentalRepairs++
@@ -190,6 +194,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         status = "Fallback: rebind failed"
                         experimentalVideoEnabled = false
                         CarWindowPixelProbe.unregister(carToken)
+                        CarVideoPatternProbe.unregister(carToken)
                         ExperimentalCarVideoMonitor.fallback(carToken,
                             "rebind failed (" + it.javaClass.simpleName + ")")
                     }
@@ -431,6 +436,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val mini = mode == WebHost.PlayerMode.MINI
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
+        val carTestPattern by CarVideoPatternProbe.state.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
         val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
         val flags by Features.state.collectAsState()
@@ -570,6 +576,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             // Same small floating rail as the phone, on the configured side.
             // Android Auto is landscape: a side rail never covers YouTube's
             // own top or bottom menus. Any touch shows it again.
+            // A paused-only, explicit diagnostic: the temporary bars are
+            // drawn by the same Compose car window. Chromium is never moved.
+            if (carTestPattern.visible && carTestPattern.owner == carToken &&
+                activeHost == carToken && experimentalVideoEnabled) {
+                Box(Modifier.fillMaxSize().zIndex(40f)) {
+                    CarVideoPatternView()
+                }
+            }
             AnimatedVisibility(
                 visible = controlsVisible,
                 enter = fadeIn(),
@@ -679,8 +693,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
         if (!registered || !WebHost.isActiveCarHost(carToken)) return
         ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
-        if (experimentalVideoEnabled) CarWindowPixelProbe.register(carToken) {
-            CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+        if (experimentalVideoEnabled) {
+            CarWindowPixelProbe.register(carToken) {
+                CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+            }
+            CarVideoPatternProbe.register(carToken)
         }
         WebHost.showOnCar(true, carToken)
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
@@ -772,6 +789,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         carStarted = false
         handler.removeCallbacksAndMessages(null)
         CarWindowPixelProbe.unregister(carToken)
+        CarVideoPatternProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         lastWidth = 0
         lastHeight = 0
@@ -798,6 +816,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     override fun onDestroy() {
         AppLog.add("CAR", "Video projection onDestroy")
         CarWindowPixelProbe.unregister(carToken)
+        CarVideoPatternProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         carStarted = false
         if (WebHost.requestLink === relink) {
