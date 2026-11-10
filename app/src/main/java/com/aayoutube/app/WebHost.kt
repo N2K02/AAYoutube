@@ -976,6 +976,7 @@ object WebHost {
     /** Frees the WebView completely (nothing is playing and no screen is open). */
     fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
+        AAYSoundFx.shutdown() // immediately retire any shared output-mix effects
         main.removeCallbacks(freezeSoon)
         exitFullscreen()
         val w = web
