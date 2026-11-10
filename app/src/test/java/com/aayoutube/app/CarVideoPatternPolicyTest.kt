@@ -53,6 +53,8 @@ class CarVideoPatternPolicyTest {
         assertTrue(pattern.contains("CarVideoPatternPolicy.canShow("))
         assertTrue(pattern.contains("main.postDelayed(task, CarVideoPatternPolicy.DURATION_MS)"))
         assertTrue(pattern.contains("main.removeCallbacks(it)"))
+        assertTrue(pattern.contains("fun stopForPlayback(owner: String)"))
+        assertTrue(car.contains("CarVideoPatternProbe.stopForPlayback(carToken)"))
         assertTrue(view.contains("Color.Yellow"))
         assertTrue(view.contains("Color.Cyan"))
         assertTrue(view.contains("CAR DISPLAY TEST"))
