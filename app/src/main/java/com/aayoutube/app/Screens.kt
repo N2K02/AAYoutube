@@ -224,7 +224,13 @@ private fun AAYoutubePageHeader(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     val context = LocalContext.current
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    // Debug-only entry point for repeatable phone screenshots of the car-layout preview.
+    // A normal launch and all release builds still start on YouTube Home.
+    val openCarPreview = BuildConfig.DEBUG &&
+        activity.intent?.getBooleanExtra("com.aayoutube.app.EXTRA_CAR_PREVIEW", false) == true
+    var tab by rememberSaveable {
+        mutableIntStateOf(if (openCarPreview) Tab.ExperimentalVideo.ordinal else 0)
+    }
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
     LaunchedEffect(tab) { if (tab != Tab.Watch.ordinal) lastPanel = Tab.entries[tab] }
