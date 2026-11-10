@@ -1379,9 +1379,29 @@
         ' win=' + innerWidth + 'x' + innerHeight
     };
   }
+  // Mini player and PiP share one watchdog: re-fit the video to the small window if
+  // YouTube re-rendered its player (autoplay, Mix, navigation), and restart the
+  // picture when sound plays but no new frames arrive (black/frozen window).
+  function smallFits(v) {
+    var r = v.getBoundingClientRect();
+    return r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9 &&
+      Math.abs(r.left) <= innerWidth * 0.1 && Math.abs(r.top) <= innerHeight * 0.1;
+  }
+  var refitAt = 0;
+  function refitSmall(v) {
+    var now = Date.now();
+    if (now - refitAt < 3000) return;
+    refitAt = now;
+    liftAncestors(v, true);
+    document.documentElement.classList.add('aay-video-only');
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+    window.dispatchEvent(new Event('resize'));
+  }
   function pipCheck() {
     var v = getVideo();
     if (!v) return;
+    if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
     var i = videoInfo(v);
     if (pipLast && !v.paused && i.t > pipLast.t + 0.5 && i.frames >= 0 && i.frames === pipLast.frames) {
       var now = Date.now();
@@ -1571,6 +1591,8 @@
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
     // Clear YouTube's cached video dimensions when Android resizes into PiP.
+    if (on && !pipTimer) { pipLast = null; pipTimer = setInterval(pipCheck, 2000); }
+    if (!on && pipTimer) { clearInterval(pipTimer); pipTimer = 0; pipLast = null; }
     if (on) {
       document.documentElement.classList.remove('aay-fit');
       // Recalculate YouTube's internal player size after native WebView resizes.
@@ -1579,9 +1601,21 @@
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
         window.dispatchEvent(new Event('resize'));
+        var v = getVideo();
+        if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
       }, ms); });
     } else fixLayout();
   }
+
+  // Returning from a hidden state (screen, app switch) can leave the small window
+  // black while audio plays: re-sample frames so the watchdog can restart it.
+  document.addEventListener('visibilitychange', function () {
+    if (!(A.isMini || A.inPip)) return;
+    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
+    pipLast = null;
+    later(pipCheck, 1200);
+    later(pipCheck, 2600);
+  });
 
   A.mini = function (on) {
     A.isMini = !!on;
@@ -1595,11 +1629,9 @@
     A.inPip = !!on;
     smallLayout();
     carLayout();
-    clearInterval(pipTimer); pipTimer = 0; pipLast = null;
     var v = getVideo();
     if (v) console.log('[aay] pip=' + !!on + ' video ' + videoInfo(v).text);
     if (on) {
-      pipTimer = setInterval(pipCheck, 2000);
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
     A.setBg(A.isBg);

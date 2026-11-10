@@ -907,3 +907,32 @@ test('native Play before video exists starts it after the player becomes availab
   p.video.trigger('loadedmetadata');
   assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
 });
+
+test('mini player watchdog restarts a frozen picture while sound plays', () => {
+  const p = playerPage();
+  let frames = 100, seeks = 0, t = 10;
+  p.video.paused = false;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: frames, droppedVideoFrames: 0 });
+  Object.defineProperty(p.video, 'currentTime', {
+    get: () => t, set: () => { seeks++; }, configurable: true,
+  });
+  p.window.__aay.mini(true);
+  p.runIntervals(); // baseline sample
+  t += 2;           // audio clock advances, frame counter does not
+  p.runIntervals();
+  assert.equal(seeks, 1, 'stalled mini picture is restarted');
+  p.window.__aay.mini(false);
+  t += 2;
+  p.runIntervals();
+  assert.equal(seeks, 1, 'watchdog stops when leaving the mini player');
+});
+
+test('mini player re-fits a video YouTube moved outside the small window', () => {
+  const p = playerPage();
+  p.window.__aay.mini(true);
+  p.flush();
+  p.classNames.delete('aay-video-only');
+  p.video.getBoundingClientRect = () => ({ left: 0, top: 132, width: 290, height: 163 });
+  p.runIntervals();
+  assert.equal(p.classNames.has('aay-video-only'), true, 'small-window layout is reapplied');
+});
