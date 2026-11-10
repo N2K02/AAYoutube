@@ -62,6 +62,7 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.OndemandVideo
 import dev.n2k02.updater.hasPendingUpdate
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -144,6 +145,7 @@ fun Context.findActivity(): MainActivity? {
 private enum class Tab(val label: String, val icon: ImageVector) {
     Watch("Home", Icons.Filled.PlayCircle),
     Features("Features", Icons.Filled.Tune),
+    ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
     Lyrics("Lyrics", Icons.Filled.Info),
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
@@ -400,6 +402,7 @@ fun AppRoot(activity: MainActivity) {
                             when (page) {
                                 Tab.Watch -> Unit
                                 Tab.Features -> FeaturesPage()
+                                Tab.ExperimentalVideo -> ExperimentalVideoPage()
                                 Tab.Lyrics -> LyricsSettingsPage()
                                 Tab.Update -> UpdatePage()
                                 Tab.Info -> InfoPage()
@@ -719,7 +722,7 @@ private fun AAYoutubeSettingsMenu(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
             )
-            listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+            listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
@@ -728,6 +731,7 @@ private fun AAYoutubeSettingsMenu(
                     supportingContent = {
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
+                            Tab.ExperimentalVideo -> "Optional Android Auto video recovery tests"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
                             Tab.Info -> "App information"
                             Tab.Update -> "Version, experimental releases and update checks"
@@ -867,6 +871,55 @@ fun FeaturesPage() {
         }
         Text(
             "Ad blocking, dislikes and background play rely on how YouTube's website works today, and may need an update when it changes.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------- experimental video
+
+/**
+ * This switch is deliberately separate from Updater's experimental APK channel.
+ * It changes only the legacy Android Auto video window, never phone playback
+ * or the native audio/media session. It takes effect on the next car connection.
+ */
+@Composable
+fun ExperimentalVideoPage() {
+    val flags by Features.state.collectAsState()
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Card {
+            ListItem(
+                headlineContent = { Text("Experimental video") },
+                supportingContent = {
+                    Text(
+                        "Android Auto only. Tries bounded, non-destructive surface recovery " +
+                            "when the projected video view is missing or has invalid geometry. " +
+                            "Reconnect Android Auto after changing this switch."
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.OndemandVideo, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = flags.experimentalVideo,
+                        onCheckedChange = { enabled ->
+                            Features.update { it.copy(experimentalVideo = enabled) }
+                            AppLog.add("CAR", "Experimental video preference=" + enabled +
+                                "; takes effect on next car video connection")
+                        },
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+        Text(
+            "The standard video projection stays the default and is the fallback. " +
+                "This initial experiment adds surface checks, not AnyAuto's virtual-display " +
+                "or Shizuku rendering backend. Music, steering-wheel buttons and the " +
+                "phone player are unchanged. Check Settings > Logs for CAR events.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
