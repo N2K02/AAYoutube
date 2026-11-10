@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.view.PixelCopy
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A separate SurfaceView layer in the *existing* legacy car window.
@@ -27,6 +28,12 @@ internal class CarDirectSurfaceView(
     private val owner: String,
     private val runId: Int,
 ) : SurfaceView(context), SurfaceHolder.Callback {
+    companion object {
+        // PixelCopy can fail to invoke a callback on some host disconnects.
+        // At most one tiny buffer can stay in flight across all view instances.
+        private val pixelReadbackInFlight = AtomicBoolean(false)
+    }
+
     private val main = Handler(Looper.getMainLooper())
     private val surfaceLock = Any()
     private val brush = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -172,9 +179,15 @@ internal class CarDirectSurfaceView(
         val probe = CarDirectSurfaceProbe.state.value
         if (host.owner != owner || !host.active || !host.enabled ||
             probe.owner != owner || probe.runId != runId || !probe.visible) return
+        if (!pixelReadbackInFlight.compareAndSet(false, true)) {
+            CarDirectSurfaceProbe.readback(owner, runId,
+                "Previous direct-surface readback still pending")
+            return
+        }
         val image = runCatching {
             Bitmap.createBitmap(96, 54, Bitmap.Config.ARGB_8888)
         }.getOrElse {
+            pixelReadbackInFlight.set(false)
             CarDirectSurfaceProbe.readback(owner, runId,
                 "Surface buffer test unavailable: " + it.javaClass.simpleName)
             return
@@ -201,12 +214,14 @@ internal class CarDirectSurfaceView(
                             "Direct surface readback unavailable: " + e.javaClass.simpleName)
                     } finally {
                         image.recycle()
+                        pixelReadbackInFlight.set(false)
                     }
                 },
                 main,
             )
         } catch (e: Exception) {
             image.recycle()
+            pixelReadbackInFlight.set(false)
             CarDirectSurfaceProbe.readback(owner, runId,
                 "Direct surface PixelCopy unavailable: " + e.javaClass.simpleName)
         }
