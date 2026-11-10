@@ -34,6 +34,9 @@ internal object ExperimentalCarVideoMonitor {
     private var previousFrame: CarVideoFrameSample? = null
 
     fun begin(owner: String, enabled: Boolean) {
+        // Never run a synthetic virtual-display test concurrently with a
+        // newly connected legacy Android Auto video window.
+        CarVirtualDisplayProbe.cancel()
         previousFrame = null
         _state.value = ExperimentalCarVideoStatus(
             owner = owner, active = true, enabled = enabled,
