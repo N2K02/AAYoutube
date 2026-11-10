@@ -1025,8 +1025,14 @@ fun ExperimentalVideoPage() {
                     OutlinedButton(
                         onClick = { CarVideoPatternProbe.request() },
                         enabled = diagnostics.enabled && carPattern.available &&
-                            !carPattern.visible && !videoSnapshot.playing,
+                            !carPattern.visible && !videoSnapshot.playing &&
+                            !carWindowProbe.running,
                     ) { Text(if (carPattern.visible) "Showing test bars…" else "Show test bars on car") }
+                    Text(
+                        "Window readback: " + carPattern.windowReadback,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (videoSnapshot.playing) Text(
                         "Pause playback before showing the short test image.",
                         style = MaterialTheme.typography.bodySmall,
@@ -1043,8 +1049,9 @@ fun ExperimentalVideoPage() {
                         }
                     }
                     Text(
-                        "Test bars appear for 3 seconds only in the existing car window; " +
-                            "the app does not record a screenshot or stop audio.",
+                        "Test bars appear for 3 seconds in the existing car window. " +
+                            "A tiny in-memory window readback compares known colors only. " +
+                            "Neither test proves what the physical head unit displays.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1063,7 +1070,7 @@ fun ExperimentalVideoPage() {
                     OutlinedButton(
                         onClick = { CarWindowPixelProbe.request() },
                         enabled = diagnostics.enabled && carWindowProbe.available &&
-                            !carWindowProbe.running,
+                            !carWindowProbe.running && !carPattern.visible,
                     ) {
                         Text(if (carWindowProbe.running) "Checking…" else "Check car-window pixels")
                     }
