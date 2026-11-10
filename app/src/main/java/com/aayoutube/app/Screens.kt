@@ -959,6 +959,16 @@ fun ExperimentalVideoPage() {
                     "Expected 16:9 region: ${diagnostics.referenceVideoArea}",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "Decoder: ${diagnostics.decoderSize}  ·  Decoded: ${diagnostics.decodedFrames}  ·  Dropped: ${diagnostics.droppedFrames}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Decoder paused: ${diagnostics.decoderPaused ?: "unknown"}. " +
+                        "Decoded frames do not guarantee a visible car-screen image.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         Text(
