@@ -128,6 +128,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
             }
             CarVideoPatternProbe.register(carToken)
+            CarDirectSurfaceProbe.register(carToken)
         }
         WebHost.onCarQuit = carQuitCallback
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
@@ -183,6 +184,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     experimentalVideoEnabled = false
                     CarWindowPixelProbe.unregister(carToken)
                     CarVideoPatternProbe.unregister(carToken)
+                    CarDirectSurfaceProbe.unregister(carToken)
                     ExperimentalCarVideoMonitor.fallback(carToken, "rebind budget exhausted")
                 } else {
                     experimentalRepairs++
@@ -195,6 +197,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         experimentalVideoEnabled = false
                         CarWindowPixelProbe.unregister(carToken)
                         CarVideoPatternProbe.unregister(carToken)
+                        CarDirectSurfaceProbe.unregister(carToken)
                         ExperimentalCarVideoMonitor.fallback(carToken,
                             "rebind failed (" + it.javaClass.simpleName + ")")
                     }
@@ -437,12 +440,18 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
         val carTestPattern by CarVideoPatternProbe.state.collectAsState()
+        val directSurface by CarDirectSurfaceProbe.state.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
         val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
         val flags by Features.state.collectAsState()
         LaunchedEffect(carTestPattern.visible, playing.playing, activeHost) {
             if (carTestPattern.visible && playing.playing && activeHost == carToken) {
                 CarVideoPatternProbe.stopForPlayback(carToken)
+            }
+        }
+        LaunchedEffect(directSurface.visible, playing.playing, activeHost) {
+            if (directSurface.visible && playing.playing && activeHost == carToken) {
+                CarDirectSurfaceProbe.stopForPlayback(carToken)
             }
         }
         // The static bars must be drawn before PixelCopy reads the same window.
@@ -603,6 +612,25 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     CarVideoPatternView()
                 }
             }
+            // A distinct, short-lived SurfaceView draws synthetic motion, not
+            // duplicated Chromium video. onRelease reliably retires its thread.
+            if (directSurface.visible && directSurface.owner == carToken &&
+                activeHost == carToken && experimentalVideoEnabled &&
+                !playing.playing) {
+                key(directSurface.runId) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize().zIndex(45f),
+                        factory = { ctx ->
+                            CarDirectSurfaceView(
+                                projectionContext(ctx, playerContainer),
+                                carToken,
+                                directSurface.runId,
+                            )
+                        },
+                        onRelease = { it.stopRendering() },
+                    )
+                }
+            }
             AnimatedVisibility(
                 visible = controlsVisible,
                 enter = fadeIn(),
@@ -717,6 +745,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
             }
             CarVideoPatternProbe.register(carToken)
+            CarDirectSurfaceProbe.register(carToken)
         }
         WebHost.showOnCar(true, carToken)
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
@@ -809,6 +838,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         handler.removeCallbacksAndMessages(null)
         CarWindowPixelProbe.unregister(carToken)
         CarVideoPatternProbe.unregister(carToken)
+        CarDirectSurfaceProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         lastWidth = 0
         lastHeight = 0
@@ -836,6 +866,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video projection onDestroy")
         CarWindowPixelProbe.unregister(carToken)
         CarVideoPatternProbe.unregister(carToken)
+        CarDirectSurfaceProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         carStarted = false
         if (WebHost.requestLink === relink) {
