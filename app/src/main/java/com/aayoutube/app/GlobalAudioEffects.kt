@@ -68,7 +68,8 @@ internal object GlobalAudioEffects {
         }
         main.removeCallbacks(applyTask)
         playing = false
-        settings = settings.copy(enabled = false)
+        // Preserve the opt-in preference across WebView recreation. Only
+        // retire the native effect handles and playback state.
         releaseEffects()
         _status.value = AudioFxStatus(message = "Equalizer stopped")
     }
@@ -139,7 +140,7 @@ internal object GlobalAudioEffects {
             eq.enabled && eq.hasControl()
         }.getOrDefault(false)
 
-        val bassOkay = if (bassBoost == null) false else runCatching {
+        val bassOkay = if (!eqOkay || bassBoost == null) false else runCatching {
             bassBoost?.let {
                 it.enabled = false
                 if (settings.bass > 0f) {
@@ -155,7 +156,7 @@ internal object GlobalAudioEffects {
         // must NOT silently pretend to work on Chromium.
         val spatial = settings.mode in setOf(
             SoundSpaceMode.WIDE, SoundSpaceMode.HEADPHONE_3D)
-        val virtualOkay = if (virtualizer == null) false else runCatching {
+        val virtualOkay = if (!eqOkay || virtualizer == null) false else runCatching {
             virtualizer?.let {
                 it.enabled = false
                 if (spatial) {
