@@ -20,6 +20,8 @@ internal data class CarVideoPatternStatus(
     val owner: String = "",
     val testId: Int = 0,
     val windowReadback: String = "Not checked",
+    val windowPatternDetected: Boolean? = null,
+    val observedVisible: Boolean? = null,
 )
 
 internal object CarVideoPatternProbe {
@@ -78,6 +80,8 @@ internal object CarVideoPatternProbe {
             visible = true, awaitingFeedback = false,
             testId = nextTestId,
             windowReadback = "Window pixel self-test not started",
+            windowPatternDetected = null,
+            observedVisible = null,
             message = "Test bars displayed in the car app for 3 seconds",
         )
         AppLog.add("CAR", "Manual car test pattern requested; audio/video unchanged")
@@ -112,9 +116,11 @@ internal object CarVideoPatternProbe {
     }
 
     /** Called only by a matched PixelCopy callback for the active test. */
-    fun windowReadback(owner: String, testId: Int, assessment: String) {
+    fun windowReadback(
+        owner: String, testId: Int, assessment: String, detected: Boolean? = null,
+    ) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post { windowReadback(owner, testId, assessment) }
+            main.post { windowReadback(owner, testId, assessment, detected) }
             return
         }
         val current = _state.value
@@ -122,7 +128,8 @@ internal object CarVideoPatternProbe {
         if (!current.available || current.owner != owner ||
             current.testId != testId || !active.active ||
             active.owner != owner || !active.enabled) return
-        _state.value = current.copy(windowReadback = assessment)
+        _state.value = current.copy(
+            windowReadback = assessment, windowPatternDetected = detected)
     }
 
     fun reportSeen(seen: Boolean) {
@@ -136,6 +143,7 @@ internal object CarVideoPatternProbe {
             current.owner != host.owner || !host.active) return
         _state.value = current.copy(
             awaitingFeedback = false,
+            observedVisible = seen,
             message = if (seen)
                 "Color bars visible on the car (user confirmed)"
             else
