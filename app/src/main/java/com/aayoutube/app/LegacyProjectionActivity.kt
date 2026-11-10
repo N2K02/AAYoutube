@@ -312,6 +312,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video CarActivity launching")
         setTheme(R.style.Theme_AAYoutube)
         super.onCreate(bundle)
+        // The new car connection wins: stop any phone-only test display before
+        // Android Auto claims the live video host.
+        CarVirtualDisplayProbe.cancel()
         experimentalVideoEnabled = Features.current.experimentalVideo
         AppLog.add("CAR", "Experimental video at connection=" + experimentalVideoEnabled)
         CarMode.resetToCarScreen(this)
