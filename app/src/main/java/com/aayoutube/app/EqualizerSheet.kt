@@ -24,6 +24,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -33,20 +36,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-/**
- * Port of mRadio's five-band Equalizer sheet layout.
- *
- * mRadio inserts SoundProcessor into an ExoPlayer PCM pipeline. AAYouTube
- * cannot reach Chromium's private PCM stream: its OPTIONAL system effect
- * adapter is off by default and cannot guarantee audible effects on any
- * specific Android Auto, USB or Bluetooth route.
- */
+/** Compact mRadio-style controls. Optional diagnostics are hidden by default. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val s by AAYSoundFx.settings.collectAsState()
     val audio by GlobalAudioEffects.status.collectAsState()
     val tracking by AudioSessionDiscovery.status.collectAsState()
+    var showDiagnostics by remember { mutableStateOf(false) }
+    val shortStatus = when {
+        !s.enabled -> "Off"
+        audio.running && audio.sessionScoped -> "Active · AAYouTube session"
+        audio.running -> "Active · system mix"
+        !WebHost.snapshot.value.playing -> "Waiting for playback"
+        tracking.granted && tracking.sessionId == null -> "Searching for player audio"
+        else -> "Audio effect unavailable"
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -60,8 +65,10 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                 .padding(bottom = 24.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Equalizer", style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text(
+                    "Equalizer", style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
+                )
                 TextButton(onClick = { AAYSoundFx.reset() }) { Text("Reset") }
                 Switch(
                     checked = s.enabled,
@@ -69,77 +76,61 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                         AAYSoundFx.update { it.copy(enabled = enabled) }
                     },
                     modifier = Modifier.semantics {
-                        contentDescription = "Experimental sound effects"
+                        contentDescription = "Equalizer"
                     },
                 )
             }
-            Text(
-                if (s.enabled)
-                    "Experimental output-mix EQ for YouTube when Android permits it."
-                else
-                    "Sound effects are off. Enable to test device support.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-            Text(
-                audio.message,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (audio.running) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
-            Text(
-                if (tracking.granted) {
-                    "Enhanced audio-session detection is enabled (ADB grant). " +
-                        tracking.message + ". A session must be uniquely attributed " +
-                        "to AAYouTube before effects are attached; no global fallback."
-                } else {
-                    "Legacy mode uses deprecated Android output-mix effects, " +
-                        "which may affect other apps. For optional per-player " +
-                        "tracking, grant DUMP once using ADB: " +
-                        "adb shell pm grant com.aayoutube.app android.permission.DUMP"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            Text(
-                "WebView exposes no mRadio PCM hook. Enhanced session tracking " +
-                    "is experimental and may be unsupported on this Android build. " +
-                    "An initialized effect does not prove audible changes, " +
-                    "including on Bluetooth or Android Auto.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    shortStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (audio.running) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                    Text(if (showDiagnostics) "Hide details" else "Details")
+                }
+            }
+            if (showDiagnostics) {
+                Text(
+                    audio.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    tracking.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    if (tracking.granted)
+                        "Player tracking: ADB enabled"
+                    else
+                        "Enable player tracking: adb shell pm grant " +
+                            "com.aayoutube.app android.permission.DUMP",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Audio route is not verified; system mix may affect other apps.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+            }
 
             EqSection("3D sound")
             EqChipRow {
-                SoundSpaceMode.entries.forEach { mode ->
-                    FilterChip(
-                        selected = s.mode == mode,
-                        enabled = mode.systemApproximation,
-                        onClick = { AAYSoundFx.update { it.copy(mode = mode) } },
-                        label = { Text(mode.label) },
-                    )
-                }
+                SoundSpaceMode.entries.filter { mode -> mode.systemApproximation }
+                    .forEach { mode ->
+                        FilterChip(
+                            selected = s.mode == mode,
+                            onClick = { AAYSoundFx.update { it.copy(mode = mode) } },
+                            label = { Text(mode.label) },
+                        )
+                    }
             }
-            Text(
-                s.mode.blurb +
-                    if (s.mode != SoundSpaceMode.OFF && !audio.virtualizerAvailable)
-                        " Hardware virtualization is not available/verified." else "",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-            Text(
-                "Concert hall, Cinema and 8D orbit require mRadio's PCM engine, " +
-                    "which WebView does not expose; those options are disabled.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
             if (s.mode != SoundSpaceMode.OFF) {
                 EqSlider(
                     label = "Strength",
@@ -152,7 +143,7 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                 )
             }
 
-            Spacer(Modifier.size(16.dp))
+            Spacer(Modifier.size(12.dp))
             EqSection("Presets")
             EqChipRow {
                 SoundEqPolicy.presets.forEach { (name, _) ->
@@ -189,29 +180,17 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     AAYSoundFx.update { it.copy(bass = v, preset = "Custom") }
                 },
             )
-            Text(
-                "Bass boost: " + if (audio.bassAvailable)
-                    "Android effect initialized; sound output not verified."
-                else "not available or untested on this audio route.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "Strong positive EQ levels can clip on Android's effect engine. " +
-                    "Start with Flat, then adjust gradually.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 8.dp),
-            )
         }
     }
 }
 
 @Composable
 private fun EqSection(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium,
+    Text(
+        text, style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(bottom = 8.dp))
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
 }
 
 @Composable
@@ -231,10 +210,14 @@ private fun EqSlider(
     onChange: (Float) -> Unit,
     steps: Int = 0,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.width(76.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            label, style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.width(76.dp),
+        )
         Slider(
             value = value,
             onValueChange = onChange,
@@ -245,9 +228,11 @@ private fun EqSlider(
                 stateDescription = valueText
             },
         )
-        Text(valueText, style = MaterialTheme.typography.bodyMedium,
+        Text(
+            valueText, style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(60.dp),
-            maxLines = 1)
+            maxLines = 1,
+        )
     }
 }
