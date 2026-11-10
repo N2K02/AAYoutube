@@ -56,9 +56,10 @@ internal object CarVideoPatternProbe {
         val active = ExperimentalCarVideoMonitor.state.value
         // A manual generic Window PixelCopy must finish before the known
         // synthetic pattern is shown, otherwise it may sample the wrong scene.
-        if (CarWindowPixelProbe.state.value.running) {
+        if (CarWindowPixelProbe.state.value.running ||
+            CarDirectSurfaceProbe.state.value.visible) {
             _state.value = _state.value.copy(
-                message = "Finish the previous window readback before testing color bars",
+                message = "Finish the current rendering test before showing color bars",
             )
             return
         }
