@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
-import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -121,7 +120,7 @@ internal class CarDirectSurfaceView(
                     AppLog.add("CAR", "Direct SurfaceView frame unavailable: " +
                         e.javaClass.simpleName)
                 } finally {
-                    if (canvas != null) runCatching { holder.unlockCanvasAndPost(canvas) }
+                    canvas?.let { last -> runCatching { holder.unlockCanvasAndPost(last) } }
                 }
                 if (submitted) {
                     val gap = now - previousFrame
