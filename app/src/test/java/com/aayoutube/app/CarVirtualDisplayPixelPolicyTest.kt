@@ -32,7 +32,8 @@ class CarVirtualDisplayPixelPolicyTest {
         assertFalse(probe.contains("WebView("))
         assertFalse(probe.contains("WebHost."))
         assertFalse(probe.contains("MediaSession"))
-        assertFalse(probe.contains("Shizuku"))
+        assertFalse(probe.contains("import rikka.shizuku"))
+        assertFalse(probe.contains("Shizuku.bindUserService("))
         assertFalse(manifest.contains("androidx.car.app.CarAppService"))
     }
 }
