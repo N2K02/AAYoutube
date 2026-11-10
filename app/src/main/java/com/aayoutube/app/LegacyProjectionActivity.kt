@@ -440,6 +440,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val playing by WebHost.snapshot.collectAsState()
         val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
         val flags by Features.state.collectAsState()
+        LaunchedEffect(carTestPattern.visible, playing.playing, activeHost) {
+            if (carTestPattern.visible && playing.playing && activeHost == carToken) {
+                CarVideoPatternProbe.stopForPlayback(carToken)
+            }
+        }
         var controlsVisible by remember { mutableStateOf(true) }
         var controlsVersion by remember { mutableIntStateOf(0) }
         LaunchedEffect(controlsVisible, controlsVersion, flags.topMenuTimeoutSeconds) {
