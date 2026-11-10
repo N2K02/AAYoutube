@@ -9,16 +9,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,8 +37,13 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun CarVideoViewportPreview() {
     var selected by remember { mutableIntStateOf(1) }
+    var dashboard by remember { mutableStateOf(false) }
     val preset = CarVideoViewportPolicy.presets[selected]
-    val video = CarVideoViewportPolicy.fit16by9(preset.width, preset.height)
+    val insetLeft = if (dashboard) preset.width * 3 / 10 else 0
+    val insetTop = if (dashboard) preset.height / 12 else 0
+    val video = CarVideoViewportPolicy.fit16by9(
+        preset.width, preset.height, insetLeft = insetLeft, insetTop = insetTop
+    )
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
@@ -61,6 +69,11 @@ internal fun CarVideoViewportPreview() {
                     }
                 }
             }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Simulate dashboard side panel", style = MaterialTheme.typography.bodySmall)
+                Switch(checked = dashboard, onCheckedChange = { dashboard = it })
+            }
             BoxWithConstraints(
                 Modifier.fillMaxWidth()
                     .aspectRatio(preset.width.toFloat() / preset.height.toFloat())
@@ -68,8 +81,17 @@ internal fun CarVideoViewportPreview() {
                     .background(Color.Black)
             ) {
                 val scale = minOf(maxWidth.value / preset.width, maxHeight.value / preset.height)
+                if (dashboard) Box(
+                    Modifier.align(Alignment.TopStart)
+                        .size((insetLeft * scale).dp, maxHeight)
+                        .background(Color.DarkGray)
+                ) {
+                    Text("Host panel", modifier = Modifier.align(Alignment.Center),
+                        style = MaterialTheme.typography.labelSmall, color = Color.White)
+                }
                 Box(
-                    Modifier.align(Alignment.Center)
+                    Modifier.align(Alignment.TopStart)
+                        .offset(x = (video.left * scale).dp, y = (video.top * scale).dp)
                         .size((video.width * scale).dp, (video.height * scale).dp)
                         .background(Color.DarkGray)
                 ) {
@@ -89,6 +111,7 @@ internal fun CarVideoViewportPreview() {
             }
             Text(
                 "Video area: ${video.width}×${video.height} at ${video.left},${video.top}. " +
+                    "Simulated insets: left=$insetLeft top=$insetTop. " +
                     "Geometry preview only — not an actual mirrored or decoded video frame.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
