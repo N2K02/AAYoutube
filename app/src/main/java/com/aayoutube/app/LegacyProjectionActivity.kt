@@ -120,6 +120,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // the view: otherwise music/media callbacks remain attached to a
         // stopped instance until another lifecycle event happens.
         WebHost.showOnCar(true, carToken)
+        ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
+        if (experimentalVideoEnabled) CarWindowPixelProbe.register(carToken) {
+            CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+        }
         WebHost.onCarQuit = carQuitCallback
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
         else BrowseHost.resume()
@@ -172,6 +176,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 if (experimentalRepairs >= ExperimentalCarVideoPolicy.MAX_REBINDS) {
                     status = "Fallback: rebind budget exhausted"
                     experimentalVideoEnabled = false
+                    CarWindowPixelProbe.unregister(carToken)
                     ExperimentalCarVideoMonitor.fallback(carToken, "rebind budget exhausted")
                 } else {
                     experimentalRepairs++
@@ -182,6 +187,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     }.onFailure {
                         status = "Fallback: rebind failed"
                         experimentalVideoEnabled = false
+                        CarWindowPixelProbe.unregister(carToken)
                         ExperimentalCarVideoMonitor.fallback(carToken,
                             "rebind failed (" + it.javaClass.simpleName + ")")
                     }
@@ -664,6 +670,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
         if (!registered || !WebHost.isActiveCarHost(carToken)) return
         ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
+        if (experimentalVideoEnabled) CarWindowPixelProbe.register(carToken) {
+            CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+        }
         WebHost.showOnCar(true, carToken)
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
         else BrowseHost.resume()
@@ -753,6 +762,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         carStarted = false
         handler.removeCallbacksAndMessages(null)
+        CarWindowPixelProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         lastWidth = 0
         lastHeight = 0
@@ -778,6 +788,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onDestroy() {
         AppLog.add("CAR", "Video projection onDestroy")
+        CarWindowPixelProbe.unregister(carToken)
         ExperimentalCarVideoMonitor.end(carToken)
         carStarted = false
         if (WebHost.requestLink === relink) {
