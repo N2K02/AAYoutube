@@ -188,7 +188,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 }
             }
             val visible = android.graphics.Rect()
-            if (frame != null && !frame.getGlobalVisibleRect(visible)) visible.setEmpty()
+            // Host insets may clip the projected View. Local coordinates let
+            // the 16:9 diagnostic fit use the same origin as frame.width/height.
+            if (frame != null && !frame.getLocalVisibleRect(visible)) visible.setEmpty()
             ExperimentalCarVideoMonitor.check(
                 owner = carToken,
                 state = status,
