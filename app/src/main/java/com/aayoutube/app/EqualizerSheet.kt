@@ -47,8 +47,8 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
     var showDiagnostics by remember { mutableStateOf(false) }
     val shortStatus = when {
         !s.enabled -> "Off"
-        audio.running && audio.sessionScoped -> "Active · AAYouTube session"
-        audio.running -> "Active · system mix"
+        audio.running && audio.sessionScoped -> "EQ initialized · app session"
+        audio.running -> "EQ initialized · system mix"
         !playback.playing -> "Waiting for playback"
         tracking.granted && tracking.scans > 0 && tracking.sessionId == null ->
             "No compatible audio session"
