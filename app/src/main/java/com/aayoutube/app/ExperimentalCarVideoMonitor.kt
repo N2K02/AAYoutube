@@ -86,6 +86,8 @@ internal object ExperimentalCarVideoMonitor {
         monotonicMs: Long = 0L,
         positionSeconds: Double? = null,
         hasVideo: Boolean = true,
+        readyState: Int = 4,
+        seeking: Boolean = false,
     ) {
         if (_state.value.owner != owner || !_state.value.active || !_state.value.enabled) return
         val sample = CarVideoFrameSample(
@@ -97,6 +99,8 @@ internal object ExperimentalCarVideoMonitor {
             positionSeconds = positionSeconds?.takeIf { it.isFinite() },
             width = width,
             height = height,
+            readyState = readyState,
+            seeking = seeking,
         )
         val health = CarVideoFrameHealthPolicy.classify(previousFrame, sample)
         // Resume from a new baseline after video transitions, position seeks,
