@@ -239,7 +239,6 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             frame.isFocusableInTouchMode = true
             frame.requestFocus()
             scheduleRenderProbes()
-            scheduleExperimentalRecovery()
         }
         val display = frame.display?.displayId ?: -1
         val childDisplay = player.display?.displayId ?: -1
@@ -437,7 +436,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                 override fun onViewAttachedToWindow(v: View) {
                                     AppLog.add("CAR", "Car frame attached display=" +
                                         (frame.display?.displayId ?: -1))
-                                    if (playerContainer === frame) bindVideoToCarFrame(frame)
+                                    if (playerContainer === frame) {
+                                        bindVideoToCarFrame(frame)
+                                        scheduleExperimentalRecovery()
+                                    }
                                 }
                                 override fun onViewDetachedFromWindow(v: View) {
                                     AppLog.add("CAR", "Car frame detached")
