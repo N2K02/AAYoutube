@@ -888,6 +888,7 @@ fun FeaturesPage() {
 @Composable
 fun ExperimentalVideoPage() {
     val flags by Features.state.collectAsState()
+    val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -916,11 +917,49 @@ fun ExperimentalVideoPage() {
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         }
+        CarVideoViewportPreview()
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Car video diagnostics", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    diagnostics.state,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "Connection: " + if (diagnostics.active) "active" else "inactive",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Mode: " + if (diagnostics.enabled) "experimental" else "standard",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Checks: ${diagnostics.checks}  ·  Repairs: ${diagnostics.repairs}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Display ID: ${diagnostics.displayId}  ·  Frame: ${diagnostics.frameSize}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "WebView: ${diagnostics.playerSize}  ·  Visible: ${diagnostics.visibleArea}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Expected 16:9 region: ${diagnostics.referenceVideoArea}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         Text(
-            "The standard video projection stays the default and is the fallback. " +
-                "This initial experiment adds surface checks, not AnyAuto's virtual-display " +
-                "or Shizuku rendering backend. Music, steering-wheel buttons and the " +
-                "phone player are unchanged. Check Settings > Logs for CAR events.",
+            "Standard projection is always the fallback. This experiment adds " +
+                "bounded surface recovery and diagnostics, not AnyAuto's virtual-display " +
+                "or Shizuku backend. Music and steering-wheel controls are unchanged. " +
+                "Detailed CAR messages are available in Android logcat (AAYouTube-CAR).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
