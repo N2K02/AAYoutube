@@ -518,6 +518,8 @@ object WebHost {
                     dropped:v?(v.webkitDroppedFrameCount||0):0,
                     t:v?Math.round(v.currentTime):null,
                     paused:v?v.paused:null,
+                    videoReady:v?v.readyState:0,
+                    seeking:v?v.seeking:false,
                     vis:v?getComputedStyle(v).visibility:null,
                     hidden:hidden,
                     car:document.documentElement.classList.contains('aay-car'),
@@ -548,6 +550,8 @@ object WebHost {
                     positionSeconds = info.optDouble("t", Double.NaN)
                         .takeIf { it.isFinite() },
                     hasVideo = info.optBoolean("hasVideo", false),
+                    readyState = info.optInt("videoReady", 0),
+                    seeking = info.optBoolean("seeking", false),
                 )
             }.onFailure {
                 AppLog.add("CAR", "Experimental decoder probe unavailable: " +
