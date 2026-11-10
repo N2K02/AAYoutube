@@ -137,15 +137,10 @@ internal object GlobalAudioEffects {
         }
         if (!playing) {
             AudioSessionDiscovery.stop()
-            // Never leave deprecated global-mix effects active after playback
-            // stops: they could change audio from unrelated apps.
-            runCatching { equalizer?.enabled = false }
-            runCatching { bassBoost?.enabled = false }
-            runCatching { virtualizer?.enabled = false }
+            // Release handles on pause, not just disable them. Otherwise
+            // session-0 effects can keep ownership across car/phone handoff.
+            releaseEffects()
             _status.value = AudioFxStatus(
-                equalizerAvailable = equalizer != null,
-                bassAvailable = bassBoost != null,
-                virtualizerAvailable = virtualizer != null,
                 message = "Waiting for YouTube audio playback",
             )
             logOutcome("native EQ idle: Chromium audio paused")
