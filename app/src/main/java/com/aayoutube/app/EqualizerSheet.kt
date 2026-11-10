@@ -116,8 +116,7 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                     if (tracking.granted)
                         "Player tracking: ADB enabled"
                     else
-                        "Enable player tracking: adb shell pm grant " +
-                            "com.aayoutube.app android.permission.DUMP",
+                        "Enable player tracking: adb shell pm grant com.aayoutube.app android.permission.DUMP",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
