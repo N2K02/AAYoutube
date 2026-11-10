@@ -36,7 +36,8 @@ class AppHeaderPolicyTest {
     fun headerReturnsWhenImmersiveModeEnds() {
         assertFalse(showAAYoutubeHeader(true, false, true, false))
         assertTrue(showAAYoutubeHeader(true, false, false, false))
-        assertFalse(showAAYoutubeHeader(true, false, false, true))
+        // Fullscreen keeps the touch-to-show menu; only PiP hides it.
+        assertTrue(showAAYoutubeHeader(true, false, false, true))
         assertTrue(showAAYoutubeHeader(true, false, false, false))
     }
 }
