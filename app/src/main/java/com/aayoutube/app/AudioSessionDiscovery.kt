@@ -130,7 +130,14 @@ internal object AudioSessionDiscovery {
                 val success = readable
                 main.post {
                     processing = false
-                    if (!active || serial != generation) return@post
+                    if (serial != generation) {
+                        // A car/phone host may stop and immediately restart
+                        // tracking while the prior dumpsys command is exiting.
+                        // Do not strand the new owner without a fresh scan.
+                        if (active) scan()
+                        return@post
+                    }
+                    if (!active) return@post
                     val previous = _status.value.sessionId
                     _status.value = SessionDiscoveryStatus(
                         granted = true,
