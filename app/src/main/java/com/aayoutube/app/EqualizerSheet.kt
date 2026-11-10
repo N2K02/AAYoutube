@@ -42,7 +42,6 @@ import kotlin.math.roundToInt
 internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val s by AAYSoundFx.settings.collectAsState()
     val audio by GlobalAudioEffects.status.collectAsState()
-    val tracking by AudioSessionDiscovery.status.collectAsState()
     val playback by WebHost.snapshot.collectAsState()
     val webAudio by AAYSoundFx.webAudio.collectAsState()
     val latency by AAYSoundFx.latencyMs.collectAsState()
@@ -54,12 +53,8 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
         inPlayer -> "Active · in-player mRadio DSP"
         !fallback && !playback.playing -> "Waiting for playback"
         !fallback -> "Connecting to player audio"
-        audio.running && audio.sessionScoped -> "EQ initialized · app session"
         audio.running -> "EQ initialized · system mix"
         !playback.playing -> "Waiting for playback"
-        tracking.granted && tracking.scans > 0 && tracking.sessionId == null ->
-            "No compatible audio session"
-        tracking.granted && tracking.sessionId == null -> "Searching for player audio"
         else -> "Audio effect unavailable"
     }
     ModalBottomSheet(
@@ -121,25 +116,6 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
                 )
                 if (fallback) Text(
                     audio.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (fallback) Text(
-                    tracking.message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (fallback) Text(
-                    "Session checks: ${tracking.scans} · own-player rows: " +
-                        "${tracking.ownPlayerRows} · last: ${tracking.lastDurationMs} ms",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (fallback) Text(
-                    if (tracking.granted)
-                        "Player tracking: ADB enabled"
-                    else
-                        "Enable player tracking: adb shell pm grant com.aayoutube.app android.permission.DUMP",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

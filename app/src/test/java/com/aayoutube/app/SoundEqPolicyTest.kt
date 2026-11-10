@@ -84,7 +84,7 @@ class SoundEqPolicyTest {
         assertTrue(adapter.contains("Equalizer(0, selectedSession)"))
         assertTrue(adapter.contains("BassBoost(0, selectedSession)"))
         assertTrue(adapter.contains("Virtualizer(0, selectedSession)"))
-        assertTrue(adapter.contains("if (selectedSession == null)"))
+        assertTrue(adapter.contains("val selectedSession = 0"))
         assertTrue(adapter.contains("if (!settings.enabled)"))
         assertTrue(adapter.contains("if (!playing)"))
         assertTrue(adapter.contains("effect.hasControl()"))

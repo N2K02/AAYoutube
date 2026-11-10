@@ -22,11 +22,13 @@ class EqualizerDiagnosticPolicyTest {
         assertFalse(ui.contains("Experimental output-mix EQ for YouTube when Android permits it"))
         assertFalse(ui.contains("Concert hall, Cinema and 8D orbit require"))
         assertFalse(ui.contains("Strong positive EQ levels can clip"))
-        assertTrue(ui.contains("AudioSessionDiscovery.status.collectAsState()"))
+        // No ADB grant: the in-player DSP needs no DUMP-based session tracking.
+        assertFalse(ui.contains("adb shell"))
+        assertFalse(ui.contains("AudioSessionDiscovery"))
     }
 
     @Test fun equalizerWritesNoLogs() {
-        listOf("AAYSoundFx.kt", "GlobalAudioEffects.kt", "AudioSessionDiscovery.kt",
+        listOf("AAYSoundFx.kt", "GlobalAudioEffects.kt",
             "WebAudioEqPolicy.kt", "EqualizerSheet.kt").forEach {
             val code = src("app/src/main/java/com/aayoutube/app/$it")
             assertFalse(it, code.contains("AppLog.add(\"EQ\""))
@@ -38,6 +40,11 @@ class EqualizerDiagnosticPolicyTest {
         val js = src("app/src/main/assets/aay_eq.js")
         assertFalse(js.contains("console."))
         val manifest = src("app/src/main/AndroidManifest.xml")
+        assertFalse(manifest.contains("android.permission.DUMP"))
+        listOf("AudioSessionDiscovery.kt", "AudioSessionCandidatePolicy.kt").forEach {
+            val path = "app/src/main/java/com/aayoutube/app/$it"
+            assertFalse(it, File(path).isFile || File("../$path").isFile)
+        }
         assertTrue(manifest.contains("android:process=\":web\""))
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
     }

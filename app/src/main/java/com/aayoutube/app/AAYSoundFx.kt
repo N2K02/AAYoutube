@@ -52,7 +52,6 @@ internal object AAYSoundFx {
                 preset = data.optString("preset", "Custom"),
             ))
         }.getOrDefault(SoundEqSettings())
-        AudioSessionDiscovery.init(context)
         GlobalAudioEffects.refresh(_settings.value)
     }
 

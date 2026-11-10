@@ -24,7 +24,6 @@ internal data class AudioFxStatus(
     val equalizerAvailable: Boolean = false,
     val bassAvailable: Boolean = false,
     val virtualizerAvailable: Boolean = false,
-    val sessionScoped: Boolean = false,
     val message: String = "Equalizer is off",
 )
 
@@ -77,28 +76,12 @@ internal object GlobalAudioEffects {
         main.post(applyTask)
     }
 
-    /** Called only when the own-UID system dump yields a unique active session. */
-    fun onVerifiedSessionChanged(sessionId: Int?) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post { onVerifiedSessionChanged(sessionId) }
-            return
-        }
-        if (!settings.enabled || !playing || !nativeAllowed ||
-            !AudioSessionDiscovery.hasPermission()) return
-        if (attachedSession != sessionId) {
-            releaseEffects()
-        }
-        main.removeCallbacks(applyTask)
-        main.post(applyTask)
-    }
-
     fun release() {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             main.post { release() }
             return
         }
         main.removeCallbacks(applyTask)
-        AudioSessionDiscovery.stop()
         playing = false
         // Preserve the opt-in preference across WebView recreation. Only
         // retire the native effect handles and playback state.
@@ -132,13 +115,11 @@ internal object GlobalAudioEffects {
 
     private fun applyNow() {
         if (!settings.enabled) {
-            AudioSessionDiscovery.stop()
             releaseEffects()
             _status.value = AudioFxStatus(message = "Equalizer is off")
             return
         }
         if (!nativeAllowed) {
-            AudioSessionDiscovery.stop()
             releaseEffects()
             _status.value = AudioFxStatus(
                 message = "mRadio DSP runs inside the YouTube player; native effects not used",
@@ -146,7 +127,6 @@ internal object GlobalAudioEffects {
             return
         }
         if (!playing) {
-            AudioSessionDiscovery.stop()
             // Release handles on pause, not just disable them. Otherwise
             // session-0 effects can keep ownership across car/phone handoff.
             releaseEffects()
@@ -155,25 +135,9 @@ internal object GlobalAudioEffects {
             )
             return
         }
-        // With ADB-granted DUMP we target ONLY a uniquely verified active
-        // AAYouTube session. If discovery is ambiguous or inaccessible,
-        // fail closed instead of silently falling back to system-wide EQ.
-        // Without the optional grant retain the user's legacy mode.
-        val targeting = AudioSessionDiscovery.hasPermission()
-        val selectedSession = if (targeting) {
-            AudioSessionDiscovery.start()
-            AudioSessionDiscovery.status.value.sessionId
-        } else {
-            AudioSessionDiscovery.stop()
-            0
-        }
-        if (selectedSession == null) {
-            releaseEffects()
-            _status.value = AudioFxStatus(
-                message = AudioSessionDiscovery.status.value.message,
-            )
-            return
-        }
+        // Native fallback only: Chromium does not expose its audio session,
+        // so effects attach to the legacy global output mix (session 0).
+        val selectedSession = 0
         if (attachedSession != selectedSession) releaseEffects()
         if (!attempted) {
             attempted = true
@@ -231,16 +195,9 @@ internal object GlobalAudioEffects {
             equalizerAvailable = eqOkay,
             bassAvailable = bassOkay,
             virtualizerAvailable = virtualOkay,
-            sessionScoped = targeting,
-            message = if (eqOkay && targeting)
-                "Audio effects attached to verified AAYouTube session. " +
-                    "Audible effect and Bluetooth/Android Auto route still need testing."
-            else if (eqOkay)
+            message = if (eqOkay)
                 "Legacy output-mix EQ initialized. It may affect other apps. " +
                     "Actual Chromium/Android Auto routing is not verified."
-            else if (targeting)
-                "AAYouTube session identified, but native audio effects were " +
-                    "not controllable on this route."
             else
                 "Legacy output-mix equalizer unavailable or not controllable " +
                     "on this device. WebView offers no supported PCM attachment.",
