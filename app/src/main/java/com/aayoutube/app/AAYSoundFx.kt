@@ -2,6 +2,8 @@ package com.aayoutube.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -17,6 +19,14 @@ internal object AAYSoundFx {
     private var prefs: SharedPreferences? = null
     private val _settings = MutableStateFlow(SoundEqSettings())
     val settings: StateFlow<SoundEqSettings> = _settings
+
+    // Coalesce rapid slider events: log the final curve after inactivity.
+    private val diagnosticsHandler = Handler(Looper.getMainLooper())
+    private val reportSettings = Runnable {
+        AppLog.add("EQ", "settings " +
+            EqualizerDiagnosticPolicy.settingSummary(_settings.value))
+    }
+    private var lastPlayback: Boolean? = null
 
     fun init(context: Context) {
         if (prefs != null) return
@@ -37,11 +47,14 @@ internal object AAYSoundFx {
             ))
         }.getOrDefault(SoundEqSettings())
         AudioSessionDiscovery.init(context)
+        AppLog.add("EQ", "initialized process=web " +
+            EqualizerDiagnosticPolicy.settingSummary(_settings.value))
         GlobalAudioEffects.refresh(_settings.value)
     }
 
     fun update(change: (SoundEqSettings) -> SoundEqSettings) {
         val safe = SoundEqPolicy.safe(change(_settings.value))
+        if (safe == _settings.value) return
         _settings.value = safe
         prefs?.edit()?.putString("v1", JSONObject()
             .put("enabled", safe.enabled)
@@ -52,6 +65,8 @@ internal object AAYSoundFx {
             .put("preset", safe.preset)
             .toString())?.apply()
         GlobalAudioEffects.refresh(safe)
+        diagnosticsHandler.removeCallbacks(reportSettings)
+        diagnosticsHandler.postDelayed(reportSettings, 300L)
     }
 
     fun setBand(index: Int, db: Float) =
@@ -64,11 +79,18 @@ internal object AAYSoundFx {
 
     /** Called from existing WebView playback reports, never from media service. */
     fun onPlaybackChanged(playing: Boolean) {
+        if (lastPlayback != playing) {
+            lastPlayback = playing
+            AppLog.add("EQ", "chromium playback=$playing")
+        }
         GlobalAudioEffects.playback(playing)
     }
 
     /** Disables output-mix effects when the WebView is stopped or quitting. */
     fun shutdown() {
+        diagnosticsHandler.removeCallbacks(reportSettings)
+        lastPlayback = null
+        AppLog.add("EQ", "web player released; native effects stopped")
         GlobalAudioEffects.release()
     }
 }
