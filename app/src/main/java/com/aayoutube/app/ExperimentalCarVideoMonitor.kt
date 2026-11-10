@@ -21,6 +21,10 @@ internal data class ExperimentalCarVideoStatus(
     val playerSize: String = "—",
     val visibleArea: String = "—",
     val referenceVideoArea: String = "—",
+    val decodedFrames: Int = -1,
+    val droppedFrames: Int = -1,
+    val decoderSize: String = "—",
+    val decoderPaused: Boolean? = null,
 )
 
 internal object ExperimentalCarVideoMonitor {
@@ -64,9 +68,24 @@ internal object ExperimentalCarVideoMonitor {
             "16:9=${expected.width}x${expected.height}")
     }
 
+    /** Observability only: decoded frames are not proof that the head unit paints them. */
+    fun decoder(owner: String, decoded: Int, dropped: Int, width: Int, height: Int, paused: Boolean?) {
+        if (_state.value.owner != owner || !_state.value.active) return
+        _state.value = _state.value.copy(
+            decodedFrames = decoded,
+            droppedFrames = dropped,
+            decoderSize = "${width}×${height}",
+            decoderPaused = paused,
+        )
+        AppLog.add("CAR", "Experimental video decoder frames=$decoded dropped=$dropped " +
+            "size=${width}x${height} paused=$paused")
+    }
+
     fun fallback(owner: String, reason: String) {
         if (_state.value.owner != owner || !_state.value.active) return
-        _state.value = _state.value.copy(state = "Standard fallback: $reason")
+        _state.value = _state.value.copy(
+            state = "Standard fallback: $reason", enabled = false
+        )
         AppLog.add("CAR", "Experimental video fallback: $reason")
     }
 
