@@ -896,6 +896,7 @@ fun ExperimentalVideoPage() {
     val flags by Features.state.collectAsState()
     val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
     val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
+    val carWindowProbe by CarWindowPixelProbe.state.collectAsState()
     val context = LocalContext.current
     DisposableEffect(Unit) {
         onDispose { CarVirtualDisplayProbe.cancel() }
@@ -1007,9 +1008,35 @@ fun ExperimentalVideoPage() {
                     OutlinedButton(onClick = {
                         WebHost.logCarRenderProbe()
                         AppLog.add("CAR", "User requested manual render probe")
-                    }) {
-                        Text("Check video rendering")
+                    }, enabled = diagnostics.enabled) {
+                        Text("Check decoder health")
                     }
+                    Text(
+                        "Car-window pixels: " + carWindowProbe.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (carWindowProbe.darkPercent != null) {
+                        Text(
+                            "Dark pixels: ${carWindowProbe.darkPercent}% · " +
+                                "Brightness range: ${carWindowProbe.brightnessRange ?: 0}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { CarWindowPixelProbe.request() },
+                        enabled = diagnostics.enabled && carWindowProbe.available &&
+                            !carWindowProbe.running,
+                    ) {
+                        Text(if (carWindowProbe.running) "Checking…" else "Check car-window pixels")
+                    }
+                    Text(
+                        "This manual test reads only a tiny, temporary car-window sample. " +
+                            "No image is saved. Dark pixels may be normal video, and a " +
+                            "successful sample does not prove the head unit displays it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
