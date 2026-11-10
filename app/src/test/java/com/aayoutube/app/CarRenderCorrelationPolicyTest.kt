@@ -50,8 +50,21 @@ class CarRenderCorrelationPolicyTest {
             evidence(windowBuffer = true, windowSeen = true,
                 surfaceBuffer = true, surfaceSeen = true))
         assertEquals(CarRenderFinding.SYNTHETIC_LAYERS_OBSERVED, observed.finding)
-        assertTrue(observed.nextStep.contains("does not prove video paint"))
+        assertTrue(observed.nextStep.contains("physical video paint remains unverified"))
         assertFalse(observed.summary.contains("YouTube works"))
+    }
+
+    @Test fun suspectedDecoderStallsRemainSeparateFromCarLayerSuccess() {
+        val stalled = evidence(windowBuffer = true, windowSeen = true,
+            surfaceBuffer = true, surfaceSeen = true).copy(
+            frameHealth = "decoder stall suspected")
+        val report = CarRenderCorrelationPolicy.assess(stalled)
+        assertEquals(CarRenderFinding.DECODER_STALL_SUSPECTED, report.finding)
+        assertTrue(report.nextStep.contains("Repeat Check decoder health"))
+        val playbackStall = CarRenderCorrelationPolicy.assess(
+            stalled.copy(frameHealth = "playback stall suspected"))
+        assertEquals(CarRenderFinding.DECODER_STALL_SUSPECTED,
+            playbackStall.finding)
     }
 
     @Test fun negativePixelCopyWithVisibleCarImageIsInconclusive() {
