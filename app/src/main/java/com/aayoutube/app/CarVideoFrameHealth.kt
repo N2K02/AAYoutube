@@ -16,11 +16,14 @@ internal data class CarVideoFrameSample(
     val positionSeconds: Double?,
     val width: Int,
     val height: Int,
+    val readyState: Int = 4,
+    val seeking: Boolean = false,
 )
 
 internal enum class CarVideoFrameHealth {
     NO_VIDEO,
     PAUSED,
+    BUFFERING_OR_SEEKING,
     AWAITING_BASELINE,
     TOO_SOON,
     COUNTER_RESET,
@@ -40,7 +43,12 @@ internal object CarVideoFrameHealthPolicy {
         if (!current.hasVideo || current.width <= 0 || current.height <= 0)
             return CarVideoFrameHealth.NO_VIDEO
         if (current.paused != false) return CarVideoFrameHealth.PAUSED
-        if (previous == null || !previous.hasVideo || previous.paused != false)
+        // YouTube may keep paused=false while fetching its next segment.
+        // Do not report decoder stalls until the video is actually ready.
+        if (current.readyState < 3 || current.seeking)
+            return CarVideoFrameHealth.BUFFERING_OR_SEEKING
+        if (previous == null || !previous.hasVideo || previous.paused != false ||
+            previous.readyState < 3 || previous.seeking)
             return CarVideoFrameHealth.AWAITING_BASELINE
         val elapsed = current.monotonicMs - previous.monotonicMs
         if (elapsed < 0) return CarVideoFrameHealth.COUNTER_RESET
