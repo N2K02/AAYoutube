@@ -138,8 +138,11 @@ internal object AudioSessionDiscovery {
                         }
                     }
                 }
+                // A dump may finish slightly after its stdout closes.
+                // Do not report an unavailable session just because process
+                // teardown took longer than 150 ms on a busy Android device.
                 readable = !truncated &&
-                    p.waitFor(150, TimeUnit.MILLISECONDS) && p.exitValue() == 0
+                    p.waitFor(500, TimeUnit.MILLISECONDS) && p.exitValue() == 0
                 if (readable) {
                     candidate = AudioSessionCandidatePolicy.select(
                         owned.asSequence(), Process.myUid())
