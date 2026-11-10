@@ -81,6 +81,22 @@ internal object CarVideoPatternProbe {
         main.postDelayed(task, CarVideoPatternPolicy.DURATION_MS)
     }
 
+    /** If playback resumes mid-test, reveal the video immediately. */
+    fun stopForPlayback(owner: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { stopForPlayback(owner) }
+            return
+        }
+        if (_state.value.owner != owner || !_state.value.visible) return
+        hide?.let { main.removeCallbacks(it) }
+        hide = null
+        _state.value = _state.value.copy(
+            visible = false, awaitingFeedback = false,
+            message = "Display test stopped when playback resumed",
+        )
+        AppLog.add("CAR", "Car test pattern removed: video playback resumed")
+    }
+
     fun reportSeen(seen: Boolean) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             main.post { reportSeen(seen) }
