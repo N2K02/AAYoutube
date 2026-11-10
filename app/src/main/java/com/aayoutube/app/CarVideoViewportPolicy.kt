@@ -24,6 +24,30 @@ internal object CarVideoViewportPolicy {
         CarVideoPreset("1024×600", 1024, 600),
     )
 
+    /**
+     * Diagnostic-only fit within the actually visible part of a car view.
+     * Input coordinates are LOCAL to the FrameLayout, not absolute screen
+     * coordinates. An absent, clipped-out or inconsistent rectangle falls
+     * back to the full view rather than producing negative insets.
+     */
+    fun fitVisible16by9(
+        width: Int, height: Int, visible: CarVideoBounds,
+    ): CarVideoBounds {
+        val right = visible.left.toLong() + visible.width
+        val bottom = visible.top.toLong() + visible.height
+        if (width <= 0 || height <= 0 ||
+            visible.width <= 0 || visible.height <= 0 ||
+            visible.left < 0 || visible.top < 0 ||
+            right > width.toLong() || bottom > height.toLong()
+        ) return fit16by9(width, height)
+        return fit16by9(width, height,
+            insetLeft = visible.left,
+            insetTop = visible.top,
+            insetRight = (width.toLong() - right).toInt(),
+            insetBottom = (height.toLong() - bottom).toInt(),
+        )
+    }
+
     /** Letterbox a 16:9 video inside the supplied safe viewport. */
     fun fit16by9(
         width: Int,
