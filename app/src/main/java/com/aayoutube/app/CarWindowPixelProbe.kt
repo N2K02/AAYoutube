@@ -48,6 +48,12 @@ internal object CarWindowPixelProbe {
         }
         if (ExperimentalCarVideoMonitor.state.value.owner != owner ||
             !ExperimentalCarVideoMonitor.state.value.enabled) return
+        if (activeOwner != owner) {
+            // A replacement CarActivity may become active BEFORE the previous
+            // one's onStop. Drop its in-flight request without recycling the
+            // bitmap while PixelCopy may still be using it.
+            clearPending("Previous car-window sample superseded")
+        }
         activeOwner = owner
         carCapture = capture
         _state.value = CarWindowPixelProbeStatus(
