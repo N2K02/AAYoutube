@@ -171,7 +171,7 @@ class WebAudioEqPolicyTest {
         assertTrue(js.contains("last[0] === v"))
         // Mono YouTube streams must reach both ears (the splitter does not upmix).
         assertTrue(js.contains("g.input.channelCountMode = 'explicit'"))
-        assertTrue(js.contains("N.eqStatus(s)"))
+        assertTrue(js.contains("N.eqStatus(msg)"))
     }
 
     @Test fun hostInjectsGraphPushesSettingsAndGatesNativeEffects() {
