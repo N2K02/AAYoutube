@@ -895,6 +895,11 @@ fun FeaturesPage() {
 fun ExperimentalVideoPage() {
     val flags by Features.state.collectAsState()
     val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
+    val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        onDispose { CarVirtualDisplayProbe.cancel() }
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -924,6 +929,30 @@ fun ExperimentalVideoPage() {
             )
         }
         CarVideoViewportPreview()
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Synthetic virtual-display test",
+                    style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Checks whether Android can draw a test pattern into a private " +
+                        "virtual display, without launching YouTube or using Shizuku. " +
+                        "This is not Android Auto video rendering.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(virtualProbe.message, style = MaterialTheme.typography.bodyMedium)
+                Button(
+                    onClick = { CarVirtualDisplayProbe.start(context) },
+                    enabled = flags.experimentalVideo && !diagnostics.active && !virtualProbe.running,
+                ) { Text(if (virtualProbe.running) "Checking…" else "Test virtual display") }
+                if (diagnostics.active) Text(
+                    "Disconnect Android Auto video before running this isolated test.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Card(Modifier.fillMaxWidth()) {
             Column(
                 Modifier.padding(16.dp),
