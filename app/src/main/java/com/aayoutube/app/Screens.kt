@@ -92,6 +92,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
@@ -660,10 +661,21 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
                 else -> Modifier.fillMaxSize()
             }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
+            // Smooth mode changes (mini, expand, landscape fill) with a short fade. The
+            // WebView is resized once, never per frame: animating its size re-lays out
+            // Chromium's video on every frame and stalls the decoder.
+            val fade = remember { Animatable(1f) }
+            var fadeArmed by remember { mutableStateOf(false) }
+            LaunchedEffect(small, hidden, landFill) {
+                if (!fadeArmed) { fadeArmed = true; return@LaunchedEffect }
+                if (inPip || onCar || projectedToCar) return@LaunchedEffect
+                fade.snapTo(0.25f)
+                fade.animateTo(1f, tween(240))
+            }
             // Do not let a still-resumed phone screen steal the car's player.
             if (!projectedToCar || onCar) key(version) {
                 AndroidView(
-                    modifier = playerMod,
+                    modifier = playerMod.graphicsLayer { alpha = fade.value },
                     factory = { ctx ->
                         val activity = ctx.findActivity()!!
                         FrameLayout(ctx).also { frame ->
@@ -823,6 +835,25 @@ fun FeaturesPage() {
         )
     }
 
+    @Composable
+    fun <T> Choice(title: String, text: String, options: List<T>, selected: T, label: (T) -> String, pick: (T) -> Unit) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(text, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                options.forEach { option ->
+                    if (option == selected) Button(onClick = { pick(option) }) { Text(label(option)) }
+                    else OutlinedButton(onClick = { pick(option) }) { Text(label(option)) }
+                }
+            }
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -844,6 +875,25 @@ fun FeaturesPage() {
             Toggle("Also skip intros and outros", "Adds introductions and end segments to SponsorBlock.", f.sponsorExtra, enabled = f.sponsorBlock) { s, v -> s.copy(sponsorExtra = v) }
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use desktop YouTube. Switching returns to Home and interrupts the current video.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
+        }
+        Text("Player", style = MaterialTheme.typography.titleMedium)
+        Card() {
+            Choice("Playback speed", "Every video starts at this speed.",
+                PlayerPrefsPolicy.speeds, f.playbackSpeed, PlayerPrefsPolicy::speedLabel) { v ->
+                Features.update { it.copy(playbackSpeed = v) }
+            }
+            Toggle("Remember speed", "A speed picked in YouTube's menu becomes the new default.", f.rememberSpeed) { s, v -> s.copy(rememberSpeed = v) }
+            Choice("Double-tap seek", "How far a double tap on the video jumps. 10s is YouTube's own gesture.",
+                PlayerPrefsPolicy.seekSeconds, f.seekSeconds, { "${it}s" }) { v ->
+                Features.update { it.copy(seekSeconds = v) }
+            }
+            Choice("Captions", "Default leaves YouTube's own choice alone.",
+                PlayerPrefsPolicy.captions, f.captions, { o -> o.replaceFirstChar { c -> c.uppercase() } }) { v ->
+                Features.update { it.copy(captions = v) }
+            }
+            Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
+            Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
+            Toggle("Hide end-screen cards", "Removes suggested-video cards over the end of a video.", f.hideEndCards) { s, v -> s.copy(hideEndCards = v) }
         }
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card() {

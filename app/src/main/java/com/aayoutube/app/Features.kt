@@ -39,6 +39,16 @@ data class FeatureFlags(
     val controlsOnLeft: Boolean = false,
     /** Opt-in car-only surface recovery; never changes the media service. */
     val experimentalVideo: Boolean = false,
+    /** Speed every video starts at; a speed picked in YouTube's menu replaces it when remembered. */
+    val playbackSpeed: Float = 1f,
+    val rememberSpeed: Boolean = true,
+    val loopVideo: Boolean = false,
+    /** "default" leaves YouTube's own caption choice alone. */
+    val captions: String = "default",
+    /** Double-tap seek length; 10 is YouTube's own gesture. */
+    val seekSeconds: Int = PlayerPrefsPolicy.YOUTUBE_SEEK_SECONDS,
+    val hideComments: Boolean = false,
+    val hideEndCards: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -51,6 +61,13 @@ data class FeatureFlags(
         .put("sponsorBlock", sponsorBlock)
         .put("sbExtra", sponsorExtra)
         .put("returnDislike", returnDislike)
+        .put("speed", playbackSpeed.toDouble())
+        .put("rememberSpeed", rememberSpeed)
+        .put("loop", loopVideo)
+        .put("captions", captions)
+        .put("seekSeconds", seekSeconds)
+        .put("hideComments", hideComments)
+        .put("hideEndCards", hideEndCards)
 }
 
 /** Saved settings (web process only). */
@@ -90,13 +107,23 @@ object Features {
             ),
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
             experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
+            playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
+            rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
+            loopVideo = prefs.getBoolean("loopVideo", d.loopVideo),
+            captions = PlayerPrefsPolicy.normalizeCaptions(prefs.getString("captions", d.captions)),
+            seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
+            hideComments = prefs.getBoolean("hideComments", d.hideComments),
+            hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
         )
     }
 
     fun update(change: (FeatureFlags) -> FeatureFlags) {
         val n = change(_state.value).let {
             it.copy(topMenuTimeoutSeconds = TopMenuPolicy.normalize(it.topMenuTimeoutSeconds),
-                preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality))
+                preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality),
+                playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(it.playbackSpeed),
+                seekSeconds = PlayerPrefsPolicy.normalizeSeek(it.seekSeconds),
+                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions))
         }
         _state.value = n
         prefs.edit()
@@ -117,6 +144,13 @@ object Features {
             .putInt("topMenuTimeoutSeconds", n.topMenuTimeoutSeconds)
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
             .putBoolean("experimentalVideo", n.experimentalVideo)
+            .putFloat("playbackSpeed", n.playbackSpeed)
+            .putBoolean("rememberSpeed", n.rememberSpeed)
+            .putBoolean("loopVideo", n.loopVideo)
+            .putString("captions", n.captions)
+            .putInt("seekSeconds", n.seekSeconds)
+            .putBoolean("hideComments", n.hideComments)
+            .putBoolean("hideEndCards", n.hideEndCards)
             .apply()
     }
 }

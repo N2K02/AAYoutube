@@ -772,6 +772,17 @@ object WebHost {
         }
     }
 
+    /** A speed the user picked in YouTube's own menu becomes the default, when remembered. */
+    fun requestSpeedFromBridge(rate: Double, generation: Int) {
+        if (!rate.isFinite() || rate < 0.25 || rate > 2.0) return
+        main.post {
+            val speed = PlayerPrefsPolicy.normalizeSpeed(rate.toFloat())
+            if (generation != webGeneration || !Features.current.rememberSpeed ||
+                speed == Features.current.playbackSpeed) return@post
+            Features.update { it.copy(playbackSpeed = speed) }
+        }
+    }
+
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun requestMiniFromBridge(generation: Int) {
         main.post {
@@ -1675,6 +1686,12 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun eqStatus(status: String) {
         WebHost.onJsEqStatus(status, generation)
+    }
+
+    /** Persist only speeds picked by the user in YouTube's menu. */
+    @JavascriptInterface
+    fun speed(rate: Double) {
+        WebHost.requestSpeedFromBridge(rate, generation)
     }
 
     /** Swipe down on the playing video. */

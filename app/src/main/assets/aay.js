@@ -528,6 +528,13 @@
     'display:none!important}' +
     'html.aay-fit:not(.aay-video-only) video.html5-main-video{left:0!important;top:0!important;' +
     'width:100%!important;height:100%!important;object-fit:contain!important}';
+  var CSS_COMMENTS =
+    'ytm-comments-entry-point-header-renderer,ytm-comment-section-renderer,' +
+    'ytm-item-section-renderer[section-identifier="comments-entry-point"],' +
+    'ytm-engagement-panel[panel-identifier*="comment" i]{display:none!important}';
+  var CSS_END_CARDS =
+    '.ytp-ce-element,.ytp-endscreen-content,.ytp-cards-teaser,.ytp-cards-button,' +
+    '.ytp-suggested-action,.ytp-paid-content-overlay,.iv-branding{display:none!important}';
   // Suppress only the muted-autoplay prompt, not normal player volume controls.
   var CSS_UNMUTE =
     '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
@@ -626,6 +633,8 @@
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
+    if (CFG.hideComments) css += CSS_COMMENTS;
+    if (CFG.hideEndCards) css += CSS_END_CARDS;
     if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = 'aay-style'; }
     styleEl.textContent = css;
     var root = document.head || document.documentElement;
@@ -972,6 +981,87 @@
       later(function () { A.applyQuality(); }, 900);
     }
     if (AUTO) tryPlay(v);
+    if (!BROWSE) {
+      applyPlayerPrefs();
+      later(applyPlayerPrefs, 1200); // YouTube resets speed/captions while its player attaches
+    }
+  }
+
+  /* Player preferences from the Features page: speed, loop, captions. */
+  var ownRateAt = 0, userTouchAt = 0;
+  function ytPlayer() {
+    return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+  }
+  function applyPlayerPrefs() {
+    if (BROWSE) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v) return;
+    try { if (v.loop !== !!CFG.loop) v.loop = !!CFG.loop; } catch (e) {}
+    var speed = Number(CFG.speed) || 1;
+    if (!isAd() && v.duration !== Infinity && Math.abs(v.playbackRate - speed) > 0.01) {
+      ownRateAt = Date.now();
+      try {
+        if (p && typeof p.setPlaybackRate === 'function') p.setPlaybackRate(speed);
+        if (Math.abs(v.playbackRate - speed) > 0.01) v.playbackRate = speed;
+      } catch (e) {}
+    }
+    if (CFG.captions === 'on' || CFG.captions === 'off') {
+      try {
+        if (CFG.captions === 'off') {
+          if (p && p.setOption) p.setOption('captions', 'track', {});
+        } else if (p && p.getOption) {
+          if (p.loadModule) p.loadModule('captions');
+          var cur = p.getOption('captions', 'track');
+          var list = p.getOption('captions', 'tracklist') || [];
+          if (!(cur && cur.languageCode) && list.length) p.setOption('captions', 'track', list[0]);
+        }
+      } catch (e) {}
+    }
+  }
+  if (!BROWSE) {
+    document.addEventListener('pointerdown', function (e) {
+      if (e.isTrusted !== false) userTouchAt = Date.now();
+    }, true);
+    // Remember only a speed the user just picked in YouTube's menu, never
+    // YouTube's own resets or the speed this script applied.
+    document.addEventListener('ratechange', function (e) {
+      var v = e.target;
+      if (!v || v.tagName !== 'VIDEO' || !CFG.rememberSpeed || isAd()) return;
+      var now = Date.now();
+      if (now - ownRateAt < 800 || now - userTouchAt > 2500) return;
+      var rate = v.playbackRate;
+      if (!isFinite(rate) || Math.abs(rate - (Number(CFG.speed) || 1)) < 0.01) return;
+      CFG.speed = rate;
+      try { if (N && typeof N.speed === 'function') N.speed(rate); } catch (err) {}
+    }, true);
+
+    // Double-tap seek with a custom length. At YouTube's own 10 s nothing is intercepted.
+    var lastTap = null;
+    document.addEventListener('touchend', function (e) {
+      var secs = Number(CFG.seekSeconds) || 10;
+      if (secs === 10 || A.isMini || A.inPip || A.isCar || e.changedTouches.length !== 1 ||
+          !/^\/(watch|live\/)/.test(location.pathname)) { lastTap = null; return; }
+      var t = e.target, c = e.changedTouches[0];
+      var full = !!(document.fullscreenElement || document.webkitFullscreenElement || A.isLand);
+      if (!t || !t.closest || t.closest('button,a,[role="button"],[role="slider"],' +
+          '.ytp-progress-bar-container,.ytPlayerProgressBarDragContainer') ||
+          !(full || t.closest('.html5-video-player,#player-container-id,#player,ytm-player,' +
+          '#player-control-container,video'))) { lastTap = null; return; }
+      var now = Date.now(), prev = lastTap;
+      lastTap = { x: c.clientX, y: c.clientY, at: now };
+      if (!prev || now - prev.at > 320 || Math.hypot(c.clientX - prev.x, c.clientY - prev.y) > 48) return;
+      lastTap = null;
+      var v = getVideo();
+      if (!v || isAd() || !isFinite(v.duration)) return;
+      var box = v.getBoundingClientRect();
+      var third = box.width / 3;
+      var dir = c.clientX < box.left + third ? -1 : (c.clientX > box.right - third ? 1 : 0);
+      if (!dir) return;
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      v.currentTime = Math.max(0, Math.min(v.duration - 0.5, v.currentTime + dir * secs));
+      schedReport(250);
+    }, { capture: true, passive: false });
   }
 
   /* Preserve playback across a YouTube quality/source replacement.
@@ -1343,6 +1433,7 @@
     var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
+    applyPlayerPrefs();
     if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
       sb.request++;
       sb.id = ''; sb.segs = [];
