@@ -49,6 +49,8 @@ data class FeatureFlags(
     val seekSeconds: Int = PlayerPrefsPolicy.YOUTUBE_SEEK_SECONDS,
     val hideComments: Boolean = false,
     val hideEndCards: Boolean = false,
+    /** av1, vp9 or h264; the default is chosen per device on first start. */
+    val videoCodec: String = "h264",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -68,6 +70,7 @@ data class FeatureFlags(
         .put("seekSeconds", seekSeconds)
         .put("hideComments", hideComments)
         .put("hideEndCards", hideEndCards)
+        .put("videoCodec", videoCodec)
 }
 
 /** Saved settings (web process only). */
@@ -120,6 +123,11 @@ object Features {
             seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
             hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
+            videoCodec = VideoCodecPolicy.normalize(
+                prefs.getString("videoCodec", null) ?: VideoCodecPolicy.deviceDefault().also {
+                    prefs.edit().putString("videoCodec", it).apply()
+                }
+            ),
         )
     }
 
@@ -129,7 +137,8 @@ object Features {
                 preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality),
                 playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(it.playbackSpeed),
                 seekSeconds = PlayerPrefsPolicy.normalizeSeek(it.seekSeconds),
-                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions))
+                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions),
+                videoCodec = VideoCodecPolicy.normalize(it.videoCodec))
         }
         _state.value = n
         prefs.edit()
@@ -157,6 +166,7 @@ object Features {
             .putInt("seekSeconds", n.seekSeconds)
             .putBoolean("hideComments", n.hideComments)
             .putBoolean("hideEndCards", n.hideEndCards)
+            .putString("videoCodec", n.videoCodec)
             .apply()
     }
 }

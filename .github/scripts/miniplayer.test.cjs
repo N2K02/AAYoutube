@@ -109,7 +109,7 @@ function playerPage(options = {}) {
     appendChild(element) { element.parentNode = this; },
   };
   const window = {
-    __AAY_CFG: { backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false },
+    __AAY_CFG: Object.assign({ backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false }, options.cfg || {}),
     __AAY_BROWSE: !!options.browse,
     __AAY_CAR: !!options.car,
     ytcfg: options.signedIn === undefined ? null : {
@@ -136,6 +136,8 @@ function playerPage(options = {}) {
     href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
   };
   const clock = { t: 1_000_000 };
+  class FakeMediaSource { static isTypeSupported() { return true; } }
+  window.MediaSource = FakeMediaSource;
   const FakeDate = class extends Date { static now() { return clock.t; } };
   const context = {
     Date: FakeDate,
@@ -162,6 +164,7 @@ function playerPage(options = {}) {
 
   return {
     domNodes: dom ? dom.nodes : null,
+    MediaSource: FakeMediaSource,
     window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     advance(ms) { clock.t += ms; },
@@ -1057,4 +1060,34 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
   assert.equal(plays, 1, 'throttled');
   p.video.paused = true;
   p.window.__aay.mini(false);
+});
+
+
+test('video format preference hides unwanted formats from YouTube', () => {
+  const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';
+  const AV1 = 'video/mp4; codecs="av01.0.08M.08"', AVC = 'video/mp4; codecs="avc1.4d401f"';
+  const AAC = 'audio/mp4; codecs="mp4a.40.2"', OPUS = 'audio/webm; codecs="opus"';
+  const h264 = playerPage({ cfg: { videoCodec: 'h264' } });
+  const ms = h264.MediaSource;
+  assert.equal(ms.isTypeSupported(VP9), false);
+  assert.equal(ms.isTypeSupported(VP09), false);
+  assert.equal(ms.isTypeSupported(AV1), false);
+  assert.equal(ms.isTypeSupported(AVC), true);
+  assert.equal(ms.isTypeSupported(AAC), true, 'audio is never blocked');
+  assert.equal(ms.isTypeSupported(OPUS), true);
+  assert.equal(h264.qualityStorage.get('yt-player-av1-pref'), '-1');
+
+  const vp9 = playerPage({ cfg: { videoCodec: 'vp9' } });
+  assert.equal(vp9.MediaSource.isTypeSupported(AV1), false);
+  assert.equal(vp9.MediaSource.isTypeSupported(VP9), true);
+
+  const av1 = playerPage({ cfg: { videoCodec: 'av1' } });
+  assert.equal(av1.MediaSource.isTypeSupported(AV1), true);
+  assert.equal(av1.MediaSource.isTypeSupported(VP9), true, 'AV1 prefers, never blocks fallbacks');
+  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '8192');
+
+  // A change in Features applies live (next video).
+  av1.window.__aay.config({ videoCodec: 'h264' });
+  assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
+  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
 });

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.clickable
@@ -876,6 +877,39 @@ fun FeaturesPage() {
         }
     }
 
+    @Composable
+    fun CodecPicker(selected: String, pick: (String) -> Unit) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            ListItem(
+                headlineContent = { Text("Video format") },
+                supportingContent = {
+                    Text("AV1 uses the least data (less battery on Wi-Fi and mobile data). " +
+                        "H.264 works best everywhere. Applies from the next video.")
+                },
+                trailingContent = {
+                    OutlinedButton(onClick = { open = true }) { Text(VideoCodecPolicy.label(selected) + "  ▾") }
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+            androidx.compose.material3.DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                modifier = Modifier.align(Alignment.TopEnd),
+            ) {
+                VideoCodecPolicy.options.forEach { option ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(VideoCodecPolicy.label(option)) },
+                        onClick = { open = false; pick(option) },
+                        trailingIcon = if (option == selected) {
+                            { Icon(Icons.Filled.Check, contentDescription = null) }
+                        } else null,
+                    )
+                }
+            }
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -913,6 +947,7 @@ fun FeaturesPage() {
                 PlayerPrefsPolicy.captions, f.captions, { o -> o.replaceFirstChar { c -> c.uppercase() } }) { v ->
                 Features.update { it.copy(captions = v) }
             }
+            CodecPicker(f.videoCodec) { v -> Features.update { it.copy(videoCodec = v) } }
             Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
             Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
             Toggle("Hide end-screen cards", "Removes suggested-video cards over the end of a video.", f.hideEndCards) { s, v -> s.copy(hideEndCards = v) }

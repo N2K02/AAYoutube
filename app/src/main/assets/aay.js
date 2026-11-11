@@ -10,6 +10,57 @@
   if (window.__aay) return;
   if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
 
+  /* Video format preference (Features > Video format): av1, vp9 or h264.
+   * YouTube picks a format from what the browser says it can play, so hide the
+   * formats the user does not want. AV1 is asked for via YouTube's own AV1
+   * preference and blocks nothing: videos without AV1 still play as VP9/H.264.
+   * Read live, so a change applies from the next video. */
+  (function () {
+    var C0 = window.__AAY_CFG || {};
+    function blocked(type) {
+      var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
+      var t = String(type || '').toLowerCase();
+      if (t.indexOf('video/') < 0 && t.indexOf('codecs') < 0) return false;
+      if (c === 'h264') return /vp0?9|vp8|av01/.test(t);
+      if (c === 'vp9') return /av01/.test(t);
+      return false;
+    }
+    try {
+      localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
+    } catch (e) {}
+    function wrapStatic(Ctor) {
+      if (!Ctor || typeof Ctor.isTypeSupported !== 'function' || Ctor.isTypeSupported.__aay) return;
+      var orig = Ctor.isTypeSupported.bind(Ctor);
+      var f = function (type) { return blocked(type) ? false : orig(type); };
+      f.__aay = true;
+      Ctor.isTypeSupported = f;
+    }
+    try { wrapStatic(window.MediaSource); } catch (e) {}
+    try { wrapStatic(window.ManagedMediaSource); } catch (e) {}
+    try {
+      var proto = window.HTMLMediaElement && HTMLMediaElement.prototype;
+      if (proto && typeof proto.canPlayType === 'function' && !proto.canPlayType.__aay) {
+        var origCan = proto.canPlayType;
+        var can = function (type) { return blocked(type) ? '' : origCan.call(this, type); };
+        can.__aay = true;
+        proto.canPlayType = can;
+      }
+    } catch (e) {}
+    try {
+      var mc = navigator.mediaCapabilities;
+      if (mc && typeof mc.decodingInfo === 'function' && !mc.decodingInfo.__aay) {
+        var origInfo = mc.decodingInfo.bind(mc);
+        var info = function (cfg) {
+          var t = cfg && cfg.video && cfg.video.contentType;
+          if (blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
+          return origInfo(cfg);
+        };
+        info.__aay = true;
+        mc.decodingInfo = info;
+      }
+    } catch (e) {}
+  })();
+
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
@@ -1482,11 +1533,13 @@
     schedReport(200);
   };
 
+  A.__cfg = function () { return CFG; };
   A.config = function (c) {
     var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
     applyPlayerPrefs();
+    try { localStorage.setItem('yt-player-av1-pref', CFG.videoCodec === 'av1' ? '8192' : '-1'); } catch (e) {}
     if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
       sb.request++;
       sb.id = ''; sb.segs = [];
