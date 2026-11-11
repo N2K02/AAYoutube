@@ -30,7 +30,7 @@ class AudioOnlyBackgroundTest {
         assertTrue(AudioOnlyPolicy.shouldBreak(true, AudioOnlyPolicy.BREAK_WINDOW_MS))
         assertFalse(AudioOnlyPolicy.shouldBreak(true, AudioOnlyPolicy.BREAK_WINDOW_MS + 1))
         assertFalse("video mode: nothing to break", AudioOnlyPolicy.shouldBreak(false, 1_000L))
-        assertEquals("switches the moment the app leaves the screen", 0L, AudioOnlyPolicy.DELAY_MS)
+        assertEquals(10_000L, AudioOnlyPolicy.DELAY_MS)
     }
 
     @Test fun defaultOnAndPersisted() {
@@ -52,7 +52,7 @@ class AudioOnlyBackgroundTest {
     @Test fun hostSwitchesOffAtOnceAndOnAfterDelay() {
         val h = src("WebHost.kt")
         val r = h.substringAfter("fun refreshAudioOnly(now: Boolean = false) {").substringBefore("/** Circuit breaker")
-        assertTrue(r.indexOf("if (!audioOnlyEligible())") < r.indexOf("w.setAudioOnly(true)"))
+        assertTrue(r.indexOf("if (!audioOnlyEligible())") < r.indexOf("main.postDelayed(audioOnlySoon, AudioOnlyPolicy.DELAY_MS)"))
         assertTrue(r.contains("if (w.audioOnly) w.setAudioOnly(false)"))
         // Every visibility/PiP/car transition already calls refreshBackgroundQuality().
         assertTrue(h.substringAfter("fun refreshBackgroundQuality() {").substringBefore("}").contains("refreshAudioOnly()"))
