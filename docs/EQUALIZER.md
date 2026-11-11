@@ -17,8 +17,8 @@ Audio graph on YouTube's own `<video>` element inside the WebView:
 30 ms smoothing. All six mRadio 3D modes work. Only built-in nodes are used
 (no AudioWorklet module or ScriptProcessor), so YouTube's CSP cannot block
 it and DSP runs on Chromium's audio thread. Mono streams are upmixed to
-stereo like mRadio. Reverb is a generated convolution tail whose decay
-follows mRadio's comb feedback/damping, not a sample-exact Freeverb; 8D
+stereo like mRadio. Reverb is four damped feedback combs (mRadio/Freeverb
+style), about 5x cheaper than the earlier convolution reverb; 8D
 uses level panning without mRadio's small inter-ear delay and rear muffling.
 
 Safety rules in the page script:

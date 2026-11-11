@@ -20,7 +20,7 @@
   window.__aayEqInstalled = true;
   var C = window.AudioContext || window.webkitAudioContext;
   // cfg holds live settings only, pushed by the app (never a stale install-time copy).
-  var EQ = { cfg: null, ctx: null, g: null, hooked: new WeakSet(), els: [], count: 0, status: '', ir: '', idle: false, idleTimer: 0, latency: -1 };
+  var EQ = { cfg: null, ctx: null, g: null, hooked: new WeakSet(), els: [], count: 0, status: '', idle: false, idleTimer: 0, latency: -1 };
 
   // Added output delay of the routed path, so lip-sync can be checked in Details.
   function latencyMs() {
@@ -63,23 +63,14 @@
     try { p.setTargetAtTime(v, EQ.ctx.currentTime, 0.03); } catch (e) { p.value = v; }
   }
 
-  function impulse(feedback, damp) {
-    // Freeverb-like decay of four ~28 ms combs at this feedback. Capped at
-    // 1.2 s: the convolver is the costliest node and runs on the realtime thread.
-    var key = feedback + ':' + damp;
-    if (EQ.ir === key) return;
-    EQ.ir = key;
-    var ctx = EQ.ctx, rate = ctx.sampleRate;
-    var t60 = Math.min(1.2, Math.max(0.3, 3 * 0.028 / -Math.log10(Math.max(0.01, Math.min(0.97, feedback)))));
-    var len = Math.floor(rate * t60), buf = ctx.createBuffer(2, len, rate);
-    for (var ch = 0; ch < 2; ch++) {
-      var d = buf.getChannelData(ch), lp = 0, a = 0.2 + 0.75 * damp;
-      for (var i = 0; i < len; i++) {
-        lp = (Math.random() * 2 - 1) * (1 - a) + lp * a; // damping darkens the tail
-        d[i] = lp * Math.exp(-6.9 * i / len);
-      }
-    }
-    EQ.g.verb.buffer = buf; // costly kernel setup: only when the tail actually changes
+  // mRadio-style comb reverb: four damped feedback echoes (Freeverb tunings at
+  // 48 kHz). Costs a few delay/filter nodes per sample, unlike a convolution
+  // reverb, which was the single heaviest part of the equalizer.
+  var COMBS = [0.0253, 0.0269, 0.0290, 0.0307];
+  function setVerb(feedback, damp) {
+    var g = EQ.g, fb = Math.max(0, Math.min(0.95, feedback || 0));
+    var cutoff = 1200 + (1 - Math.max(0, Math.min(1, damp || 0))) * 6000; // damping darkens the tail
+    g.combs.forEach(function (c) { set(c.fb.gain, fb); set(c.lp.frequency, cutoff); });
   }
 
   // Every node is created once; only the stages the current settings need are
@@ -116,7 +107,13 @@
 
     g.verbIn = gain(1); // mRadio feeds its reverb the mono sum
     g.verbIn.channelCount = 1; g.verbIn.channelCountMode = 'explicit'; g.verbIn.channelInterpretation = 'speakers';
-    g.preDelay = keep(ctx.createDelay(0.1)); g.verb = keep(ctx.createConvolver()); g.wet = gain(0);
+    g.preDelay = keep(ctx.createDelay(0.1)); g.wet = gain(0);
+    g.combs = COMBS.map(function (sec) {
+      var d = keep(ctx.createDelay(0.05)), lp = keep(ctx.createBiquadFilter()), fb = gain(0);
+      d.delayTime.value = sec; lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.5;
+      return { d: d, lp: lp, fb: fb };
+    });
+    g.combOut = gain(0.25);
     g.sum = gain(1);
     g.limitIn = gain(0.5); g.shaper = keep(ctx.createWaveShaper()); g.shaper.curve = LIMIT_CURVE;
     g.out = gain(1);
@@ -132,9 +129,7 @@
     var space = orbit || cross || Math.abs(c.sideGain - 1) > 1e-4;
     var limit = !!c.limiter;
     return { eq: eq, space: space, orbit: orbit, cross: cross, wet: wet, limit: limit,
-      // The tail is part of the key: replacing a convolver kernel while audible
-      // glitches, so Hall <-> Cinema also fades around the swap.
-      key: [eq, space, orbit, cross, wet ? c.feedback + '/' + c.damp : 0, limit].join() };
+      key: [eq, space, orbit, cross, wet, limit].join() };
   }
 
   function wire(p) {
@@ -171,7 +166,15 @@
       n = g.merge;
     }
     n.connect(g.sum);
-    if (p.wet) { n.connect(g.verbIn); g.verbIn.connect(g.preDelay); g.preDelay.connect(g.verb); g.verb.connect(g.wet); g.wet.connect(g.sum); }
+    if (p.wet) {
+      n.connect(g.verbIn); g.verbIn.connect(g.preDelay);
+      g.combs.forEach(function (c) {
+        g.preDelay.connect(c.d);
+        c.d.connect(c.lp); c.lp.connect(c.fb); c.fb.connect(c.d); // damped feedback loop
+        c.d.connect(g.combOut);
+      });
+      g.combOut.connect(g.wet); g.wet.connect(g.sum);
+    }
     if (p.limit) { g.sum.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
     else g.sum.connect(g.out);
   }
@@ -204,7 +207,7 @@
     setIf(g.accR.gain, c.crossNorm, slot('nR'));
     setIf(g.preDelay.delayTime, c.pre || 0, slot('pd'));
     setIf(g.wet.gain, c.wet * 0.6, slot('wet'));
-    if (c.wet > 0) impulse(c.feedback, c.damp);
+    if (c.wet > 0) setVerb(c.feedback, c.damp);
   }
 
   function apply() {

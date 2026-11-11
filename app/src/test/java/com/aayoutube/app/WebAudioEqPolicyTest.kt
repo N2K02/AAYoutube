@@ -141,7 +141,7 @@ class WebAudioEqPolicyTest {
     @Test fun pageGraphIsSafeAndUsesOnlyBuiltInNodes() {
         val js = src("app/src/main/assets/aay_eq.js")
         // Same chain as mRadio, built from native nodes (CSP-safe, off the main thread).
-        listOf("'peaking'", "'lowshelf'", "createStereoPanner", "createConvolver",
+        listOf("'peaking'", "'lowshelf'", "createStereoPanner", "c.fb.connect(c.d)",
             "createWaveShaper", "createDelay", "createChannelSplitter").forEach {
             assertTrue(it, js.contains(it))
         }
@@ -161,12 +161,12 @@ class WebAudioEqPolicyTest {
         assertTrue(js.contains("function planOf(c)"))
         assertTrue(js.contains("if (!on) return { key: 'pass' }"))
         assertTrue(js.contains("if (p.wet) {"))
-        assertTrue(js.contains("Math.min(1.2,"))
-        assertTrue(js.contains("if (EQ.ir === key) return;"))
+        // Cheap comb reverb, never a convolution (the heaviest node).
+        assertFalse(js.contains("createConvolver"))
+        assertTrue(js.contains("var COMBS = ["))
         assertTrue(js.contains("document.hidden"))
         assertTrue(js.contains("EQ.ctx.suspend()"))
         assertTrue(js.contains("if (EQ.idle && anyPlaying()) EQ.idle = false;"))
-        assertTrue(js.contains("c.feedback + '/' + c.damp"))
         assertTrue(js.contains("__aayEqProbe"))
         assertTrue(js.contains("last[0] === v"))
         // Mono YouTube streams must reach both ears (the splitter does not upmix).

@@ -195,15 +195,21 @@ test('long non-MediaSource playback falls back after 4 s', () => {
   assert.equal(p.calls.routed, 0);
 });
 
-test('switching between reverb modes fades around the kernel swap', () => {
+test('switching between reverb modes only glides parameters (no rewire, no click)', () => {
   const p = page();
   const hall = { ...BASE, sideGain: 1.1, wet: 0.26, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true };
   p.eq(hall);
   p.runTimers(0);
-  const cinema = { ...hall, sideGain: 1.4, wet: 0.15, feedback: 0.84, damp: 0.4, pre: 0.012 };
-  p.eq(cinema);
-  assert.ok(p.pending().includes(50), 'Hall -> Cinema schedules a faded rewire');
-  p.runTimers(4000);
-  p.eq({ ...cinema, sideGain: 1.6, wet: 0.2 }); // intensity only: same tail, no rewire
-  assert.ok(!p.pending().includes(50), 'intensity change does not rewire');
+  p.eq({ ...hall, sideGain: 1.4, wet: 0.15, feedback: 0.84, damp: 0.4, pre: 0.012 }); // Cinema
+  assert.ok(!p.pending().includes(50), 'Hall -> Cinema keeps the graph and glides values');
+  p.eq({ ...hall, wet: 0 , sideGain: 1.6 }); // Wide: reverb stage leaves -> faded rewire
+  assert.ok(p.pending().includes(50));
+});
+
+test('reverb tail decays (stable feedback) and stays near unity loudness', async () => {
+  const p = page({ hz: 500, amp: 0.3 });
+  p.eq({ ...BASE, wet: 0.4, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true });
+  const r = await p.render();
+  assert.ok(Number.isFinite(r.L.rms) && r.L.peak <= 1.0001);
+  near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 3, 'reverb level');
 });
