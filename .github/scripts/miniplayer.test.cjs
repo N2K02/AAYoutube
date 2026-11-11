@@ -428,25 +428,25 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
 });
 
-function hideFor15s(p) {
+function hideForSaver(p) {
   p.setRealHidden(true);
   p.window.__aay.setBg(true);
-  p.advance(15600);
+  p.advance(60600);
   p.flush();
 }
 
-test('background saver waits 15 s, needs a really hidden page and restores on return', () => {
+test('background saver waits 60 s, needs a really hidden page and restores on return', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.setRealHidden(true);
   p.window.__aay.setBg(true);
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'quick app switch keeps quality');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'quick app switch keeps quality');
   p.window.__aay.setBg(false);
-  p.advance(20000);
+  p.advance(70000);
   p.flush();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
-  hideFor15s(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   p.setRealHidden(false);
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible again: saved quality at once');
@@ -456,21 +456,21 @@ test('background saver never runs on a page Chromium still shows, or on live str
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.window.__aay.setBg(true); // native says hidden, Chromium does not
-  p.advance(15600); p.flush();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  p.advance(60600); p.flush();
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   const live = playerPage({ quality: true });
   live.window.__aay.config({ lowQuality: true });
   live.video.duration = Infinity;
-  hideFor15s(live);
-  assert.notDeepEqual(live.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(live);
+  assert.notDeepEqual(live.qualityCalls.at(-1), ['medium', 'medium']);
 });
 
-test('background saver backs off for the session if audio stalls after 144p', () => {
+test('background saver backs off for the session if audio stalls after lowering quality', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.video.paused = false;
-  hideFor15s(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   const t = p.video.currentTime;
   p.runIntervals();          // sample position
   p.advance(9000);           // audio clock does not move for 9 s
@@ -478,19 +478,19 @@ test('background saver backs off for the session if audio stalls after 144p', ()
   p.runIntervals();
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'stall restores quality');
   p.window.__aay.setBg(false);
-  hideFor15s(p);
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'not retried this session');
+  hideForSaver(p);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'not retried this session');
 });
 
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  hideFor15s(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   p.window.__aay.pip(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP restores 720p instead of tiny');
   p.window.__aay.pip(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'normal background playback may reduce quality');
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
 });
@@ -499,8 +499,8 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   // Start on the phone in hidden/background mode, THEN connect Android Auto.
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  hideFor15s(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   p.window.__aay.car(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
   p.window.__aay.mini(true);
@@ -509,7 +509,7 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   p.window.__aay.car(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'still-visible mini returns to saved HD');
   p.window.__aay.mini(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'true hidden background may use low quality');
 });
 
 test('video state reaches the media process after initialization', () => {

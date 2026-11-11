@@ -1826,13 +1826,15 @@
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
   }
   /* Battery saver with the screen off / app hidden: nothing can show the video,
-   * so drop it to 144p and keep only the audio meaningful. Safeguards:
-   *  - only after 15 s hidden (quick app switches never touch quality);
+   * so drop it to 360p: ~90% less decoding than 1080p, yet still decent for
+   * the few seconds YouTube may play from that buffer after you return. Safeguards:
+   *  - only after 60 s hidden (checking a message never touches quality);
    *  - only when Chromium itself reports the page hidden, and never in PiP, the
    *    mini player, on the car screen, during an ad or on a live stream;
    *  - the saved quality comes back the moment the app is visible again;
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
+  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'medium';
   var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
   function realHidden() {
     try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
@@ -1840,7 +1842,7 @@
   }
   function bgSaverActive() {
     if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
-    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < 15000) return false;
+    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
     if (!realHidden() || isAd()) return false;
     var v = getVideo();
     if (!v || !isFinite(v.duration)) return false; // never on live streams
@@ -1848,7 +1850,7 @@
     return true;
   }
   function desiredQuality() {
-    return bgSaverActive() ? 'tiny' : savedQuality();
+    return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();
   }
   // Circuit breaker: audio must keep moving after a switch to 144p.
   function bgSaverCheck() {
@@ -1857,7 +1859,7 @@
     if (!v || v.paused || v.ended) { bgSaver.pos = -1; return; }
     var now = Date.now();
     if (bgSaver.pos >= 0 && v.currentTime <= bgSaver.pos + 0.2 && now - bgSaver.at >= 8000) {
-      console.log('[aay] background saver: audio stalled after 144p, restoring quality');
+      console.log('[aay] background saver: audio stalled after lowering quality, restoring it');
       bgSaver.broken = true;
       bgSaver.switchedAt = 0;
       qualityApply.key = '';
@@ -1938,7 +1940,7 @@
         if (!bgSaverActive()) return;
         qualityApply.key = '';
         applyPreferredQuality();
-      }, 15500);
+      }, BG_SAVER_DELAY + 500);
     } else if (!A.isBg) {
       bgSaver.since = 0; bgSaver.switchedAt = 0; bgSaver.pos = -1; bgSaver.armed = false;
       if (wasBg) qualityApply.key = ''; // visible again: saved quality right away

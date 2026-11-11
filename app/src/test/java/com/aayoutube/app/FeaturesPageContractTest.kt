@@ -64,8 +64,8 @@ class FeaturesPageContractTest {
         assertTrue(script.contains("document.querySelectorAll('.aay-ryd')"))
         // A one-time 144p background cap is replaced with the persisted 720p
         // policy. An explicitly enabled saver is still honored off-screen.
-        assertTrue(script.contains("return bgSaverActive() ? 'tiny' : savedQuality();"))
-        assertTrue(script.contains("Date.now() - bgSaver.since < 15000"))
+        assertTrue(script.contains("return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();"))
+        assertTrue(script.contains("var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'medium';"))
         assertTrue(script.contains("bgSaver.broken = true;"))
         assertTrue(script.contains("A.setBg = function (on)"))
         assertTrue(script.contains("applyPreferredQuality();"))
