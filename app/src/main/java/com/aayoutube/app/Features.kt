@@ -20,7 +20,7 @@ data class FeatureFlags(
     val hideShorts: Boolean = true,
     val hidePromos: Boolean = true,
     val backgroundPlay: Boolean = true,
-    val lowQualityInBackground: Boolean = false,
+    val lowQualityInBackground: Boolean = true,
     /** 720p initially; manual quality picks become the default for subsequent videos. */
     val preferredQuality: String = "hd720",
     val autoPip: Boolean = true,
@@ -83,10 +83,16 @@ object Features {
         val d = FeatureFlags()
         // Old installs had background tiny (144p) enabled by default. Migrate once
         // to 720p continuity; users may deliberately re-enable the battery saver.
-        val previousQualityPolicy = prefs.getBoolean("qualityPolicyV2", false)
-        val lowQuality = if (previousQualityPolicy) prefs.getBoolean("lowQuality", false) else false
-        if (!previousQualityPolicy) prefs.edit()
-            .putBoolean("lowQuality", false).putBoolean("qualityPolicyV2", true).apply()
+        // V3: the background saver now waits 15 s, never runs in PiP/car/ads/live and
+        // restores quality if audio stalls, so it is on by default once. A later Off by
+        // the user is kept.
+        val lowQuality = if (prefs.getBoolean("qualityPolicyV3", false)) {
+            prefs.getBoolean("lowQuality", true)
+        } else {
+            prefs.edit().putBoolean("lowQuality", true).putBoolean("qualityPolicyV2", true)
+                .putBoolean("qualityPolicyV3", true).apply()
+            true
+        }
         _state.value = FeatureFlags(
             blockAds = prefs.getBoolean("blockAds", d.blockAds),
             hideShorts = prefs.getBoolean("hideShorts", d.hideShorts),

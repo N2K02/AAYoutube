@@ -1200,6 +1200,7 @@
    */
   var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
   function backgroundWatchdog() {
+    bgSaverCheck();
     // Only a watch/live page owns an active media session. A stale video
     // element/URL parameter can survive SPA navigation back to YouTube Home.
     if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1824,11 +1825,47 @@
     var q = CFG.preferredQuality || 'hd720';
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
   }
+  /* Battery saver with the screen off / app hidden: nothing can show the video,
+   * so drop it to 144p and keep only the audio meaningful. Safeguards:
+   *  - only after 15 s hidden (quick app switches never touch quality);
+   *  - only when Chromium itself reports the page hidden, and never in PiP, the
+   *    mini player, on the car screen, during an ad or on a live stream;
+   *  - the saved quality comes back the moment the app is visible again;
+   *  - circuit breaker: if audio stalls after the switch, go back to the saved
+   *    quality and do not try again in this session. */
+  var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
+  function realHidden() {
+    try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
+    catch (e) { return false; }
+  }
+  function bgSaverActive() {
+    if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
+    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < 15000) return false;
+    if (!realHidden() || isAd()) return false;
+    var v = getVideo();
+    if (!v || !isFinite(v.duration)) return false; // never on live streams
+    if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }
+    return true;
+  }
   function desiredQuality() {
-    // Audio-only background may use 144p only when the user enables the setting.
-    // PiP, draggable mini and car video always retain the selected picture quality.
-    return A.isBg && !A.isCar && !A.inPip && !A.isMini &&
-      CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality();
+    return bgSaverActive() ? 'tiny' : savedQuality();
+  }
+  // Circuit breaker: audio must keep moving after a switch to 144p.
+  function bgSaverCheck() {
+    if (!bgSaver.switchedAt) return;
+    var v = getVideo();
+    if (!v || v.paused || v.ended) { bgSaver.pos = -1; return; }
+    var now = Date.now();
+    if (bgSaver.pos >= 0 && v.currentTime <= bgSaver.pos + 0.2 && now - bgSaver.at >= 8000) {
+      console.log('[aay] background saver: audio stalled after 144p, restoring quality');
+      bgSaver.broken = true;
+      bgSaver.switchedAt = 0;
+      qualityApply.key = '';
+      applyPreferredQuality();
+      return;
+    }
+    if (bgSaver.pos < 0 || v.currentTime > bgSaver.pos + 0.2) { bgSaver.pos = v.currentTime; bgSaver.at = now; }
+    if (now - bgSaver.switchedAt > 60000) bgSaver.switchedAt = 0; // proven stable
   }
   function applyPreferredQuality() {
     if (BROWSE) return;
@@ -1894,6 +1931,18 @@
   A.setBg = function (on) {
     var wasBg = A.isBg;
     A.isBg = !!on;
+    clearTimeout(bgSaver.timer);
+    if (A.isBg && !wasBg) {
+      bgSaver.since = Date.now();
+      bgSaver.timer = setTimeout(function () {
+        if (!bgSaverActive()) return;
+        qualityApply.key = '';
+        applyPreferredQuality();
+      }, 15500);
+    } else if (!A.isBg) {
+      bgSaver.since = 0; bgSaver.switchedAt = 0; bgSaver.pos = -1; bgSaver.armed = false;
+      if (wasBg) qualityApply.key = ''; // visible again: saved quality right away
+    }
     applyPreferredQuality();
     // Catch up with the DOM once when returning to the foreground.
     if (wasBg && !A.isBg) schedTick();
