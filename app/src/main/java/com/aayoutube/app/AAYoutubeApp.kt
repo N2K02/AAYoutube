@@ -22,6 +22,18 @@ class AAYoutubeApp : Application() {
         }
     }
 
+    /**
+     * Under memory pressure, drop the second (browse) YouTube WebView unless it is on
+     * screen (mini player, or browsing after closing it). It is rebuilt the next time the mini player opens. Keeping it
+     * pushed the phone into swap, and swap stalls are audible as stutter.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (!isWebProcess()) return
+        if (MemoryTrimPolicy.releaseBrowse(level, WebHost.mode.value != WebHost.PlayerMode.FULL))
+            BrowseHost.release()
+    }
+
     private fun isWebProcess(): Boolean {
         val name = if (Build.VERSION.SDK_INT >= 28) {
             getProcessName()
