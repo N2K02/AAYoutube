@@ -157,7 +157,14 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
-  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini); }
+  // Layout transitions (YouTube fullscreen, landscape fill, mini/expand) re-parent or
+  // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
+  // A short transit window drops those involuntary pauses; a real tap on Pause
+  // still wins through userPauseEligibleUntil.
+  var transitUntil = 0;
+  A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
+  function inTransit() { return Date.now() < transitUntil; }
+  function holding() { return inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini)); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
@@ -1407,6 +1414,7 @@
       rydApply();
       openFirstResult();
       carLayout();
+      landPlaylist();
       reportAccount();
     } catch (e) {}
   }
@@ -1587,6 +1595,32 @@
 
   // Set by the app as soon as the screen starts to leave (before PiP or the background kick in).
   A.setHold = function (on) { A.hold = !!on; };
+
+  /* Landscape watch page (not the filled video): after the next video in a Mix or
+   * playlist, YouTube collapses the queue into a small "Next:" bar and leaves the
+   * right column empty. Expand it once per video, only when it is that collapsed bar. */
+  var landPlaylistFor = '', landPlaylistTries = 0;
+  function landPlaylist() {
+    if (BROWSE || A.isLand || A.isMini || A.inPip || A.isCar) return;
+    if (!/^\/watch/.test(location.pathname) || innerWidth <= innerHeight) return;
+    var m = location.search.match(/[?&]v=([^&]+)/), vid = m ? m[1] : '';
+    if (!vid || !/[?&]list=/.test(location.search)) return;
+    if (landPlaylistFor !== vid) { landPlaylistFor = vid; landPlaylistTries = 0; }
+    if (landPlaylistTries >= 4) return;
+    var panel = document.querySelector('ytm-playlist-panel-renderer') ||
+      document.querySelector('ytm-playlist-panel-entry-point') ||
+      document.querySelector('[class*="playlist-panel"]');
+    if (!panel) return;
+    var r = panel.getBoundingClientRect();
+    var text = (panel.textContent || '').trim();
+    var collapsed = r.height > 0 && r.height < innerHeight * 0.3 && /^\s*Next\s*:/i.test(text) ||
+      !!panel.querySelector('[aria-expanded="false"]');
+    if (!collapsed) { landPlaylistTries = 4; return; }
+    landPlaylistTries++;
+    var target = panel.querySelector('[aria-expanded="false"]') || panel;
+    console.log('[aay] landscape: expanding collapsed playlist (' + panel.tagName.toLowerCase() + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) + ')');
+    try { target.click(); } catch (e) {}
+  }
 
   // While in picture in picture, check every 2 s that video frames still arrive. If the sound
   // plays but the picture is stuck (black), seek to the current position: that restarts the

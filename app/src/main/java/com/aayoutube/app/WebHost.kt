@@ -97,6 +97,14 @@ object WebHost {
     fun dismissLandscapeFill() {
         if (!landscapeFill.value) return
         landscapeDismissed.value = true
+        transit()
+    }
+
+    /** Layout transition ahead: arm page-side pause protection for a moment so the
+     * sound does not stop while YouTube resizes or re-parents the video. */
+    fun transit() {
+        noteVisibilityChange()
+        js("window.__aay&&window.__aay.transit&&window.__aay.transit(1500)")
     }
     /** The selected /watch?v= ID, set by navigation rather than a delayed
      * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
@@ -796,7 +804,7 @@ object WebHost {
     fun setLandscapeFill(on: Boolean) {
         if (landscapeFill.value == on) return
         landscapeFill.value = on
-        noteVisibilityChange()
+        transit()
         js("window.__aay&&window.__aay.land&&window.__aay.land($on)")
     }
 
@@ -843,7 +851,7 @@ object WebHost {
         AppLog.add("VIEW", "Mini player expanded")
         // Like the YouTube app: expanding sideways shows the watch page and playlist.
         onFullscreenClosed()
-        noteVisibilityChange()
+        transit()
         mode.value = PlayerMode.FULL
         js("window.__aay&&window.__aay.mini(false)")
     }
@@ -1622,12 +1630,14 @@ object WebHost {
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
             customCallback?.onCustomViewHidden()
             customCallback = callback
+            transit()
             fullscreenView.value = view
             AppLog.add("VIEW", "Fullscreen player opened")
         }
 
         override fun onHideCustomView() {
             customCallback = null
+            transit()
             fullscreenView.value = null
             onFullscreenClosed()
             AppLog.add("VIEW", "Fullscreen player closed")
