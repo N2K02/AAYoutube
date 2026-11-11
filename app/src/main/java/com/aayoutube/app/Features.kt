@@ -21,8 +21,6 @@ data class FeatureFlags(
     val hidePromos: Boolean = true,
     val backgroundPlay: Boolean = true,
     val lowQualityInBackground: Boolean = true,
-    /** Background without PiP/mini/car: stop decoding the unseen video, keep audio. */
-    val audioOnlyBackground: Boolean = true,
     /** 720p initially; manual quality picks become the default for subsequent videos. */
     val preferredQuality: String = "hd720",
     val autoPip: Boolean = true,
@@ -104,7 +102,6 @@ object Features {
             hidePromos = prefs.getBoolean("hidePromos", d.hidePromos),
             backgroundPlay = prefs.getBoolean("backgroundPlay", d.backgroundPlay),
             lowQualityInBackground = lowQuality,
-            audioOnlyBackground = prefs.getBoolean("audioOnlyBg", d.audioOnlyBackground),
             preferredQuality = VideoQualityPolicy.normalize(prefs.getString("preferredQuality", d.preferredQuality)),
             autoPip = prefs.getBoolean("autoPip", d.autoPip),
             autoContinue = prefs.getBoolean("autoContinue", d.autoContinue),
@@ -150,7 +147,6 @@ object Features {
             .putBoolean("hidePromos", n.hidePromos)
             .putBoolean("backgroundPlay", n.backgroundPlay)
             .putBoolean("lowQuality", n.lowQualityInBackground)
-            .putBoolean("audioOnlyBg", n.audioOnlyBackground)
             .putString("preferredQuality", n.preferredQuality)
             .putBoolean("autoPip", n.autoPip)
             .putBoolean("autoContinue", n.autoContinue)

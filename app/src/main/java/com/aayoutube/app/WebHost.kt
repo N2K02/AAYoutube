@@ -739,48 +739,6 @@ object WebHost {
 
     fun refreshBackgroundQuality() {
         js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
-        refreshAudioOnly()
-    }
-
-    // ---------------------------------------------------------------- audio-only background
-    private var audioOnlyAt = 0L
-    private var audioOnlyBroken = false
-    private val audioOnlySoon = Runnable { refreshAudioOnly(now = true) }
-
-    private fun audioOnlyEligible(): Boolean = AudioOnlyPolicy.eligible(
-        enabled = Features.current.audioOnlyBackground,
-        backgroundPlay = Features.current.backgroundPlay,
-        activityVisible = activityVisible,
-        inPip = inPip.value,
-        carShown = carShown,
-        broken = audioOnlyBroken,
-    )
-
-    /** Off at once when anything can show the video; on only after a short delay. */
-    fun refreshAudioOnly(now: Boolean = false) {
-        val w = web as? BackgroundWebView ?: return
-        if (!audioOnlyEligible()) {
-            main.removeCallbacks(audioOnlySoon)
-            if (w.audioOnly) w.setAudioOnly(false)
-            return
-        }
-        if (w.audioOnly) return
-        if (!now) {
-            main.removeCallbacks(audioOnlySoon)
-            main.postDelayed(audioOnlySoon, AudioOnlyPolicy.DELAY_MS)
-            return
-        }
-        audioOnlyAt = SystemClock.elapsedRealtime()
-        w.setAudioOnly(true)
-    }
-
-    /** Circuit breaker: playback dropping soon after going audio-only restores video. */
-    private fun audioOnlyDropped(now: Long) {
-        val w = web as? BackgroundWebView ?: return
-        if (!AudioOnlyPolicy.shouldBreak(w.audioOnly, now - audioOnlyAt)) return
-        audioOnlyBroken = true
-        main.removeCallbacks(audioOnlySoon)
-        w.setAudioOnly(false)
     }
 
     fun openUrl(url: String) {
@@ -1388,7 +1346,6 @@ object WebHost {
         if (background && !Features.current.backgroundPlay) return
         val mini = mode.value == PlayerMode.MINI && !inPip.value
         if (now - userPausedAt <= 5_000L) return
-        audioOnlyDropped(now)
         unexpectedPauseRecoveryUntil = now + 120_000L
         if (now - resumeWindowAt > 60_000L) {
             resumeWindowAt = now
