@@ -280,6 +280,22 @@ fun AppRoot(activity: MainActivity) {
         onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
     val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
+    // Battery/GPU: a <=60 fps video does not need a 120 Hz screen. While it plays in the
+    // full player (or PiP), ask Android for 60 Hz, as the YouTube app does. Browsing,
+    // the mini player and Settings keep the normal rate so scrolling stays smooth.
+    val lowRefresh = RefreshRatePolicy.capTo60(
+        playing = snap.playing, watchTab = watchTab,
+        fullPlayer = playerMode == WebHost.PlayerMode.FULL, inPip = inPip,
+        car = onCar || projectedToCar,
+    )
+    DisposableEffect(lowRefresh) {
+        val w = activity.window
+        val before = w.attributes.preferredRefreshRate
+        if (lowRefresh) w.attributes = w.attributes.also { it.preferredRefreshRate = 60f }
+        onDispose {
+            if (lowRefresh) w.attributes = w.attributes.also { it.preferredRefreshRate = before }
+        }
+    }
     // Entering fullscreen must not flash the menu; it appears on the next touch.
     var topMenuVisible by rememberSaveable { mutableStateOf(true) }
     var topMenuEpoch by remember { mutableIntStateOf(0) }
