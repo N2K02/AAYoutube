@@ -5,6 +5,7 @@ package com.aayoutube.app
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.clickable
@@ -62,6 +64,8 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.OndemandVideo
 import dev.n2k02.updater.hasPendingUpdate
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -89,6 +93,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
@@ -128,6 +133,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -148,6 +154,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Update("Update", Icons.Filled.SystemUpdate),
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
+    // Append to preserve previously saved tab ordinals when updating the app.
+    ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
 }
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
@@ -221,9 +229,16 @@ private fun AAYoutubePageHeader(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     val context = LocalContext.current
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    // Debug-only entry point for repeatable phone screenshots of the car-layout preview.
+    // A normal launch and all release builds still start on YouTube Home.
+    val openCarPreview = BuildConfig.DEBUG &&
+        activity.intent?.getBooleanExtra("com.aayoutube.app.EXTRA_CAR_PREVIEW", false) == true
+    var tab by rememberSaveable {
+        mutableIntStateOf(if (openCarPreview) Tab.ExperimentalVideo.ordinal else 0)
+    }
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
+    var equalizerOpen by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(tab) { if (tab != Tab.Watch.ordinal) lastPanel = Tab.entries[tab] }
     val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
@@ -240,7 +255,49 @@ fun AppRoot(activity: MainActivity) {
     val playerMode by WebHost.mode.collectAsState()
     val flags by Features.state.collectAsState()
     val watchTab = tab == Tab.Watch.ordinal
-    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null)
+    // Rotating sideways while watching fills the screen with the video (like the YouTube app);
+    // rotating back restores the page. Chromium's own fullscreen needs a tap, so this uses the
+    // page layout instead and keeps YouTube's controls.
+    val orientation = LocalConfiguration.current.orientation
+    val watchPage by WebHost.onWatchPage.collectAsState()
+    val landDismissed by WebHost.landscapeDismissed.collectAsState()
+    LaunchedEffect(orientation) {
+        if (orientation != Configuration.ORIENTATION_LANDSCAPE) WebHost.landscapeDismissed.value = false
+    }
+    val landFill = LandscapeFillPolicy.active(
+        landscape = orientation == Configuration.ORIENTATION_LANDSCAPE,
+        watchTab = watchTab, watchPage = watchPage,
+        fullPlayer = playerMode == WebHost.PlayerMode.FULL,
+        inPip = inPip, fullscreen = fullscreen != null, car = onCar || projectedToCar,
+        dismissed = landDismissed,
+    )
+    LaunchedEffect(landFill) { WebHost.setLandscapeFill(landFill) }
+    DisposableEffect(landFill) {
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        if (landFill) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
+    // Battery/GPU: a <=60 fps video does not need a 120 Hz screen. While it plays in the
+    // full player (or PiP), ask Android for 60 Hz, as the YouTube app does. Browsing,
+    // the mini player and Settings keep the normal rate so scrolling stays smooth.
+    val lowRefresh = RefreshRatePolicy.capTo60(
+        playing = snap.playing, watchTab = watchTab,
+        fullPlayer = playerMode == WebHost.PlayerMode.FULL, inPip = inPip,
+        car = onCar || projectedToCar,
+    )
+    DisposableEffect(lowRefresh) {
+        val w = activity.window
+        val before = w.attributes.preferredRefreshRate
+        if (lowRefresh) w.attributes = w.attributes.also { it.preferredRefreshRate = 60f }
+        onDispose {
+            if (lowRefresh) w.attributes = w.attributes.also { it.preferredRefreshRate = before }
+        }
+    }
+    // Entering fullscreen must not flash the menu; it appears on the next touch.
     var topMenuVisible by rememberSaveable { mutableStateOf(true) }
     var topMenuEpoch by remember { mutableIntStateOf(0) }
     // Every return to the video opens the menu briefly; Settings and all
@@ -334,7 +391,10 @@ fun AppRoot(activity: MainActivity) {
     }
     val goBack: () -> Unit = {
         when {
+            equalizerOpen -> equalizerOpen = false
             fullscreen != null -> WebHost.exitFullscreen()
+            // Landscape video: Back first shows the watch page (player + playlist).
+            WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()
             tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
             tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
             // Browsing under the mini player (or after closing it): back moves through the browse page.
@@ -400,11 +460,13 @@ fun AppRoot(activity: MainActivity) {
                             when (page) {
                                 Tab.Watch -> Unit
                                 Tab.Features -> FeaturesPage()
+                                Tab.ExperimentalVideo -> ExperimentalVideoPage()
                                 Tab.Lyrics -> LyricsSettingsPage()
                                 Tab.Update -> UpdatePage()
                                 Tab.Info -> InfoPage()
                                 Tab.Settings -> AAYoutubeSettingsMenu(
                                     onSelect = { tab = it.ordinal },
+                                    onEqualizer = { equalizerOpen = true },
                                 )
                             }
                         }
@@ -468,6 +530,9 @@ fun AppRoot(activity: MainActivity) {
                         onClick = { activity.quit() })
                 }
             }
+        }
+        if (equalizerOpen && !inPip && fullscreen == null) {
+            EqualizerSheet(onDismiss = { equalizerOpen = false })
         }
         if (lyricsOnScreen) {
             // Reduce overlap while the menu is hidden; no second app header.
@@ -557,7 +622,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 
     // Keep the WebPane host's dimensions stable across Settings transitions.
     // Inset only the phone WebView content, never Android Auto, PiP or native fullscreen.
-    val phoneSafeArea = !onCar && !projectedToCar && !inPip &&
+    val landFill by WebHost.landscapeFill.collectAsState()
+    val phoneSafeArea = !onCar && !projectedToCar && !inPip && !landFill &&
         WebHost.fullscreenView.collectAsState().value == null
     Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier)) {
         // Browse page (behind): made the first time the mini player opens.
@@ -612,6 +678,18 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
                 else -> Modifier.fillMaxSize()
             }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
+            // Smooth mode changes (mini, expand, landscape fill): a scrim over the video
+            // fades out. The WebView itself is never made translucent (that drops Chromium
+            // off its video overlay path: more GPU, possible black frames) and is resized
+            // once, never per frame (that stalls the decoder).
+            val scrim = remember { Animatable(0f) }
+            var fadeArmed by remember { mutableStateOf(false) }
+            LaunchedEffect(small, hidden, landFill) {
+                if (!fadeArmed) { fadeArmed = true; return@LaunchedEffect }
+                if (inPip || onCar || projectedToCar) return@LaunchedEffect
+                scrim.snapTo(0.7f)
+                scrim.animateTo(0f, tween(240))
+            }
             // Do not let a still-resumed phone screen steal the car's player.
             if (!projectedToCar || onCar) key(version) {
                 AndroidView(
@@ -626,12 +704,17 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 )
             }
 
+            if (scrim.value > 0f && !onCar) Box(
+                playerMod.graphicsLayer { alpha = scrim.value }.background(Color.Black),
+            )
+
             // Mini player controls (like the YouTube app): play/pause top left, close top right,
             // red progress line at the bottom. Tap to open it again, drag to move it.
             if (small) {
                 // Progress: the page reports now and then; move it along in between.
                 var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
                 LaunchedEffect(snap) {
+                    if (!snap.playing) return@LaunchedEffect
                     while (true) {
                         now = android.os.SystemClock.elapsedRealtime()
                         delay(500)
@@ -704,6 +787,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 @Composable
 private fun AAYoutubeSettingsMenu(
     onSelect: (Tab) -> Unit,
+    onEqualizer: () -> Unit,
 ) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Column(Modifier.fillMaxSize()) {
@@ -719,7 +803,15 @@ private fun AAYoutubeSettingsMenu(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
             )
-            listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+            ListItem(
+                headlineContent = { Text("Equalizer") },
+                supportingContent = {
+                    Text("5-band sound, presets, bass and experimental 3D sound")
+                },
+                leadingContent = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onEqualizer),
+            )
+            listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
@@ -728,6 +820,7 @@ private fun AAYoutubeSettingsMenu(
                     supportingContent = {
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
+                            Tab.ExperimentalVideo -> "Optional Android Auto video recovery tests"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
                             Tab.Info -> "App information"
                             Tab.Update -> "Version, experimental releases and update checks"
@@ -765,6 +858,58 @@ fun FeaturesPage() {
         )
     }
 
+    @Composable
+    fun <T> Choice(title: String, text: String, options: List<T>, selected: T, label: (T) -> String, pick: (T) -> Unit) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 8.dp)) {
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(text, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                options.forEach { option ->
+                    if (option == selected) Button(onClick = { pick(option) }) { Text(label(option)) }
+                    else OutlinedButton(onClick = { pick(option) }) { Text(label(option)) }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun CodecPicker(selected: String, pick: (String) -> Unit) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            ListItem(
+                headlineContent = { Text("Video format") },
+                supportingContent = {
+                    Text("AV1 uses the least data (less battery on Wi-Fi and mobile data). " +
+                        "H.264 works best everywhere. Applies from the next video.")
+                },
+                trailingContent = {
+                    OutlinedButton(onClick = { open = true }) { Text(VideoCodecPolicy.label(selected) + "  ▾") }
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+            androidx.compose.material3.DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                modifier = Modifier.align(Alignment.TopEnd),
+            ) {
+                VideoCodecPolicy.options.forEach { option ->
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(VideoCodecPolicy.label(option)) },
+                        onClick = { open = false; pick(option) },
+                        trailingIcon = if (option == selected) {
+                            { Icon(Icons.Filled.Check, contentDescription = null) }
+                        } else null,
+                    )
+                }
+            }
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -774,7 +919,7 @@ fun FeaturesPage() {
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
             Toggle("Background play", "Prevents YouTube pausing when the screen is hidden. Android Auto playback also uses the media service.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
-            Toggle("Low quality in background", "Optional 144p saving only with the screen off. Mini-player, PiP and Android Auto retain your saved quality.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
+            Toggle("Save battery in background", "With the app hidden for a minute, the unseen video drops to 360p while the audio keeps playing. Your quality returns as soon as you open the app. Never in PiP, Android Auto, ads or live streams; turns itself off if audio stalls.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
             ListItem(headlineContent = { Text("Video quality") },
                 supportingContent = { Text("Starts at 720p; choosing another resolution in YouTube’s quality menu saves it for future videos. Current: " + f.preferredQuality) },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer))
@@ -786,6 +931,26 @@ fun FeaturesPage() {
             Toggle("Also skip intros and outros", "Adds introductions and end segments to SponsorBlock.", f.sponsorExtra, enabled = f.sponsorBlock) { s, v -> s.copy(sponsorExtra = v) }
             Toggle("Return YouTube Dislike", "Shows the dislike count again.", f.returnDislike) { s, v -> s.copy(returnDislike = v) }
             Toggle("Desktop site", "Use desktop YouTube. Switching returns to Home and interrupts the current video.", f.desktopSite) { s, v -> s.copy(desktopSite = v) }
+        }
+        Text("Player", style = MaterialTheme.typography.titleMedium)
+        Card() {
+            Choice("Playback speed", "Every video starts at this speed.",
+                PlayerPrefsPolicy.speeds, f.playbackSpeed, PlayerPrefsPolicy::speedLabel) { v ->
+                Features.update { it.copy(playbackSpeed = v) }
+            }
+            Toggle("Remember speed", "A speed picked in YouTube's menu becomes the new default.", f.rememberSpeed) { s, v -> s.copy(rememberSpeed = v) }
+            Choice("Double-tap seek", "How far a double tap on the video jumps. 10s is YouTube's own gesture.",
+                PlayerPrefsPolicy.seekSeconds, f.seekSeconds, { "${it}s" }) { v ->
+                Features.update { it.copy(seekSeconds = v) }
+            }
+            Choice("Captions", "Default leaves YouTube's own choice alone.",
+                PlayerPrefsPolicy.captions, f.captions, { o -> o.replaceFirstChar { c -> c.uppercase() } }) { v ->
+                Features.update { it.copy(captions = v) }
+            }
+            CodecPicker(f.videoCodec) { v -> Features.update { it.copy(videoCodec = v) } }
+            Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
+            Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
+            Toggle("Hide end-screen cards", "Removes suggested-video cards over the end of a video.", f.hideEndCards) { s, v -> s.copy(hideEndCards = v) }
         }
         Text("Display", style = MaterialTheme.typography.titleMedium)
         Card() {
@@ -867,6 +1032,323 @@ fun FeaturesPage() {
         }
         Text(
             "Ad blocking, dislikes and background play rely on how YouTube's website works today, and may need an update when it changes.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------- experimental video
+
+/**
+ * This switch is deliberately separate from Updater's experimental APK channel.
+ * It changes only the legacy Android Auto video window, never phone playback
+ * or the native audio/media session. It takes effect on the next car connection.
+ */
+@Composable
+fun ExperimentalVideoPage() {
+    val flags by Features.state.collectAsState()
+    val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
+    val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
+    val carWindowProbe by CarWindowPixelProbe.state.collectAsState()
+    val carPattern by CarVideoPatternProbe.state.collectAsState()
+    val directSurface by CarDirectSurfaceProbe.state.collectAsState()
+    val videoSnapshot by WebHost.snapshot.collectAsState()
+    val context = LocalContext.current
+    val renderEvidence = CarRenderEvidence(
+        active = diagnostics.active,
+        experimental = diagnostics.enabled,
+        windowBuffer = if (carPattern.owner == diagnostics.owner)
+            carPattern.windowPatternDetected else null,
+        windowSeen = if (carPattern.owner == diagnostics.owner)
+            carPattern.observedVisible else null,
+        surfaceBuffer = if (directSurface.owner == diagnostics.owner)
+            directSurface.surfacePatternDetected else null,
+        surfaceSeen = if (directSurface.owner == diagnostics.owner)
+            directSurface.observedVisible else null,
+        surfaceFrames = if (directSurface.owner == diagnostics.owner)
+            directSurface.frameCount else 0,
+        frameHealth = diagnostics.frameHealth,
+        checks = diagnostics.checks,
+        repairs = diagnostics.repairs,
+        frameSize = diagnostics.frameSize,
+        playerSize = diagnostics.playerSize,
+    )
+    val renderAssessment = CarRenderCorrelationPolicy.assess(renderEvidence)
+    DisposableEffect(Unit) {
+        onDispose { CarVirtualDisplayProbe.cancel() }
+    }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Card {
+            ListItem(
+                headlineContent = { Text("Experimental video") },
+                supportingContent = {
+                    Text(
+                        "Android Auto only. Tries bounded, non-destructive surface recovery " +
+                            "when the projected video view is missing or has invalid geometry. " +
+                            "Reconnect Android Auto after changing this switch."
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.OndemandVideo, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = flags.experimentalVideo,
+                        onCheckedChange = { enabled ->
+                            Features.update { it.copy(experimentalVideo = enabled) }
+                            AppLog.add("CAR", "Experimental video preference=" + enabled +
+                                "; takes effect on next car video connection")
+                        },
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+        CarVideoViewportPreview()
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Synthetic virtual-display test",
+                    style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Checks whether Android can draw a test pattern into a private " +
+                        "virtual display, without launching YouTube or using Shizuku. " +
+                        "This is not Android Auto video rendering.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(virtualProbe.message, style = MaterialTheme.typography.bodyMedium)
+                Button(
+                    onClick = { CarVirtualDisplayProbe.start(context) },
+                    enabled = flags.experimentalVideo && !diagnostics.active && !virtualProbe.running,
+                ) { Text(if (virtualProbe.running) "Checking…" else "Test virtual display") }
+                if (diagnostics.active) Text(
+                    "Disconnect Android Auto video before running this isolated test.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Car video diagnostics", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    diagnostics.state,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "Connection: " + if (diagnostics.active) "active" else "inactive",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Mode: " + if (diagnostics.enabled) "experimental" else "standard",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Checks: ${diagnostics.checks}  ·  Repairs: ${diagnostics.repairs}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Display ID: ${diagnostics.displayId}  ·  Frame: ${diagnostics.frameSize}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "WebView: ${diagnostics.playerSize}  ·  Visible: ${diagnostics.visibleArea}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Expected 16:9 region: ${diagnostics.referenceVideoArea}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Decoder: ${diagnostics.decoderSize}  ·  Decoded: ${diagnostics.decodedFrames}  ·  Dropped: ${diagnostics.droppedFrames}",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Frame health: ${diagnostics.frameHealth}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "Decoder paused: ${diagnostics.decoderPaused ?: "unknown"}. " +
+                        "Frame health is diagnostic only and does not prove a visible car image.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (diagnostics.active) {
+                    OutlinedButton(onClick = {
+                        WebHost.logCarRenderProbe()
+                        AppLog.add("CAR", "User requested manual render probe")
+                    }, enabled = diagnostics.enabled) {
+                        Text("Check decoder health")
+                    }
+                    Text(
+                        "Car display visual test",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        carPattern.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { CarVideoPatternProbe.request() },
+                        enabled = diagnostics.enabled && carPattern.available &&
+                            !carPattern.visible && !videoSnapshot.playing &&
+                            !carWindowProbe.running && !directSurface.visible,
+                    ) { Text(if (carPattern.visible) "Showing test bars…" else "Show test bars on car") }
+                    Text(
+                        "Window readback: " + carPattern.windowReadback,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (videoSnapshot.playing) Text(
+                        "Pause playback before showing the short test image.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (carPattern.awaitingFeedback) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(true) }) {
+                                Text("Visible")
+                            }
+                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(false) }) {
+                                Text("Not visible")
+                            }
+                        }
+                    }
+                    Text(
+                        "Test bars appear for 3 seconds in the existing car window. " +
+                            "A tiny in-memory window readback compares known colors only. " +
+                            "Neither test proves what the physical head unit displays.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Direct Surface rendering test",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Renders an animated synthetic pattern through a separate " +
+                            "SurfaceView layer for five seconds, without creating " +
+                            "another video player or changing audio.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        directSurface.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(
+                        onClick = { CarDirectSurfaceProbe.request() },
+                        enabled = diagnostics.enabled && directSurface.available &&
+                            !directSurface.visible && !videoSnapshot.playing &&
+                            !carPattern.visible && !carWindowProbe.running,
+                    ) {
+                        Text(if (directSurface.visible)
+                            "Rendering moving pattern…" else "Test direct surface")
+                    }
+                    Text(
+                        "Submitted: ${directSurface.frameCount} frames · " +
+                            "~${directSurface.estimatedFps} fps · " +
+                            "max gap ${directSurface.maxFrameGapMs} ms",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        directSurface.readback,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (directSurface.awaitingFeedback) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                CarDirectSurfaceProbe.reportSeen(true)
+                            }) { Text("Moving image visible") }
+                            OutlinedButton(onClick = {
+                                CarDirectSurfaceProbe.reportSeen(false)
+                            }) { Text("Not visible") }
+                        }
+                    }
+                    Text(
+                        "This checks SurfaceView composition, not YouTube video " +
+                            "or physical-screen frames. Test only while parked.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "Car-window pixels: " + carWindowProbe.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (carWindowProbe.darkPercent != null) {
+                        Text(
+                            "Dark pixels: ${carWindowProbe.darkPercent}% · " +
+                                "Brightness range: ${carWindowProbe.brightnessRange ?: 0}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = { CarWindowPixelProbe.request() },
+                        enabled = diagnostics.enabled && carWindowProbe.available &&
+                            !carWindowProbe.running && !carPattern.visible &&
+                            !directSurface.visible,
+                    ) {
+                        Text(if (carWindowProbe.running) "Checking…" else "Check car-window pixels")
+                    }
+                    Text(
+                        "This manual test reads only a tiny, temporary car-window sample. " +
+                            "No image is saved. Dark pixels may be normal video, and a " +
+                            "successful sample does not prove the head unit displays it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (diagnostics.active && diagnostics.enabled) {
+            Card(Modifier.fillMaxWidth()) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Rendering-path assessment",
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(renderAssessment.summary,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text(renderAssessment.nextStep,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(onClick = {
+                        val clipboard = context.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE
+                        ) as? android.content.ClipboardManager
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(
+                            "AAYouTube car rendering diagnostics",
+                            CarRenderCorrelationPolicy.report(renderEvidence),
+                        ))
+                        AppLog.add("CAR", "User copied sanitized renderer correlation report")
+                    }) { Text("Copy rendering report") }
+                    Text(
+                        "Report contains aggregate diagnostic signals only—" +
+                            "no URLs, video identifiers or screenshots.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        Text(
+            "Standard projection is always the fallback. This experiment adds " +
+                "bounded surface recovery and diagnostics, not AnyAuto's virtual-display " +
+                "or Shizuku backend. Music and steering-wheel controls are unchanged. " +
+                "Detailed CAR messages are available in Android logcat (AAYouTube-CAR).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

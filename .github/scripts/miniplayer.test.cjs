@@ -88,7 +88,8 @@ function playerPage(options = {}) {
       return element;
     }
   }
-  Object.defineProperty(Doc.prototype, 'hidden', { configurable: true, get() { return false; } });
+  const pageState = { hidden: false };
+  Object.defineProperty(Doc.prototype, 'hidden', { configurable: true, get() { return pageState.hidden; } });
 
   const video = new Media();
   const dom = options.dom ? options.dom(video) : null;
@@ -108,7 +109,7 @@ function playerPage(options = {}) {
     appendChild(element) { element.parentNode = this; },
   };
   const window = {
-    __AAY_CFG: { backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false },
+    __AAY_CFG: Object.assign({ backgroundPlay: true, blockAds: false, sponsorBlock: false, returnDislike: false }, options.cfg || {}),
     __AAY_BROWSE: !!options.browse,
     __AAY_CAR: !!options.car,
     ytcfg: options.signedIn === undefined ? null : {
@@ -134,7 +135,12 @@ function playerPage(options = {}) {
     search: '?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
     href: 'https://m.youtube.com/watch?v=86p7SP34qSc' + (options.paused ? '&aay=paused' : (options.autoplay ? '&aay=1' : '')),
   };
+  const clock = { t: 1_000_000 };
+  class FakeMediaSource { static isTypeSupported() { return true; } }
+  window.MediaSource = FakeMediaSource;
+  const FakeDate = class extends Date { static now() { return clock.t; } };
   const context = {
+    Date: FakeDate,
     window, document, location,
     navigator, localStorage,
     history: { pushState() {}, replaceState() {} },
@@ -158,8 +164,11 @@ function playerPage(options = {}) {
 
   return {
     domNodes: dom ? dom.nodes : null,
+    MediaSource: FakeMediaSource,
     window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
+    advance(ms) { clock.t += ms; },
+    setRealHidden(on) { pageState.hidden = !!on; },
     emitWindow(type, event) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
@@ -422,15 +431,69 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
 });
 
+function hideForSaver(p) {
+  p.setRealHidden(true);
+  p.window.__aay.setBg(true);
+  p.advance(60600);
+  p.flush();
+}
+
+test('background saver waits 60 s, needs a really hidden page and restores on return', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config({ lowQuality: true });
+  p.setRealHidden(true);
+  p.window.__aay.setBg(true);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'quick app switch keeps quality');
+  p.window.__aay.setBg(false);
+  p.advance(70000);
+  p.flush();
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  p.setRealHidden(false);
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible again: saved quality at once');
+});
+
+test('background saver never runs on a page Chromium still shows, or on live streams', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config({ lowQuality: true });
+  p.window.__aay.setBg(true); // native says hidden, Chromium does not
+  p.advance(60600); p.flush();
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  const live = playerPage({ quality: true });
+  live.window.__aay.config({ lowQuality: true });
+  live.video.duration = Infinity;
+  hideForSaver(live);
+  assert.notDeepEqual(live.qualityCalls.at(-1), ['medium', 'medium']);
+});
+
+test('background saver backs off for the session if audio stalls after lowering quality', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config({ lowQuality: true });
+  p.video.paused = false;
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  const t = p.video.currentTime;
+  p.runIntervals();          // sample position
+  p.advance(9000);           // audio clock does not move for 9 s
+  p.video.currentTime = t;
+  p.runIntervals();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'stall restores quality');
+  p.window.__aay.setBg(false);
+  hideForSaver(p);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'not retried this session');
+});
+
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  p.window.__aay.setBg(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   p.window.__aay.pip(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP restores 720p instead of tiny');
   p.window.__aay.pip(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'normal background playback may reduce quality');
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
 });
@@ -439,8 +502,8 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   // Start on the phone in hidden/background mode, THEN connect Android Auto.
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  p.window.__aay.setBg(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  hideForSaver(p);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
   p.window.__aay.car(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
   p.window.__aay.mini(true);
@@ -449,7 +512,7 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   p.window.__aay.car(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'still-visible mini returns to saved HD');
   p.window.__aay.mini(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'true hidden background may use low quality');
 });
 
 test('video state reaches the media process after initialization', () => {
@@ -906,4 +969,125 @@ test('native Play before video exists starts it after the player becomes availab
   p.flush();
   p.video.trigger('loadedmetadata');
   assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
+});
+
+test('mini player watchdog restarts a frozen picture while sound plays', () => {
+  const p = playerPage();
+  let frames = 100, seeks = 0, t = 10;
+  p.video.paused = false;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: frames, droppedVideoFrames: 0 });
+  Object.defineProperty(p.video, 'currentTime', {
+    get: () => t, set: () => { seeks++; }, configurable: true,
+  });
+  p.window.__aay.mini(true);
+  p.runIntervals(); // baseline sample
+  t += 2;           // audio clock advances, frame counter does not
+  p.runIntervals();
+  assert.equal(seeks, 1, 'stalled mini picture is restarted');
+  p.window.__aay.mini(false);
+  t += 2;
+  p.runIntervals();
+  assert.equal(seeks, 1, 'watchdog stops when leaving the mini player');
+});
+
+test('mini player re-fits a video YouTube moved outside the small window', () => {
+  const p = playerPage();
+  p.window.__aay.mini(true);
+  p.flush();
+  p.classNames.delete('aay-video-only');
+  p.video.getBoundingClientRect = () => ({ left: 0, top: 132, width: 290, height: 163 });
+  p.runIntervals();
+  assert.equal(p.classNames.has('aay-video-only'), true, 'small-window layout is reapplied');
+});
+
+test('phone landscape fills the screen with the video without car behaviour', () => {
+  const p = playerPage({ dom: watchPageDom() });
+  p.window.__aay.land(true);
+  assert.ok(p.classNames.has('aay-car'), 'video and controls fill the screen');
+  assert.equal(p.window.__aay.isCar, false, 'car gestures, quality and background rules stay off');
+  p.window.__aay.mini(true);
+  assert.equal(p.classNames.has('aay-car'), false, 'the mini player never uses the fill layout');
+  p.window.__aay.mini(false);
+  assert.ok(p.classNames.has('aay-car'));
+  p.window.__aay.land(false);
+  assert.equal(p.classNames.has('aay-car'), false, 'rotating back restores the page');
+  p.window.__aay.land(true);
+  p.location.pathname = '/';
+  p.window.__aay.land(true);
+  assert.equal(p.classNames.has('aay-car'), false, 'only watch pages fill the screen');
+});
+
+function swipeDown(p, target) {
+  const t = target || { closest: () => null };
+  p.emit('touchstart', { touches: [{ clientX: 100, clientY: 50 }], target: t });
+  p.emit('touchend', { changedTouches: [{ clientX: 105, clientY: 200 }], target: t });
+}
+
+test('landscape fill: swipe down anywhere asks native for the watch page step', () => {
+  const p = playerPage({ dom: watchPageDom() });
+  p.window.__aay.land(true);
+  const before = p.miniRequests;
+  swipeDown(p); // controls overlay target, not inside the video wrappers
+  assert.equal(p.miniRequests, before + 1);
+});
+
+test('YouTube fullscreen: swipe down exits fullscreen instead of opening the mini player', () => {
+  const p = playerPage();
+  let exits = 0;
+  p.document.fullscreenElement = {};
+  p.document.exitFullscreen = () => { exits++; };
+  const before = p.miniRequests;
+  swipeDown(p);
+  assert.equal(exits, 1);
+  assert.equal(p.miniRequests, before, 'the watch page is shown first, like the YouTube app');
+});
+
+test('YouTube shown as paused while the video plays is told to play (centre button)', () => {
+  const p = playerPage();
+  let state = 2, plays = 0;
+  const player = p.document.getElementById('movie_player') || {};
+  player.getPlayerState = () => state;
+  player.playVideo = () => { plays++; state = 1; };
+  p.document.getElementById = (id) => (id === 'movie_player' ? player : null);
+  p.video.paused = false;
+  p.video.ended = false;
+  p.video.readyState = 4;
+  p.window.__aay.mini(true);
+  p.runIntervals();
+  assert.equal(plays, 1, 'player state resynced');
+  state = 2;
+  p.runIntervals();
+  assert.equal(plays, 1, 'throttled');
+  p.video.paused = true;
+  p.window.__aay.mini(false);
+});
+
+
+test('video format preference hides unwanted formats from YouTube', () => {
+  const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';
+  const AV1 = 'video/mp4; codecs="av01.0.08M.08"', AVC = 'video/mp4; codecs="avc1.4d401f"';
+  const AAC = 'audio/mp4; codecs="mp4a.40.2"', OPUS = 'audio/webm; codecs="opus"';
+  const h264 = playerPage({ cfg: { videoCodec: 'h264' } });
+  const ms = h264.MediaSource;
+  assert.equal(ms.isTypeSupported(VP9), false);
+  assert.equal(ms.isTypeSupported(VP09), false);
+  assert.equal(ms.isTypeSupported(AV1), false);
+  assert.equal(ms.isTypeSupported(AVC), true);
+  assert.equal(ms.isTypeSupported(AAC), true, 'audio is never blocked');
+  assert.equal(ms.isTypeSupported(OPUS), true);
+  assert.equal(h264.qualityStorage.get('yt-player-av1-pref'), '-1');
+
+  const vp9 = playerPage({ cfg: { videoCodec: 'vp9' } });
+  assert.equal(vp9.MediaSource.isTypeSupported(AV1), false);
+  assert.equal(vp9.MediaSource.isTypeSupported(VP9), true);
+
+  const av1 = playerPage({ cfg: { videoCodec: 'av1' } });
+  assert.equal(av1.MediaSource.isTypeSupported(AV1), true);
+  assert.equal(av1.MediaSource.isTypeSupported(VP9), true, 'AV1 prefers, never blocks fallbacks');
+  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '8192');
+
+  // A change in Features applies live (next video).
+  av1.window.__aay.config({ videoCodec: 'h264' });
+  assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
+  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
 });

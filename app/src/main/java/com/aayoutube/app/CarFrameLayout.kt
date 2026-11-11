@@ -15,6 +15,10 @@ class CarFrameLayout(context: Context) : FrameLayout(context) {
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var swipeStartAt = 0L
+    /** Optional diagnostics only; the WebView receives every original event. */
+    internal var onObservedGesture: ((CarVideoGesture) -> Unit)? = null
+    private var maxDriftX = 0f
+    private var maxDriftY = 0f
     private var trackingSwipe = false
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -24,24 +28,33 @@ class CarFrameLayout(context: Context) : FrameLayout(context) {
                 swipeStartX = event.x
                 swipeStartY = event.y
                 swipeStartAt = event.eventTime
+                maxDriftX = 0f
+                maxDriftY = 0f
             }
-            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL ->
-                trackingSwipe = false
+            MotionEvent.ACTION_MOVE -> if (trackingSwipe && event.pointerCount == 1) {
+                maxDriftX = maxOf(maxDriftX, abs(event.x - swipeStartX))
+                maxDriftY = maxOf(maxDriftY, abs(event.y - swipeStartY))
+            }
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_OUTSIDE -> trackingSwipe = false
             MotionEvent.ACTION_UP -> {
                 if (trackingSwipe && event.pointerCount == 1) {
                     val dx = event.x - swipeStartX
                     val dy = event.y - swipeStartY
-                    val threshold = 72f * resources.displayMetrics.density
-                    if (dy > threshold && abs(dx) < dy * 0.65f &&
-                        event.eventTime - swipeStartAt < 1_100L) {
-                        // Changing Compose/WebView parents in dispatchTouchEvent can lose UP events.
-                        post { onSwipeDown?.invoke() }
-                    } else if (abs(dx) < 18f * resources.displayMetrics.density &&
-                        abs(dy) < 18f * resources.displayMetrics.density &&
-                        event.eventTime - swipeStartAt < 700L) {
-                        // Let the WebView handle the same tap and expose native player controls.
-                        post { onVideoTap?.invoke() }
+                    val gesture = CarVideoGesturePolicy.classify(
+                        dx = dx, dy = dy,
+                        maxDriftX = maxOf(maxDriftX, abs(dx)),
+                        maxDriftY = maxOf(maxDriftY, abs(dy)),
+                        durationMs = event.eventTime - swipeStartAt,
+                        density = resources.displayMetrics.density,
+                        pointers = event.pointerCount,
+                    )
+                    when (gesture) {
+                        CarVideoGesture.SWIPE_DOWN -> post { onSwipeDown?.invoke() }
+                        CarVideoGesture.TAP -> post { onVideoTap?.invoke() }
+                        CarVideoGesture.NONE -> Unit
                     }
+                    if (gesture != CarVideoGesture.NONE) onObservedGesture?.invoke(gesture)
                 }
                 trackingSwipe = false
             }

@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.content.Context
 import android.net.Uri
+import android.content.res.Configuration
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -87,6 +88,16 @@ object WebHost {
     val canGoBack = MutableStateFlow(false)
     /** The player page shows a video (watch or live page). */
     val onWatchPage = MutableStateFlow(false)
+    /** Phone held sideways on a watch page: the video fills the screen (car layout rules). */
+    val landscapeFill = MutableStateFlow(false)
+    /** The user left the filled landscape video for the watch page; reset in portrait. */
+    val landscapeDismissed = MutableStateFlow(false)
+
+    /** First swipe down / Back from the landscape video: show the page with its playlist. */
+    fun dismissLandscapeFill() {
+        if (!landscapeFill.value) return
+        landscapeDismissed.value = true
+    }
     /** The selected /watch?v= ID, set by navigation rather than a delayed
      * MediaSession report. Used to prevent old lyrics from flashing on a new video. */
     val selectedWatchVideoId = MutableStateFlow("")
@@ -97,6 +108,9 @@ object WebHost {
     // A /watch route can change video ID without recreating the WebView. Use
     // the current history ID to reject queued JS reports from the old video.
     private var expectedWatchVideoId: String? = null
+    // The video navigated away from: only its late reports are stale. The page
+    // address can lag behind the player (Mix/autoplay), so any other ID is current.
+    private var staleReportId: String? = null
     // Observe transport arrival separately from IPC delivery and actual playback.
     private var skipTraceSerial = 0
     private var skipTraceActive = false
@@ -308,8 +322,27 @@ object WebHost {
     // ---------------------------------------------------------------- the page script
 
     internal fun script(): String {
-        val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
+        val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
+            app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
+        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) +
+            ";\n" + source
+    }
+
+    /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
+    fun applyEq(json: String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post { applyEq(json) }
+            return
+        }
+        js("window.__aay&&window.__aay.eq&&window.__aay.eq($json)")
+    }
+
+    fun onJsEqStatus(status: String, generation: Int) {
+        if (generation != webGeneration) return
+        main.post {
+            if (generation != webGeneration) return@post
+            AAYSoundFx.onWebAudioStatus(status)
+        }
     }
 
     private fun installScript(w: WebView) {
@@ -490,6 +523,8 @@ object WebHost {
         // Also reports the element painted at the screen centre (a page overlay
         // covering the video), the real page visibility and whether frames
         // keep decoding, so a black car screen can be classified from logcat.
+        // Capture the owner now: delayed JS responses must not update a newer car host.
+        val probeCarHost = activeCarHost.value.orEmpty()
         w.evaluateJavascript(
             """(function(){
                 // Reconnects and SPA navigation can drop the document's car class.
@@ -516,6 +551,8 @@ object WebHost {
                     dropped:v?(v.webkitDroppedFrameCount||0):0,
                     t:v?Math.round(v.currentTime):null,
                     paused:v?v.paused:null,
+                    videoReady:v?v.readyState:0,
+                    seeking:v?v.seeking:false,
                     vis:v?getComputedStyle(v).visibility:null,
                     hidden:hidden,
                     car:document.documentElement.classList.contains('aay-car'),
@@ -529,6 +566,32 @@ object WebHost {
             })()""".trimIndent()
         ) { result ->
             AppLog.add("CAR", "Chromium geometry probe=" + result.take(500))
+            if (ExperimentalCarVideoMonitor.state.value.enabled &&
+                ExperimentalCarVideoMonitor.state.value.owner == probeCarHost
+            ) runCatching {
+                // evaluateJavascript wraps a JSON.stringify return as a JSON string.
+                // Decode only geometry and frame counters, never URL or document text.
+                val raw = org.json.JSONTokener(result).nextValue() as? String ?: return@runCatching
+                val info = JSONObject(raw)
+                val size = info.optJSONArray("videoSize")
+                ExperimentalCarVideoMonitor.decoder(
+                    owner = probeCarHost,
+                    decoded = info.optInt("frames", -1),
+                    dropped = info.optInt("dropped", -1),
+                    width = size?.optInt(0, 0) ?: 0,
+                    height = size?.optInt(1, 0) ?: 0,
+                    paused = if (info.isNull("paused")) null else info.optBoolean("paused"),
+                    monotonicMs = SystemClock.elapsedRealtime(),
+                    positionSeconds = info.optDouble("t", Double.NaN)
+                        .takeIf { it.isFinite() },
+                    hasVideo = info.optBoolean("hasVideo", false),
+                    readyState = info.optInt("videoReady", 0),
+                    seeking = info.optBoolean("seeking", false),
+                )
+            }.onFailure {
+                AppLog.add("CAR", "Experimental decoder probe unavailable: " +
+                    it.javaClass.simpleName)
+            }
         }
         // What is painted over the video: the hit-test stack at the centre down to
         // the <video>, plus any full-screen opaque fixed/absolute box that does not
@@ -709,9 +772,32 @@ object WebHost {
         }
     }
 
+    /** A speed the user picked in YouTube's own menu becomes the default, when remembered. */
+    fun requestSpeedFromBridge(rate: Double, generation: Int) {
+        if (!rate.isFinite() || rate < 0.25 || rate > 2.0) return
+        main.post {
+            val speed = PlayerPrefsPolicy.normalizeSpeed(rate.toFloat())
+            if (generation != webGeneration || !Features.current.rememberSpeed ||
+                speed == Features.current.playbackSpeed) return@post
+            Features.update { it.copy(playbackSpeed = speed) }
+        }
+    }
+
     /** Swipe down on the video (or back while it plays): shrink it and browse YouTube underneath. */
     fun requestMiniFromBridge(generation: Int) {
-        main.post { if (generation == webGeneration) enterMini() }
+        main.post {
+            if (generation != webGeneration) return@post
+            // From the filled landscape video, the first swipe shows the watch page;
+            // swiping the player there again opens the mini player.
+            if (landscapeFill.value) dismissLandscapeFill() else enterMini()
+        }
+    }
+
+    fun setLandscapeFill(on: Boolean) {
+        if (landscapeFill.value == on) return
+        landscapeFill.value = on
+        noteVisibilityChange()
+        js("window.__aay&&window.__aay.land&&window.__aay.land($on)")
     }
 
     fun enterMini() {
@@ -755,6 +841,8 @@ object WebHost {
     fun expandPlayer() {
         if (mode.value == PlayerMode.FULL) return
         AppLog.add("VIEW", "Mini player expanded")
+        // Like the YouTube app: expanding sideways shows the watch page and playlist.
+        onFullscreenClosed()
         noteVisibilityChange()
         mode.value = PlayerMode.FULL
         js("window.__aay&&window.__aay.mini(false)")
@@ -900,6 +988,13 @@ object WebHost {
         customCallback = null
         fullscreenView.value = null
         cb?.onCustomViewHidden()
+        onFullscreenClosed()
+    }
+
+    /** Leaving YouTube's fullscreen while sideways shows the watch page, not our fill layout. */
+    private fun onFullscreenClosed() {
+        if (app.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
+            landscapeDismissed.value = true
     }
 
     // ---------------------------------------------------------------- freeze / release
@@ -946,6 +1041,7 @@ object WebHost {
     /** Frees the WebView completely (nothing is playing and no screen is open). */
     fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
+        AAYSoundFx.shutdown() // immediately retire any shared output-mix effects
         main.removeCallbacks(freezeSoon)
         exitFullscreen()
         val w = web
@@ -967,6 +1063,7 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
+        AAYSoundFx.onPlaybackChanged(false)
         selectedWatchVideoId.value = ""
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
@@ -1204,7 +1301,7 @@ object WebHost {
         main.post {
             if (generation != webGeneration) return@post
             if (s.id.isNotBlank() && (!mainFrameAllowsPlayback ||
-                    (expectedWatchVideoId != null && expectedWatchVideoId != s.id))) {
+                    PlaybackReportPolicy.stale(s.id, expectedWatchVideoId, staleReportId))) {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
@@ -1303,6 +1400,7 @@ object WebHost {
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
         snapshot.value = s
+        AAYSoundFx.onPlaybackChanged(s.playing)
         if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
         if (!s.playing && !shown) scheduleFreeze()
@@ -1389,12 +1487,14 @@ object WebHost {
             // here too, not just on YouTube's same-document SPA transitions.
             val route = runCatching { Uri.parse(url).path }.getOrNull()
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
+            staleReportId = previous.id.takeIf { it.isNotBlank() && it != incomingId }
             expectedWatchVideoId = incomingId?.takeIf { route == "/watch" && it.isNotBlank() }
             selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             if (PlaybackRoutePolicy.shouldClearPrevious(route, incomingId, previous.id)) {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 snapshot.value = Snap()
+                AAYSoundFx.onPlaybackChanged(false)
                 send(Msg.STATE, Snap().toBundle())
                 AppLog.add("PLAY", "Navigation cleared previous media session")
             }
@@ -1416,7 +1516,9 @@ object WebHost {
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
+            if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.eq&&window.__aay.eq(${AAYSoundFx.webAudioJson()})", null)
             sameVideoReloadPosition?.let { (videoId, positionMs) ->
                 if (runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull() == videoId) {
                     val seconds = positionMs / 1000.0
@@ -1444,7 +1546,10 @@ object WebHost {
             val parsed = runCatching { Uri.parse(url) }.getOrNull()
             val route = parsed?.path
             mainFrameAllowsPlayback = PlaybackRoutePolicy.isPlaybackRoute(route)
-            expectedWatchVideoId = parsed?.getQueryParameter("v")
+            val newVideo = parsed?.getQueryParameter("v")
+            if (newVideo != expectedWatchVideoId)
+                staleReportId = snapshot.value.id.takeIf { it.isNotBlank() && it != newVideo }
+            expectedWatchVideoId = newVideo
                 ?.takeIf { route == "/watch" && it.isNotBlank() }
             selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()
             onWatchPage.value = mainFrameAllowsPlayback
@@ -1524,6 +1629,7 @@ object WebHost {
         override fun onHideCustomView() {
             customCallback = null
             fullscreenView.value = null
+            onFullscreenClosed()
             AppLog.add("VIEW", "Fullscreen player closed")
         }
 
@@ -1574,6 +1680,18 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun quality(value: String) {
         WebHost.requestQualityFromBridge(value, generation)
+    }
+
+    /** In-player Web Audio equalizer state: off, waiting, active or unsupported. */
+    @JavascriptInterface
+    fun eqStatus(status: String) {
+        WebHost.onJsEqStatus(status, generation)
+    }
+
+    /** Persist only speeds picked by the user in YouTube's menu. */
+    @JavascriptInterface
+    fun speed(rate: Double) {
+        WebHost.requestSpeedFromBridge(rate, generation)
     }
 
     /** Swipe down on the playing video. */

@@ -36,7 +36,7 @@ class TopSettingsNavigationContractTest {
         val text = source()
         val settings = text.substringAfter("private fun AAYoutubeSettingsMenu(")
             .substringBefore("// ---------------------------------------------------------------------------- features")
-        assertTrue(settings.contains("listOf(Tab.Features, Tab.Lyrics, Tab.Info, Tab.Update)"))
+        assertTrue(settings.contains("listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update)"))
         assertTrue(settings.contains("Modifier.weight(1f).fillMaxWidth().verticalScroll"))
         assertFalse(settings.contains("NavigationBar("))
         assertFalse(settings.contains("NavigationBarItem("))

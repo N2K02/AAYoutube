@@ -50,8 +50,8 @@ class CarPlayerLayoutContractTest {
         assertTrue(js.contains("if (!A.isCar || BROWSE || A.isMini) return;"))
         // Explicit battery saver is limited to fully hidden background audio.
         // Car, PiP, and draggable mini video must keep the saved user quality.
-        assertTrue(js.contains("A.isBg && !A.isCar && !A.inPip && !A.isMini &&"))
-        assertTrue(js.contains("CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality()"))
+        assertTrue(js.contains("if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality"))
+        assertTrue(js.contains("return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();"))
         assertTrue(js.contains("A.setBg = function (on)"))
         assertTrue(js.contains("applyPreferredQuality();"))
         assertTrue(js.contains("qualityApply.player === p && qualityApply.key === key"))
