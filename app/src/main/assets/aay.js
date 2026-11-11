@@ -988,7 +988,7 @@
   }
 
   /* Player preferences from the Features page: speed, loop, captions. */
-  var ownRateAt = 0, userTouchAt = 0;
+  var ownRateAt = 0, userTouchAt = 0, loadAt = 0;
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   }
@@ -1009,6 +1009,7 @@
       try {
         if (CFG.captions === 'off') {
           if (p && p.setOption) p.setOption('captions', 'track', {});
+          if (p && p.unloadModule) p.unloadModule('captions');
         } else if (p && p.getOption) {
           if (p.loadModule) p.loadModule('captions');
           var cur = p.getOption('captions', 'track');
@@ -1022,13 +1023,20 @@
     document.addEventListener('pointerdown', function (e) {
       if (e.isTrusted !== false) userTouchAt = Date.now();
     }, true);
+    // Tapping a thumbnail loads a new video and YouTube resets its speed: never
+    // mistake that reset for a speed the user picked.
+    ['loadstart', 'emptied', 'loadedmetadata', 'durationchange'].forEach(function (n) {
+      document.addEventListener(n, function (e) {
+        if (e.target && e.target.tagName === 'VIDEO') loadAt = Date.now();
+      }, true);
+    });
     // Remember only a speed the user just picked in YouTube's menu, never
     // YouTube's own resets or the speed this script applied.
     document.addEventListener('ratechange', function (e) {
       var v = e.target;
       if (!v || v.tagName !== 'VIDEO' || !CFG.rememberSpeed || isAd()) return;
       var now = Date.now();
-      if (now - ownRateAt < 800 || now - userTouchAt > 2500) return;
+      if (now - ownRateAt < 800 || now - userTouchAt > 2500 || now - loadAt < 3000) return;
       var rate = v.playbackRate;
       if (!isFinite(rate) || Math.abs(rate - (Number(CFG.speed) || 1)) < 0.01) return;
       CFG.speed = rate;
@@ -1036,7 +1044,16 @@
     }, true);
 
     // Double-tap seek with a custom length. At YouTube's own 10 s nothing is intercepted.
-    var lastTap = null;
+    var lastTap = null, seekHold = null;
+    document.addEventListener('seeking', function (e) {
+      var h = seekHold;
+      if (!h || e.target !== h.v) return;
+      if (Date.now() > h.until) { seekHold = null; return; }
+      if (Math.abs(h.v.currentTime - h.target) > 1.5) {
+        seekHold = null;
+        h.v.currentTime = h.target;
+      }
+    }, true);
     document.addEventListener('touchend', function (e) {
       var secs = Number(CFG.seekSeconds) || 10;
       if (secs === 10 || A.isMini || A.inPip || A.isCar || e.changedTouches.length !== 1 ||
@@ -1059,7 +1076,9 @@
       if (!dir) return;
       e.stopPropagation();
       if (e.cancelable) e.preventDefault();
-      v.currentTime = Math.max(0, Math.min(v.duration - 0.5, v.currentTime + dir * secs));
+      var target = Math.max(0, Math.min(v.duration - 0.5, v.currentTime + dir * secs));
+      v.currentTime = target;
+      seekHold = { v: v, target: target, until: now + 700 };
       schedReport(250);
     }, { capture: true, passive: false });
   }
@@ -1498,6 +1517,12 @@
   function pipCheck() {
     var v = getVideo();
     if (!v) return;
+    // Hidden (Home, screen off): Chromium stops decoding frames on purpose. Restarting
+    // the picture there would only interrupt background audio every few seconds.
+    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) {
+      pipLast = null;
+      return;
+    }
     if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
     var i = videoInfo(v);
     if (pipLast && !v.paused && i.t > pipLast.t + 0.5 && i.frames >= 0 && i.frames === pipLast.frames) {

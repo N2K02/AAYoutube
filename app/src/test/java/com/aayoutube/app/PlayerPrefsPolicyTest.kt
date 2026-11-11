@@ -48,7 +48,15 @@ class PlayerPrefsPolicyTest {
         assertTrue(js.contains("now - userTouchAt > 2500"))
         assertTrue(js.contains("if (CFG.hideComments) css += CSS_COMMENTS;"))
         // Smooth mode changes fade; the WebView size is never animated per frame.
-        assertTrue(ui.contains("fade.animateTo(1f, tween(240))"))
-        assertTrue(ui.contains("playerMod.graphicsLayer { alpha = fade.value }"))
+        assertTrue(ui.contains("scrim.animateTo(0f, tween(240))"))
+        assertFalse("WebView must stay opaque", ui.contains("playerMod.graphicsLayer { alpha = fade"))
+        assertTrue(ui.contains("if (!snap.playing) return@LaunchedEffect"))
+        // Speed memory ignores YouTube's reset on a new video; double tap keeps one jump.
+        assertTrue(js.contains("now - loadAt < 3000"))
+        assertTrue(js.contains("seekHold = { v: v, target: target"))
+        assertTrue(js.contains("p.unloadModule('captions')"))
+        // Mini/PiP watchdog never restarts the picture on a hidden page (background audio).
+        val watchdog = js.substringAfter("function pipCheck()").substringBefore("pipLast = i;")
+        assertTrue(watchdog.contains("hidden').get.call(document)"))
     }
 }

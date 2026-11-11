@@ -661,21 +661,22 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
                 else -> Modifier.fillMaxSize()
             }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
-            // Smooth mode changes (mini, expand, landscape fill) with a short fade. The
-            // WebView is resized once, never per frame: animating its size re-lays out
-            // Chromium's video on every frame and stalls the decoder.
-            val fade = remember { Animatable(1f) }
+            // Smooth mode changes (mini, expand, landscape fill): a scrim over the video
+            // fades out. The WebView itself is never made translucent (that drops Chromium
+            // off its video overlay path: more GPU, possible black frames) and is resized
+            // once, never per frame (that stalls the decoder).
+            val scrim = remember { Animatable(0f) }
             var fadeArmed by remember { mutableStateOf(false) }
             LaunchedEffect(small, hidden, landFill) {
                 if (!fadeArmed) { fadeArmed = true; return@LaunchedEffect }
                 if (inPip || onCar || projectedToCar) return@LaunchedEffect
-                fade.snapTo(0.25f)
-                fade.animateTo(1f, tween(240))
+                scrim.snapTo(0.7f)
+                scrim.animateTo(0f, tween(240))
             }
             // Do not let a still-resumed phone screen steal the car's player.
             if (!projectedToCar || onCar) key(version) {
                 AndroidView(
-                    modifier = playerMod.graphicsLayer { alpha = fade.value },
+                    modifier = playerMod,
                     factory = { ctx ->
                         val activity = ctx.findActivity()!!
                         FrameLayout(ctx).also { frame ->
@@ -686,12 +687,17 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 )
             }
 
+            if (scrim.value > 0f && !onCar) Box(
+                playerMod.graphicsLayer { alpha = scrim.value }.background(Color.Black),
+            )
+
             // Mini player controls (like the YouTube app): play/pause top left, close top right,
             // red progress line at the bottom. Tap to open it again, drag to move it.
             if (small) {
                 // Progress: the page reports now and then; move it along in between.
                 var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
                 LaunchedEffect(snap) {
+                    if (!snap.playing) return@LaunchedEffect
                     while (true) {
                         now = android.os.SystemClock.elapsedRealtime()
                         delay(500)
