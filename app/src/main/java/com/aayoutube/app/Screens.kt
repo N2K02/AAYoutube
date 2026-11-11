@@ -928,7 +928,7 @@ fun FeaturesPage() {
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
             Toggle("Background play", "Prevents YouTube pausing when the screen is hidden. Android Auto playback also uses the media service.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
-            Toggle("Save battery in background", "With the app hidden for a minute, the unseen video drops to 360p while the audio keeps playing. Your quality returns as soon as you open the app. Never in PiP, Android Auto, ads or live streams; turns itself off if audio stalls.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
+            Toggle("Save battery in background", "With the app hidden for a minute, the unseen video drops to 144p while the audio keeps playing. Your quality returns as soon as you open the app. Never in PiP, Android Auto, ads or live streams; turns itself off if audio stalls.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
             ListItem(headlineContent = { Text("Video quality") },
                 supportingContent = { Text("Starts at 720p; choosing another resolution in YouTube’s quality menu saves it for future videos. Current: " + f.preferredQuality) },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer))

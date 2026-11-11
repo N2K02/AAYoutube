@@ -1942,7 +1942,7 @@
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
   }
   /* Battery saver with the screen off / app hidden: nothing can show the video,
-   * so drop it to 360p: ~90% less decoding than 1080p, yet still decent for
+   * so drop it to 144p (lowest tier: least decoding while audio plays), enough for
    * the few seconds YouTube may play from that buffer after you return. Safeguards:
    *  - only after 60 s hidden (checking a message never touches quality);
    *  - only when the app reports it is not on screen (A.isBg: no visible activity,
@@ -1953,7 +1953,7 @@
    *  - the saved quality comes back the moment the app is visible again;
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
-  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'medium';
+  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'tiny';
   var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
   function realHidden() {
     try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }

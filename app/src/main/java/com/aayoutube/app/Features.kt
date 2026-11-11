@@ -86,7 +86,7 @@ object Features {
         val d = FeatureFlags()
         // Old installs had background tiny (144p) enabled by default. Migrate once
         // to 720p continuity; users may deliberately re-enable the battery saver.
-        // V3: the background saver now waits 60 s (360p), never runs in PiP/car/ads/live and
+        // V3: the background saver now waits 60 s (144p), never runs in PiP/car/ads/live and
         // restores quality if audio stalls, so it is on by default once. A later Off by
         // the user is kept.
         val lowQuality = if (prefs.getBoolean("qualityPolicyV3", false)) {

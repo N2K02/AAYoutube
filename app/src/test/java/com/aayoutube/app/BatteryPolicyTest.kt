@@ -4,7 +4,7 @@ import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Battery: 60 Hz while video plays on screen; 360p saver when the app is off screen. */
+/** Battery: 60 Hz while video plays on screen; 144p saver when the app is off screen. */
 class BatteryPolicyTest {
     private fun src(path: String): String =
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
