@@ -55,7 +55,7 @@ class AudioOnlyBackgroundTest {
         assertTrue(r.indexOf("if (!audioOnlyEligible())") < r.indexOf("w.setAudioOnly(true)"))
         assertTrue(r.contains("if (w.audioOnly) w.setAudioOnly(false)"))
         // Every visibility/PiP/car transition already calls refreshBackgroundQuality().
-        assertTrue(h.substringAfter("fun refreshBackgroundQuality() {").substringBefore("}").contains("refreshAudioOnly()"))
+        assertTrue(h.substringAfter("fun refreshBackgroundQuality() {").substringBefore("\n    }").contains("refreshAudioOnly()"))
         val drop = h.substringAfter("private fun resumeIfDropped(").substringBefore("unexpectedPauseRecoveryUntil = now + 120_000L")
         assertTrue("an unexpected drop restores video", drop.contains("audioOnlyDropped(now)"))
         assertTrue("a user pause never trips it", drop.indexOf("userPausedAt <= 5_000L") < drop.indexOf("audioOnlyDropped(now)"))
