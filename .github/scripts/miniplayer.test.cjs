@@ -978,3 +978,23 @@ test('YouTube fullscreen: swipe down exits fullscreen instead of opening the min
   assert.equal(exits, 1);
   assert.equal(p.miniRequests, before, 'the watch page is shown first, like the YouTube app');
 });
+
+test('YouTube shown as paused while the video plays is told to play (centre button)', () => {
+  const p = playerPage();
+  let state = 2, plays = 0;
+  const player = p.document.getElementById('movie_player') || {};
+  player.getPlayerState = () => state;
+  player.playVideo = () => { plays++; state = 1; };
+  p.document.getElementById = (id) => (id === 'movie_player' ? player : null);
+  p.video.paused = false;
+  p.video.ended = false;
+  p.video.readyState = 4;
+  p.window.__aay.mini(true);
+  p.runIntervals();
+  assert.equal(plays, 1, 'player state resynced');
+  state = 2;
+  p.runIntervals();
+  assert.equal(plays, 1, 'throttled');
+  p.video.paused = true;
+  p.window.__aay.mini(false);
+});

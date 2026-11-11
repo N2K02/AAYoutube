@@ -161,6 +161,8 @@
       var manual = !allowPause && Date.now() <= userPauseEligibleUntil;
       if (!allowPause && !manual && holding() && !this.ended) {
         ignored++;
+        // YouTube already marked itself paused: resync its UI once the pause is dropped.
+        later(syncPlayerState, 400);
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
         if (ignored <= 2 || ignored % 250 === 0) {
@@ -184,6 +186,9 @@
     }, true);
     window.addEventListener('play', function (e) {
       if (e.target && e.target.tagName === 'VIDEO') console.log('[aay] video play event');
+    }, true);
+    window.addEventListener('playing', function (e) {
+      if (e.target && e.target.tagName === 'VIDEO') later(syncPlayerState, 300);
     }, true);
   } catch (e) {}
 
@@ -989,6 +994,33 @@
 
   /* Player preferences from the Features page: speed, loop, captions. */
   var ownRateAt = 0, userTouchAt = 0, loadAt = 0;
+  /* YouTube's player can think it is paused while the video plays: background
+   * play drops pauses YouTube asks for (resize, mini, PiP, hiding), and a resume
+   * done on the <video> directly skips YouTube's own state. Its centre button
+   * then shows Play and, in the mini player or PiP, it may stop painting the
+   * picture. Tell YouTube to play when the media is actually playing. */
+  var stateFixAt = 0;
+  function syncPlayerState() {
+    if (BROWSE) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || isAd()) return;
+    var st;
+    try { st = p.getPlayerState(); } catch (e) { return; }
+    if (st !== 2) return; // 2 = paused
+    var now = Date.now();
+    if (now - stateFixAt < 2500) return;
+    stateFixAt = now;
+    try { p.playVideo(); } catch (e) {}
+  }
+  // Repaint the video layer: after a WebView resize Chromium can keep showing
+  // a black layer although new frames are decoded.
+  function repaintVideo(v) {
+    if (!v || !v.style || typeof v.style.setProperty !== 'function') return;
+    v.style.setProperty('opacity', '0.999', 'important');
+    var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
+    raf(function () { raf(function () { v.style.removeProperty('opacity'); }); });
+  }
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   }
@@ -1293,6 +1325,7 @@
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
       if (A.isBg && !A.inPip && !A.isCar) return;
       skipAd();
+      syncPlayerState();
       dialogs();
       rydApply();
       openFirstResult();
@@ -1524,6 +1557,7 @@
       return;
     }
     if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
+    syncPlayerState();
     var i = videoInfo(v);
     if (pipLast && !v.paused && i.t > pipLast.t + 0.5 && i.frames >= 0 && i.frames === pipLast.frames) {
       var now = Date.now();
@@ -1532,6 +1566,7 @@
         pipFixAt = now;
         console.log('[aay] pip: restarting the picture');
         try { v.currentTime = v.currentTime; } catch (e) {}
+        repaintVideo(v);
       }
     }
     pipLast = i;
@@ -1737,6 +1772,7 @@
         window.dispatchEvent(new Event('resize'));
         var v = getVideo();
         if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
+        if (ms === 450 && v) { repaintVideo(v); syncPlayerState(); }
       }, ms); });
     } else fixLayout();
   }
@@ -1747,6 +1783,7 @@
     if (!(A.isMini || A.inPip)) return;
     if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
     pipLast = null;
+    later(function () { repaintVideo(getVideo()); }, 300);
     later(pipCheck, 1200);
     later(pipCheck, 2600);
   });
