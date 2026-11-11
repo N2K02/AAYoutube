@@ -14,7 +14,7 @@ class LegacyProjectionControlsContractTest {
         // Floating, centred, icons-only pill shared with the phone.
         assertTrue(code.contains("FloatingVideoBar("))
         assertTrue(code.contains("car = true,"))
-        assertTrue(code.contains("Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))"))
+        assertTrue(code.contains("Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, carLandscape))"))
         assertFalse("no text labels on the car controls", code.contains("CarControl("))
         assertTrue(code.contains("Modifier.fillMaxSize().background(Color.Black)"))
         assertTrue(code.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))

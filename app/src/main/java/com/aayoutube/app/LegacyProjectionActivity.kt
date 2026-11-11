@@ -487,6 +487,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             val miniPrefs = remember { getSharedPreferences("car_mini", android.content.Context.MODE_PRIVATE) }
             var miniX by remember { mutableStateOf(miniPrefs.getFloat("x", 1f).coerceIn(0f, 1f)) }
             var miniY by remember { mutableStateOf(miniPrefs.getFloat("y", 1f).coerceIn(0f, 1f)) }
+            // Landscape car screens (the usual Android Auto shape) get the top-centre pill.
+            val carLandscape = ControlsSidePolicy.isLandscape(maxWidth.value, maxHeight.value)
             val miniWidth = minOf(240.dp, (maxWidth - 24.dp) * 0.8f)
             val miniHeight = miniWidth * (9f / 16f)
             // Only the actual controls rail intercepts touches. The video can be
@@ -635,8 +637,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 visible = controlsVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 12.dp).zIndex(20f),
+                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, carLandscape))
+                    .padding(
+                        horizontal = if (carLandscape) 0.dp else 12.dp,
+                        vertical = if (carLandscape) 12.dp else 0.dp,
+                    ).zIndex(20f),
             ) {
                 FloatingVideoBar(
                     playing = playing.playing,
@@ -645,6 +650,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         playing.id, selectedWatchVideoId, playing.buffering, playing.ended
                     ) && mode == WebHost.PlayerMode.FULL,
                     car = true,
+                    vertical = ControlsSidePolicy.vertical(carLandscape),
                     onBack = { carBackToMini(); controlsVersion++ },
                     onHome = { carHomeToMini(); controlsVersion++ },
                     onPlayPause = {

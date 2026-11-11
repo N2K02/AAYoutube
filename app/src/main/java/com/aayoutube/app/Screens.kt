@@ -476,6 +476,7 @@ fun AppRoot(activity: MainActivity) {
         }
         // App-owned watch header overlays the WebView without relayout.
         // Android Auto's separate native host bars remain host-controlled.
+        val phoneLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
         if (watchTab && headerAllowed) {
             // Same small floating side rail as Android Auto (one shared side
             // setting, Right by default). Any touch on the page shows it.
@@ -483,8 +484,11 @@ fun AppRoot(activity: MainActivity) {
                 visible = topMenuVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 8.dp).zIndex(20f),
+                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, phoneLandscape))
+                    .then(
+                        if (phoneLandscape) Modifier.statusBarsPadding().padding(top = 8.dp)
+                        else Modifier.padding(horizontal = 8.dp)
+                    ).zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
@@ -502,6 +506,7 @@ fun AppRoot(activity: MainActivity) {
                     },
                     onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
+                    vertical = ControlsSidePolicy.vertical(phoneLandscape),
                 ) {
                     BarIcon(
                         Icons.Filled.MusicNote,
@@ -982,9 +987,13 @@ fun FeaturesPage() {
                 }
             }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 4.dp)) {
+                val sideEnabled = ControlsSidePolicy.sideSettingEnabled(
+                    LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+                )
                 Text("Video controls side", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Where the floating video controls sit, on your phone and Android Auto.",
+                    if (sideEnabled) "Where the floating video controls sit in portrait, on your phone and Android Auto."
+                    else "In landscape the video controls are always at the top centre. Rotate to portrait to change the side.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -995,6 +1004,7 @@ fun FeaturesPage() {
                         SegmentedButton(
                             selected = f.controlsOnLeft == left,
                             onClick = { Features.update { it.copy(controlsOnLeft = left) } },
+                            enabled = sideEnabled,
                             shape = SegmentedButtonDefaults.itemShape(index = i, count = sides.size),
                         ) { Text(ControlsSidePolicy.label(left)) }
                     }

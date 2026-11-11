@@ -22,9 +22,21 @@ internal fun Modifier.revealControlsOnTouch(onTouch: () -> Unit): Modifier =
         }
     }
 
-/** Which side the vertical controls rail sits on (Features > Video controls side). */
+/**
+ * Where the floating controls sit. Portrait: a vertical rail on the left or
+ * right (Features > Video controls side). Landscape (phone or Android Auto
+ * video): always a horizontal pill at the top centre, and the side setting
+ * is ignored and shown disabled. The saved side is kept for portrait.
+ */
 internal object ControlsSidePolicy {
-    fun alignment(left: Boolean): Alignment = if (left) Alignment.CenterStart else Alignment.CenterEnd
+    fun alignment(left: Boolean, landscape: Boolean = false): Alignment = when {
+        landscape -> Alignment.TopCenter
+        left -> Alignment.CenterStart
+        else -> Alignment.CenterEnd
+    }
+    fun vertical(landscape: Boolean): Boolean = !landscape
+    fun sideSettingEnabled(landscape: Boolean): Boolean = !landscape
+    fun isLandscape(width: Float, height: Float): Boolean = width > height
     fun label(left: Boolean): String = if (left) "Left" else "Right"
 }
 
