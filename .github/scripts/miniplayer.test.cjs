@@ -438,7 +438,7 @@ function hideForSaver(p) {
   p.flush();
 }
 
-test('background saver waits 60 s, needs a really hidden page and restores on return', () => {
+test('background saver waits 60 s and restores on return', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.setRealHidden(true);
@@ -455,12 +455,16 @@ test('background saver waits 60 s, needs a really hidden page and restores on re
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible again: saved quality at once');
 });
 
-test('background saver never runs on a page Chromium still shows, or on live streams', () => {
+test('background saver trusts the app off-screen state even if Chromium still says visible; never on live streams', () => {
+  // Measured on device: the attached background-play WebView kept reporting
+  // visible and decoded 720p at full frame rate behind other apps.
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  p.window.__aay.setBg(true); // native says hidden, Chromium does not
+  p.window.__aay.setBg(true); // native says off screen, Chromium does not
   p.advance(60600); p.flush();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'on screen again: saved quality at once');
   const live = playerPage({ quality: true });
   live.window.__aay.config({ lowQuality: true });
   live.video.duration = Infinity;
