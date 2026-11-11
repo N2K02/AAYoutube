@@ -37,6 +37,9 @@ data class FeatureFlags(
     val topMenuTimeoutSeconds: Int = TopMenuPolicy.DEFAULT_SECONDS,
     /** Floating video controls rail on the left instead of the right (phone and car). */
     val controlsOnLeft: Boolean = false,
+    /** Where the controls sit along their edge (0..1); dragged by the user. */
+    val controlsPosPortrait: Float = 0.5f,
+    val controlsPosLandscape: Float = 0.5f,
     /** Opt-in car-only surface recovery; never changes the media service. */
     val experimentalVideo: Boolean = false,
     /** Speed every video starts at; a speed picked in YouTube's menu replaces it when remembered. */
@@ -115,6 +118,8 @@ object Features {
                 prefs.getInt("topMenuTimeoutSeconds", d.topMenuTimeoutSeconds)
             ),
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
+            controlsPosPortrait = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosPortrait", d.controlsPosPortrait)),
+            controlsPosLandscape = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosLandscape", d.controlsPosLandscape)),
             experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
             playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
             rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
@@ -158,6 +163,8 @@ object Features {
             .putBoolean("resumeLastPage", n.resumeLast)
             .putInt("topMenuTimeoutSeconds", n.topMenuTimeoutSeconds)
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
+            .putFloat("controlsPosPortrait", n.controlsPosPortrait)
+            .putFloat("controlsPosLandscape", n.controlsPosLandscape)
             .putBoolean("experimentalVideo", n.experimentalVideo)
             .putFloat("playbackSpeed", n.playbackSpeed)
             .putBoolean("rememberSpeed", n.rememberSpeed)

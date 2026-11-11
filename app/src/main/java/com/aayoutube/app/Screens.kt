@@ -477,6 +477,14 @@ fun AppRoot(activity: MainActivity) {
         // App-owned watch header overlays the WebView without relayout.
         // Android Auto's separate native host bars remain host-controlled.
         val phoneLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
+        val screenCfg = LocalConfiguration.current
+        val screenAlongPx = with(LocalDensity.current) {
+            (if (phoneLandscape) screenCfg.screenWidthDp else screenCfg.screenHeightDp).dp.toPx()
+        }
+        val (railAlign, railDrag) = rememberEdgeDrag(
+            left = flags.controlsOnLeft, landscape = phoneLandscape,
+            containerPx = screenAlongPx, onActivity = { topMenuEpoch++ },
+        )
         val videoOnScreen = VideoRefreshPolicy.capped(
             watchTab = watchTab, playing = snap.playing, playerMode = playerMode,
         )
@@ -488,11 +496,11 @@ fun AppRoot(activity: MainActivity) {
                 visible = topMenuVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, phoneLandscape))
+                modifier = Modifier.align(railAlign)
                     .then(
                         if (phoneLandscape) Modifier.statusBarsPadding().padding(top = 8.dp)
                         else Modifier.padding(horizontal = 8.dp)
-                    ).zIndex(20f),
+                    ).then(railDrag).zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()

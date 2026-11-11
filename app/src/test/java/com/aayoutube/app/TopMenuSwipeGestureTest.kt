@@ -31,8 +31,8 @@ class TopMenuSwipeGestureTest {
         assertTrue(features.contains(".putBoolean(\"controlsOnLeft\", n.controlsOnLeft)"))
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-        assertTrue(phone.contains("Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, phoneLandscape))"))
-        assertTrue(car.contains("Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft, carLandscape))"))
+        assertTrue(phone.contains("Modifier.align(railAlign)") && phone.contains("left = flags.controlsOnLeft, landscape = phoneLandscape,"))
+        assertTrue(car.contains("Modifier.align(railAlign)") && car.contains("left = flags.controlsOnLeft, landscape = carLandscape,"))
         assertTrue(phone.contains("Text(\"Video controls side\""))
         assertTrue(phone.contains("Features.update { it.copy(controlsOnLeft = left) }"))
     }
