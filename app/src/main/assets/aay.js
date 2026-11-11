@@ -1101,7 +1101,6 @@
         repaintVideo(v);
       });
     });
-    console.log('[aay] rebuilt video layer (' + why + ')');
     return true;
   }
   function ytPlayer() {
@@ -1618,7 +1617,6 @@
     if (!collapsed) { landPlaylistTries = 4; return; }
     landPlaylistTries++;
     var target = panel.querySelector('[aria-expanded="false"]') || panel;
-    console.log('[aay] landscape: expanding collapsed playlist (' + panel.tagName.toLowerCase() + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) + ')');
     try { target.click(); } catch (e) {}
   }
 
@@ -1947,8 +1945,11 @@
    * so drop it to 360p: ~90% less decoding than 1080p, yet still decent for
    * the few seconds YouTube may play from that buffer after you return. Safeguards:
    *  - only after 60 s hidden (checking a message never touches quality);
-   *  - only when Chromium itself reports the page hidden, and never in PiP, the
-   *    mini player, on the car screen, during an ad or on a live stream;
+   *  - only when the app reports it is not on screen (A.isBg: no visible activity,
+   *    not PiP). Chromium's own hidden flag is NOT required: the WebView stays
+   *    attached for background play, so Chromium can still report it visible and
+   *    keep decoding 720p at full frame rate behind other apps (~100% CPU measured);
+   *  - never in PiP, the mini player, on the car screen, during an ad or on a live stream;
    *  - the saved quality comes back the moment the app is visible again;
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
@@ -1961,7 +1962,7 @@
   function bgSaverActive() {
     if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
     if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
-    if (!realHidden() || isAd()) return false;
+    if (isAd()) return false;
     var v = getVideo();
     if (!v || !isFinite(v.duration)) return false; // never on live streams
     if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }

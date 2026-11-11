@@ -142,6 +142,17 @@ class MainActivity : ComponentActivity() {
         }.also { it.connect() }
     }
 
+    /** Video on screen: ask for 60 Hz instead of the panel's 120 Hz. YouTube video is
+     * 24-60 fps, so the extra refreshes only cost compositor/GPU work (surfaceflinger
+     * measured ~50% CPU during 720p playback). 0f gives the choice back to Android. */
+    fun setVideoRefreshCap(on: Boolean) {
+        val rate = VideoRefreshPolicy.preferredRate(on)
+        val lp = window.attributes
+        if (lp.preferredRefreshRate == rate) return
+        lp.preferredRefreshRate = rate
+        window.attributes = lp
+    }
+
     fun quit() {
         AppLog.add("UI", "Quit")
         compatConnection?.command(Commands.EXIT)

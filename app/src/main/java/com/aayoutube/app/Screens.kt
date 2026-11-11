@@ -477,6 +477,10 @@ fun AppRoot(activity: MainActivity) {
         // App-owned watch header overlays the WebView without relayout.
         // Android Auto's separate native host bars remain host-controlled.
         val phoneLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
+        val videoOnScreen = VideoRefreshPolicy.capped(
+            watchTab = watchTab, playing = snap.playing, playerMode = playerMode,
+        )
+        LaunchedEffect(videoOnScreen) { activity.setVideoRefreshCap(videoOnScreen) }
         if (watchTab && headerAllowed) {
             // Same small floating side rail as Android Auto (one shared side
             // setting, Right by default). Any touch on the page shows it.
