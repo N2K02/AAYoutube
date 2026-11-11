@@ -765,7 +765,7 @@ object WebHost {
             return
         }
         if (w.audioOnly) return
-        if (!now) {
+        if (!now && AudioOnlyPolicy.DELAY_MS > 0L) {
             main.removeCallbacks(audioOnlySoon)
             main.postDelayed(audioOnlySoon, AudioOnlyPolicy.DELAY_MS)
             return
