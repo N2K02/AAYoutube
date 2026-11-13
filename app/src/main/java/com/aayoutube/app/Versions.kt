@@ -47,7 +47,10 @@ object Versions {
                     Row("This screen", if (WebHost.carDisplay) "Car display" else "Phone"),
                     Row(
                         "Car screen mode",
-                        "AndroidX surface / virtual display",
+                        when {
+                            Build.VERSION.SDK_INT >= 35 -> "App screen on the car display"
+                            else -> "Drawing surface (Android 14 and older)"
+                        },
                     ),
                 ),
             ),
@@ -68,7 +71,7 @@ object Versions {
                     Row("Compose Material 3 (Expressive)", BuildConfig.LIB_MATERIAL3),
                     Row("AndroidX MediaCompat", BuildConfig.LIB_MEDIACOMPAT),
                     Row("AndroidX WebKit", BuildConfig.LIB_WEBKIT),
-                    Row("Car projection", "AndroidX car surface 1.7.0"),
+                    Row("Car projection", "AABrowser legacy SDK"),
                     Row("Activity Compose", BuildConfig.LIB_ACTIVITYCOMPOSE),
                     Row("Kotlin", KotlinVersion.CURRENT.toString()),
                     Row("Coroutines", BuildConfig.LIB_COROUTINES),

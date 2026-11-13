@@ -36,7 +36,7 @@ class ControlsLandscapePolicyTest {
 
     @Test fun phoneAndCarWireTheLandscapePolicy() {
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         assertTrue(phone.contains("vertical = ControlsSidePolicy.vertical(phoneLandscape)"))
         assertTrue(car.contains("vertical = ControlsSidePolicy.vertical(carLandscape)"))
         assertTrue(car.contains("ControlsSidePolicy.isLandscape(maxWidth.value, maxHeight.value)"))

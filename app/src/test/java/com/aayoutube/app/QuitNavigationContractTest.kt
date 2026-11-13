@@ -14,7 +14,7 @@ class QuitNavigationContractTest {
         val rail = phone.substringAfter("// App-owned watch header overlays the WebView").substringBefore("if (lyricsOnScreen) {")
         assertTrue(rail.contains("BarIcon(Icons.Rounded.PowerSettingsNew, \"Quit AAYoutube\", BarSize.Phone,"))
         assertTrue(rail.contains("onClick = { activity.quit() })"))
-        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         assertTrue(car.contains("Icons.Rounded.PowerSettingsNew,"))
         assertTrue(car.contains("onClick = { quitFromCar() },"))
         val quit = car.substringAfter("private fun quitFromCar() {").substringBefore("    /**")

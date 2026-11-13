@@ -4,7 +4,7 @@ A personal Android app that plays YouTube in a WebView, with Android Auto suppor
 
 ## Features
 - Ad blocking, SponsorBlock, Return YouTube Dislike, hide Shorts, background play, picture in picture (best-effort; they depend on YouTube's website).
-- Android Auto: separate native Music entry and experimental AndroidX surface Video entry.
+- Android Auto: audio only, with Recently played, Favourites, voice and text search.
 - Update tab: checks GitHub releases and installs the new APK.
 
 ## Design
@@ -16,21 +16,6 @@ Battery: wake lock only while playing, lowest video quality when the screen is h
 
 ## Android Auto
 Enable developer mode in Android Auto, then turn on "Unknown sources".
-
-The experimental Video entry uses an AndroidX `CarAppService`, a host-provided surface,
-and one GPU-backed virtual display/Presentation. It reuses the existing player and
-controls; the proprietary AABrowser SDK, its downloader and reflective keyboard adapter
-have been removed. Music remains a separate `MediaBrowserServiceCompat` entry.
-
-This follows AAMaKer's wrapper architecture, built directly into our source. It uses
-the navigation surface capability experimentally; this is not a navigation app or a
-Google-approved video integration. Discovery and input depend on the Android Auto host.
-The old parallel car launcher alias is removed to avoid duplicate Video entries.
-Video is for parked use. Host-side restrictions are not patched. A host-owned SearchTemplate keyboard replaces the old proprietary car keyboard
-protocol. Surface clicks and scroll gestures are forwarded to the existing presentation.
-
-APKs retain AAYouTube's signing key through the existing CI signing workflow; no
-post-build APK patching or second signing identity is needed.
 
 ## Releases
 Every push to `main` builds a signed APK and publishes `v1.0`, `v1.1`, ... Needs the `SIGNING_PASSPHRASE` secret.

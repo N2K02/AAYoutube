@@ -48,7 +48,7 @@ class ExperimentalCarVideoPolicyTest {
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
     @Test fun carRecoveryBudgetCannotResetOnResumeOrFrameReattachment() {
-        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         assertTrue(car.contains("private var experimentalRecoveryStarted = false"))
         val schedule = car.substringAfter("private fun scheduleExperimentalRecovery() {")
             .substringBefore("    /** Frames decoded")
@@ -63,7 +63,7 @@ class ExperimentalCarVideoPolicyTest {
     @Test fun toggleIsOptInPersistedAndDoesNotChangeMusicOrPhoneRendering() {
         val features = source("app/src/main/java/com/aayoutube/app/Features.kt")
         val screens = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val projection = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val projection = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         val manifest = source("app/src/main/AndroidManifest.xml")
         assertTrue(features.contains("val experimentalVideo: Boolean = false"))
         assertTrue(features.contains("prefs.getBoolean(\"experimentalVideo\", d.experimentalVideo)"))
@@ -76,7 +76,7 @@ class ExperimentalCarVideoPolicyTest {
         assertTrue(projection.contains("WebHost.isActiveCarHost(carToken)"))
         assertTrue(projection.contains("WebHost.fullscreenView.value != null"))
         assertTrue(projection.contains("bindVideoToCarFrame(frame)"))
-        assertEquals(1, Regex("androidx[.]car[.]app[.]CarAppService").findAll(manifest).count())
+        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
         assertFalse(manifest.contains("Shizuku"))
     }
 }

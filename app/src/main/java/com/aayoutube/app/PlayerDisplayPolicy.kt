@@ -25,7 +25,7 @@ internal object PlayerDisplayPolicy {
 }
 
 /**
- * Android Auto can run two CarVideoPresentation instances at once while it
+ * Android Auto can run two LegacyProjectionActivity instances at once while it
  * recreates the car activity (old one not yet stopped, new one already shown).
  * Only the most recently claimed host may own the single player WebView, and an
  * old host's teardown must never undo the new host's ownership.

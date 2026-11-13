@@ -10,7 +10,7 @@ object CarMode {
     fun serviceComponent(c: Context): ComponentName = ComponentName(c, PlaybackService::class.java)
     fun resetToCarScreen(c: Context) {
         val pm = c.packageManager
-        listOf(ComponentName(c, CarVideoService::class.java), serviceComponent(c)).forEach { component ->
+        listOf(ComponentName(c, LegacyProjectionService::class.java), serviceComponent(c)).forEach { component ->
             runCatching {
                 if (pm.getComponentEnabledSetting(component) != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) {
                     pm.setComponentEnabledSetting(component,
@@ -23,17 +23,30 @@ object CarMode {
         // Android Auto never dispatched the exported projection service.
         // Verify the package manager can actually discover our service so the
         // next device logs distinguish manifest discovery from car host routing.
-        val query = Intent("androidx.car.app.CarAppService")
+        val query = Intent(Intent.ACTION_MAIN)
             .setPackage(c.packageName)
-            .addCategory("androidx.car.app.category.NAVIGATION")
+            .addCategory("com.google.android.gms.car.category.CATEGORY_PROJECTION")
         val matches = runCatching {
             pm.queryIntentServices(query, PackageManager.MATCH_DISABLED_COMPONENTS)
         }.getOrDefault(emptyList())
-        val videoEntry = CarVideoService::class.java.name
+        val videoEntry = LegacyProjectionService::class.java.name
         val discovered = matches.any { it.serviceInfo?.name == videoEntry }
-        val component = ComponentName(c, CarVideoService::class.java)
+        val component = ComponentName(c, LegacyProjectionService::class.java)
         val state = pm.getComponentEnabledSetting(component)
         AppLog.add("CAR", "Video projection manifest discoverable=$discovered; enabledState=$state")
 
+        // The legacy projection service alone is not a CAR_LAUNCHER activity.
+        // PR #22 removed MainActivity's old car-launcher filter, causing the
+        // AAYT Video shortcut to disappear from Customize launcher.
+        val launcherQuery = Intent(Intent.ACTION_MAIN)
+            .setPackage(c.packageName)
+            .addCategory("android.intent.category.CAR_LAUNCHER")
+        val carLaunchers = runCatching {
+            pm.queryIntentActivities(launcherQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
+        }.getOrDefault(emptyList())
+        val aliasName = c.packageName + ".AutoVideoLauncher"
+        val carLauncherFound = carLaunchers.any { it.activityInfo?.name == aliasName }
+        AppLog.add("CAR", "Video car-launcher alias discoverable=$carLauncherFound" +
+            "; entries=" + carLaunchers.size)
     }
 }

@@ -35,7 +35,7 @@ class CarVideoPatternPolicyTest {
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
     @Test fun viewIsNonDestructiveAndOnlyVisibleOnTheActiveLegacyCar() {
-        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         val page = src("app/src/main/java/com/aayoutube/app/Screens.kt")
         val pattern = src("app/src/main/java/com/aayoutube/app/CarVideoPatternProbe.kt")
         val view = src("app/src/main/java/com/aayoutube/app/CarVideoPatternView.kt")
@@ -62,6 +62,6 @@ class CarVideoPatternPolicyTest {
         assertFalse(view.contains("WebView("))
         assertFalse(pattern.contains("WebHost.cmd("))
         assertFalse(pattern.contains("MediaSession("))
-        assertEquals(1, Regex("androidx[.]car[.]app[.]CarAppService").findAll(manifest).count())
+        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
     }
 }

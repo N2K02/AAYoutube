@@ -4,13 +4,13 @@ import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
-class CarPresentationControlsContractTest {
+class LegacyProjectionControlsContractTest {
     private fun source(path: String): String =
         listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
             ?: error("Missing $path")
 
     @Test fun projectionHasCenteredNavigationAndSeparateVideoArea() {
-        val code = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val code = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         // Floating, centred, icons-only pill shared with the phone.
         assertTrue(code.contains("FloatingVideoBar("))
         assertTrue(code.contains("car = true,"))
@@ -39,7 +39,7 @@ class CarPresentationControlsContractTest {
 
     @Test fun sharedOverlayLocksTransportDuringInFlightPlayback() {
         val bar = source("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         assertTrue(bar.contains("var pending by remember"))
         assertTrue(bar.contains("val transportEnabled = transportReady && pending == null"))
@@ -52,12 +52,12 @@ class CarPresentationControlsContractTest {
 
     @Test fun videoAndMusicAreIndependentCarServices() {
         val manifest = source("app/src/main/AndroidManifest.xml")
-        assertTrue(manifest.contains("android:name=\".CarVideoService\""))
+        assertTrue(manifest.contains("android:name=\".LegacyProjectionService\""))
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
         assertTrue(manifest.contains("android:label=\"AAYT Video\""))
         assertTrue(manifest.contains("android:label=\"AAYT Music\""))
         assertTrue(manifest.contains("android:label=\"AAYoutube\""))
-        assertFalse(manifest.contains("android:name=\".LegacyProjectionService\""))
+        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
     }
 
     @Test fun phoneAndCarShareFloatingIconOnlyBar() {

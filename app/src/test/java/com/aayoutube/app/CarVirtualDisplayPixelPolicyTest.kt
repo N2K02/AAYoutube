@@ -29,7 +29,7 @@ class CarVirtualDisplayPixelPolicyTest {
         assertTrue(page.contains("CarVirtualDisplayProbe.start(context)"))
         assertTrue(page.contains("flags.experimentalVideo && !diagnostics.active"))
         assertTrue(page.contains("CarVirtualDisplayProbe.cancel()"))
-        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
         val monitor = src("app/src/main/java/com/aayoutube/app/ExperimentalCarVideoMonitor.kt")
         assertTrue(car.contains("CarVirtualDisplayProbe.cancel()"))
         assertFalse(monitor.contains("CarVirtualDisplayProbe.cancel()"))
@@ -38,6 +38,6 @@ class CarVirtualDisplayPixelPolicyTest {
         assertFalse(probe.contains("MediaSession"))
         assertFalse(probe.contains("import rikka.shizuku"))
         assertFalse(probe.contains("Shizuku.bindUserService("))
-        assertEquals(1, Regex("androidx[.]car[.]app[.]CarAppService").findAll(manifest).count())
+        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
     }
 }
