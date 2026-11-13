@@ -381,39 +381,48 @@ fun AppRoot(activity: MainActivity) {
     // page's own history (asked live from the WebView, because YouTube changes pages without
     // reloading), then YouTube home. On the home page the app goes to the background (it keeps playing).
     // YouTube Home: a playing video shrinks to the mini player instead of stopping.
+    val homeHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     val goYouTubeHome: () -> Unit = {
         tab = Tab.Watch.ordinal
-        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
-            WebHost.enterMini()
-        else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
-            BrowseHost.navigate(WebHost.home())
-        else WebHost.openUrl(WebHost.home())
+        when (PlayerNavigationPolicy.home(
+            fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
+            miniPlayer = WebHost.mode.value == WebHost.PlayerMode.MINI,
+            onWatchPage = WebHost.isOnWatchPage(),
+            fullscreen = WebHost.fullscreenView.value != null,
+        )) {
+            // The mini player cannot open over Chromium's fullscreen view: leave it first.
+            PlayerNavigationPolicy.Home.ExitFullscreenThenMini -> {
+                WebHost.exitFullscreen()
+                homeHandler.post { WebHost.enterMini() }
+            }
+            PlayerNavigationPolicy.Home.Mini -> WebHost.enterMini()
+            PlayerNavigationPolicy.Home.BrowseHome -> BrowseHost.navigate(WebHost.home())
+            PlayerNavigationPolicy.Home.OpenHome -> WebHost.openUrl(WebHost.home())
+        }
     }
     val goBack: () -> Unit = {
-        when {
-            equalizerOpen -> equalizerOpen = false
-            fullscreen != null -> WebHost.exitFullscreen()
+        when (PlayerNavigationPolicy.back(
+            equalizerOpen = equalizerOpen,
+            fullscreen = fullscreen != null,
+            landscapeFill = WebHost.landscapeFill.value,
+            onSettingsTab = tab == Tab.Settings.ordinal,
+            onWatchTab = tab == Tab.Watch.ordinal,
+            fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
+            onWatchPage = WebHost.isOnWatchPage(),
+        )) {
+            PlayerNavigationPolicy.Back.CloseEqualizer -> equalizerOpen = false
+            PlayerNavigationPolicy.Back.ExitFullscreen -> WebHost.exitFullscreen()
             // Landscape video: Back first shows the watch page (player + playlist).
-            WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()
-            tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
-            tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
-            // Browsing under the mini player (or after closing it): back moves through the browse page.
-            WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
-            // Car screen: already on Home; stay on the car screen instead of disappearing from it.
-            WebHost.carDisplay && WebHost.mode.value != WebHost.PlayerMode.FULL -> AppLog.add("UI", "Back on Home (car screen): nothing to go back to")
-            WebHost.mode.value != WebHost.PlayerMode.FULL -> activity.moveTaskToBack(true)
-            // Car screen: back from a video always shrinks it into the mini player with YouTube
-            // Home underneath, like the YouTube app (playing or paused).
-            WebHost.carDisplay && WebHost.isOnWatchPage() -> WebHost.enterMini()
-            // Even a paused video goes to mini-player. A stale MediaSession snapshot or
-            // YouTube SPA history must never make Back navigate the main player to Home.
-            WebHost.isOnWatchPage() -> WebHost.enterMini()
-            WebHost.goBack() -> Unit
-            WebHost.carDisplay -> AppLog.add("UI", "Back on YouTube home (car screen): nothing to go back to")
-            else -> {
-                AppLog.add("UI", "Back on YouTube home: app to background")
-                activity.moveTaskToBack(true)
-            }
+            PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()
+            PlayerNavigationPolicy.Back.ToWatchTab -> tab = Tab.Watch.ordinal
+            PlayerNavigationPolicy.Back.ToSettingsTab -> tab = Tab.Settings.ordinal
+            // Browsing under the mini player (or after closing it). On the car screen stay put.
+            PlayerNavigationPolicy.Back.BrowseBack ->
+                if (!BrowseHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
+            // Playing or paused, phone or car: a video shrinks to the mini player.
+            PlayerNavigationPolicy.Back.Mini -> WebHost.enterMini()
+            PlayerNavigationPolicy.Back.PageBack ->
+                if (!WebHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
         }
     }
     BackHandler(enabled = true) { goBack() }
