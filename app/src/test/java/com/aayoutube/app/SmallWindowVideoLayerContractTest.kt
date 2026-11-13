@@ -16,6 +16,8 @@ class SmallWindowVideoLayerContractTest {
         assertTrue(rebuild.contains("v.style.setProperty('display', 'none', 'important')"))
         assertTrue("restores the page's own display value", rebuild.contains("if (prev) v.style.setProperty('display', prev, prio); else v.style.removeProperty('display')"))
         assertTrue(rebuild.contains("if (now - layerRebuildAt < 1000) return false;"))
+        assertTrue("never on the Android Auto screen", rebuild.contains("if (A.isCar) return false;"))
+        assertTrue("video can never stay hidden", rebuild.contains("setTimeout(restore, 60);"))
         for (bad in listOf("currentTime", ".pause(", ".play(", "load(", "location"))
             assertFalse("no playback side effects: $bad", rebuild.contains(bad))
     }

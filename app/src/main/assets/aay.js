@@ -1087,20 +1087,28 @@
   var layerRebuildAt = 0;
   function rebuildVideoLayer(v, why) {
     if (!v || !v.style || typeof v.style.setProperty !== 'function') return false;
+    // Never on the Android Auto screen: the projected surface may not deliver
+    // animation frames, which would leave the video hidden (black mini player).
+    if (A.isCar) return false;
     var now = Date.now();
     if (now - layerRebuildAt < 1000) return false;
     layerRebuildAt = now;
     var prev = v.style.getPropertyValue('display'), prio = v.style.getPropertyPriority('display');
-    v.style.setProperty('display', 'none', 'important');
-    var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
-    raf(function () {
+    var restored = false;
+    function restore() {
+      if (restored) return;
+      restored = true;
       if (prev) v.style.setProperty('display', prev, prio); else v.style.removeProperty('display');
-      raf(function () {
+      later(function () {
         var p = ytPlayer();
         try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
         repaintVideo(v);
-      });
-    });
+      }, 32);
+    }
+    v.style.setProperty('display', 'none', 'important');
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
+    // A page that is not being drawn gets no animation frame: always restore by timer.
+    setTimeout(restore, 60);
     return true;
   }
   function ytPlayer() {
