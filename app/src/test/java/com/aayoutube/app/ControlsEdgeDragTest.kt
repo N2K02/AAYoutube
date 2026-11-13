@@ -49,7 +49,7 @@ class ControlsEdgeDragTest {
     }
 
     @Test fun phoneAndCarUseTheDrag() {
-        val gesture = src("app/src/main/java/com/aayoutube/app/TopMenuSwipeGesture.kt")
+        val gesture = src("app/src/main/java/com/aayoutube/app/ControlsEdgeDrag.kt")
         assertTrue(gesture.contains("detectDragGestures(onDragEnd = { commit() }, onDragCancel = { commit() })"))
         assertTrue(gesture.contains("if (landscape) d.x else d.y"))
         for (f in listOf("Screens.kt", "LegacyProjectionActivity.kt"))
