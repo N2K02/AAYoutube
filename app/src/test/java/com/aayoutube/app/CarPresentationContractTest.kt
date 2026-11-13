@@ -44,6 +44,8 @@ class CarPresentationContractTest {
         assertTrue(code.contains("savedController.performAttach()"))
         assertTrue(code.contains("SavedStateRegistryController.create(this)"))
         assertTrue(code.contains("fun release()"))
+        assertTrue(code.contains("FLAG_HARDWARE_ACCELERATED"))
+        assertTrue(code.contains("window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)"))
         assertTrue(code.contains("Lifecycle.Event.ON_DESTROY"))
         assertTrue(code.contains("store.clear()"))
         assertFalse(code.contains("javaClass.getMethod"))

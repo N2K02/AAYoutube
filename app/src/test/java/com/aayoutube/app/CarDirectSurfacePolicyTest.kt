@@ -80,6 +80,6 @@ class CarDirectSurfacePolicyTest {
         assertFalse(renderer.contains("MediaProjectionManager"))
         assertFalse(renderer.contains("writeBytes("))
         assertFalse(renderer.contains("compress("))
-        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
+        assertEquals(1, Regex("androidx[.]car[.]app[.]CarAppService").findAll(manifest).count())
     }
 }

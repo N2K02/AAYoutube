@@ -31,7 +31,7 @@ class CarSurfacePolicyTest {
         assertTrue(code.contains("presentation?.release()"))
         assertTrue(code.contains("display?.release()"))
         assertTrue(code.contains("surface?.takeUnless { it === keep }?.release()"))
-        assertTrue(code.contains("if (container.surface === surface)"))
+        assertTrue(code.contains("if (ended !== active) ended?.release()"))
         assertTrue(code.contains("event.recycle()"))
         assertFalse(code.contains("ALLOW_ALL_HOSTS_VALIDATOR"))
         assertFalse(code.contains("MediaProjection"))

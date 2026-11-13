@@ -60,7 +60,7 @@ internal class CarVideoScreen(context: CarContext) : Screen(context), SurfaceCal
         .build()
 
     override fun onSurfaceAvailable(container: SurfaceContainer) {
-        val output = container.surface ?: return
+        val output = container.surface ?: run { releaseSurface(); return }
         if (destroyed) { output.release(); return }
         releaseSurface(keep = output)
         val geometry = CarSurfacePolicy.geometry(container.width, container.height, container.dpi)
@@ -92,8 +92,12 @@ internal class CarVideoScreen(context: CarContext) : Screen(context), SurfaceCal
     }
 
     override fun onSurfaceDestroyed(container: SurfaceContainer) {
-        // A delayed teardown for an old surface must not close its replacement.
-        if (container.surface === surface) releaseSurface()
+        // Host callbacks are ordered. Binder may parcel a distinct Java Surface
+        // handle here, so reference equality cannot identify the active output.
+        val ended = container.surface
+        val active = surface
+        releaseSurface()
+        if (ended !== active) ended?.release()
     }
 
     override fun onClick(x: Float, y: Float) {

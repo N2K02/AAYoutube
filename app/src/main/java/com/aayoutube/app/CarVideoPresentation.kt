@@ -1,12 +1,10 @@
 package com.aayoutube.app
 
-import android.content.ComponentName
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Window
 import android.view.View
-import android.view.MotionEvent
 import android.view.KeyEvent
 import android.webkit.WebView
 import android.view.ViewGroup
@@ -15,17 +13,13 @@ import androidx.core.view.WindowInsetsControllerCompat
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
@@ -33,7 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
@@ -49,7 +42,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -107,7 +99,7 @@ internal class CarVideoPresentation(context: Context, display: Display) :
     private var inactiveLogged = false
     private var carQuitInProgress = false
     // Car presentation is not an Android Activity; WebHost IPC arrives
-    // on the :web main thread; the SDK exposes no regular Activity dispatcher.
+    // on the :web main thread; the presentation has no Activity dispatcher.
     private val carQuitCallback: () -> Unit = { shutdownCarOnlySession() }
     private val rebindWhenActive = Runnable {
         if (!carStarted || !WebHost.isActiveCarHost(carToken)) return@Runnable
@@ -311,6 +303,9 @@ internal class CarVideoPresentation(context: Context, display: Display) :
         // Log before window creation to diagnose failing car launches.
         AppLog.add("CAR", "AndroidX car presentation launching")
         super.onCreate(bundle)
+        // Dialog windows do not inherit Activity hardware acceleration flags.
+        // Chromium video must have a GPU-backed root on the virtual display.
+        window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED)
         // The new car connection wins: stop any phone-only test display before
         // Android Auto claims the live video host.
         CarVirtualDisplayProbe.cancel()
@@ -679,6 +674,7 @@ internal class CarVideoPresentation(context: Context, display: Display) :
 
     override fun onStart() {
         super.onStart()
+        window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         AppLog.add("CAR", "Video projection onStart")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
