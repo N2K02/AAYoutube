@@ -1079,38 +1079,6 @@
     var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
     raf(function () { raf(function () { v.style.removeProperty('opacity'); }); });
   }
-  /* Second and later mini/PiP entries: Chromium keeps decoding (frame count rises)
-   * but can composite a stale black video layer, so the frame watchdog never fires.
-   * One frame of display:none destroys the <video> layout object, and showing it
-   * again binds a fresh video layer to the same running player. No seek, no pause,
-   * no reload. Throttled so YouTube's resize observers settle between rebuilds. */
-  var layerRebuildAt = 0;
-  function rebuildVideoLayer(v, why) {
-    if (!v || !v.style || typeof v.style.setProperty !== 'function') return false;
-    // Never on the Android Auto screen: the projected surface may not deliver
-    // animation frames, which would leave the video hidden (black mini player).
-    if (A.isCar) return false;
-    var now = Date.now();
-    if (now - layerRebuildAt < 1000) return false;
-    layerRebuildAt = now;
-    var prev = v.style.getPropertyValue('display'), prio = v.style.getPropertyPriority('display');
-    var restored = false;
-    function restore() {
-      if (restored) return;
-      restored = true;
-      if (prev) v.style.setProperty('display', prev, prio); else v.style.removeProperty('display');
-      later(function () {
-        var p = ytPlayer();
-        try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
-        repaintVideo(v);
-      }, 32);
-    }
-    v.style.setProperty('display', 'none', 'important');
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
-    // A page that is not being drawn gets no animation frame: always restore by timer.
-    setTimeout(restore, 60);
-    return true;
-  }
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   }
@@ -1685,7 +1653,7 @@
         pipFixAt = now;
         console.log('[aay] pip: restarting the picture');
         try { v.currentTime = v.currentTime; } catch (e) {}
-        if (!rebuildVideoLayer(v, 'stall')) repaintVideo(v);
+        repaintVideo(v);
       }
     }
     pipLast = i;
@@ -1905,12 +1873,6 @@
         if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
         if (ms === 450 && v) { repaintVideo(v); syncPlayerState(); }
       }, ms); });
-      // Fresh video layer once the small window has its final size (mini and PiP).
-      later(function () {
-        if (revision !== layoutRevision || !(A.isMini || A.inPip)) return;
-        var v = getVideo();
-        if (v && !v.paused) rebuildVideoLayer(v, A.inPip ? 'pip' : 'mini');
-      }, 900);
     } else fixLayout();
   }
 
@@ -1920,7 +1882,7 @@
     if (!(A.isMini || A.inPip)) return;
     if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
     pipLast = null;
-    later(function () { var v = getVideo(); if (v && !v.paused) rebuildVideoLayer(v, 'visible'); else repaintVideo(v); }, 300);
+    later(function () { repaintVideo(getVideo()); }, 300);
     later(pipCheck, 1200);
     later(pipCheck, 2600);
   });
