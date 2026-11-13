@@ -1759,7 +1759,7 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
-    var on = !!(A.isCar || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
@@ -1816,6 +1816,18 @@
     // Android Auto can take over an existing background-audio WebView.
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
+  };
+  // Android Auto: YouTube's fullscreen button switches between the filled video
+  // and the watch page with its playlist.
+  A.carPage = function (on) {
+    A.isCarPage = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
   };
   // Phone held sideways on a watch page: the video and YouTube's controls fill the screen.
   A.land = function (on) {
