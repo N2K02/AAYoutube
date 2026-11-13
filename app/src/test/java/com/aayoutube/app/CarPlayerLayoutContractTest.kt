@@ -11,7 +11,7 @@ class CarPlayerLayoutContractTest {
 
     @Test fun projectedCarSwipeAndMiniPlayerTouchAreasDoNotBlockYoutube() {
         val frame = source("app/src/main/java/com/aayoutube/app/CarFrameLayout.kt")
-        val projection = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val projection = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val js = source("app/src/main/assets/aay.js")
         assertTrue(frame.contains("override fun dispatchTouchEvent(event: MotionEvent)"))

@@ -40,7 +40,7 @@ class TopMenuPolicyTest {
         assertTrue(screen.contains("WebPane(Modifier.fillMaxSize())"))
     }
     @Test fun carAndPhoneShareFeatureAndRestoreByTouch() {
-        val legacy = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val legacy = read("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val features = read("app/src/main/java/com/aayoutube/app/Features.kt")
         assertTrue(legacy.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
         assertTrue(legacy.contains("controlsVisible = true; controlsVersion++"))

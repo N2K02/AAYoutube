@@ -48,7 +48,7 @@ class CarDirectSurfacePolicyTest {
     @Test fun rendererIsOnlySyntheticAndHasBoundedCleanup() {
         val renderer = source("app/src/main/java/com/aayoutube/app/CarDirectSurfaceView.kt")
         val probe = source("app/src/main/java/com/aayoutube/app/CarDirectSurfaceProbe.kt")
-        val activity = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val activity = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val settings = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         val manifest = source("app/src/main/AndroidManifest.xml")
         assertTrue(renderer.contains("class CarDirectSurfaceView("))

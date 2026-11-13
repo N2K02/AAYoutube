@@ -35,7 +35,7 @@ class CarVideoPatternPolicyTest {
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
 
     @Test fun viewIsNonDestructiveAndOnlyVisibleOnTheActiveLegacyCar() {
-        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val page = src("app/src/main/java/com/aayoutube/app/Screens.kt")
         val pattern = src("app/src/main/java/com/aayoutube/app/CarVideoPatternProbe.kt")
         val view = src("app/src/main/java/com/aayoutube/app/CarVideoPatternView.kt")

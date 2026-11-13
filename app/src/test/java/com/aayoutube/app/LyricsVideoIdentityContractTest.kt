@@ -74,7 +74,7 @@ class LyricsVideoIdentityContractTest {
     }
 
     @Test fun carHostDoesNotDetachUnchangedWebViewOnRender() {
-        val projection = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val projection = read("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         // Compose updates the projected frame repeatedly. Preserve the
         // decoder surface when that exact WebView already belongs to it.
         assertTrue(projection.contains("if (frame.childCount != 1 || frame.getChildAt(0) !== player)"))

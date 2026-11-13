@@ -35,7 +35,7 @@ class PlayerLifecycleContractTest {
         assertTrue(web.contains("webGeneration++"))
         assertTrue(web.contains("generation == webGeneration"))
         assertTrue(web.contains("rendererCrashCount <= 2"))
-        val car = source("LegacyProjectionActivity.kt")
+        val car = source("CarVideoPresentation.kt")
         assertTrue(car.contains("WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)"))
         assertTrue(car.contains("bindVideoToCarFrame(frame)"))
         assertTrue(car.contains("if (!frame.isAttachedToWindow || frame.display == null) return"))

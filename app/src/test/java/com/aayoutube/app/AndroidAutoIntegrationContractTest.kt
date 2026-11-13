@@ -11,48 +11,25 @@ class AndroidAutoIntegrationContractTest {
 
     @Test fun videoAndMusicAreTwoDifferentCarEntries() {
         val manifest = src("app/src/main/AndroidManifest.xml")
-        val video = manifest.substringAfter("android:name=\".LegacyProjectionService\"").substringBefore("</service>")
+        val video = manifest.substringAfter("android:name=\".CarVideoService\"").substringBefore("</service>")
         val music = manifest.substringAfter("android:name=\".PlaybackService\"").substringBefore("</service>")
-        assertTrue(video.contains("CATEGORY_PROJECTION"))
-        assertTrue(video.contains("CATEGORY_PROJECTION_OEM"))
-        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
-            .contains("Video projection manifest discoverable="))
-        val service = src("app/src/main/java/com/aayoutube/app/LegacyProjectionService.kt")
-        assertTrue(service.contains("Android Auto requested legacy projection service"))
-        assertTrue(service.contains("Android Auto resolving projected video activity"))
+        assertTrue(video.contains("androidx.car.app.CarAppService"))
+        assertTrue(video.contains("androidx.car.app.category.NAVIGATION"))
         assertTrue(video.contains("android:process=\":web\""))
-        // Android Auto has independent video/music entries; their labels
-        // must not change the phone launcher name.
         assertTrue(video.contains("android:label=\"AAYT Video\""))
         assertTrue(music.contains("android:label=\"AAYT Music\""))
-        val phone = manifest.substringAfter("android:name=\".MainActivity\"").substringBefore("</activity>")
-        val videoLauncher = manifest.substringAfter("android:name=\".AutoVideoLauncher\"").substringBefore("</activity-alias>")
-        assertTrue(videoLauncher.contains("android:targetActivity=\".MainActivity\""))
-        assertTrue(videoLauncher.contains("android:label=\"AAYT Video\""))
-        assertTrue(videoLauncher.contains("android.intent.category.CAR_LAUNCHER"))
-        assertTrue(videoLauncher.contains("android.intent.action.MAIN"))
-        assertTrue(videoLauncher.contains("android:exported=\"true\""))
-        assertFalse("Phone launcher must not be listed directly as a car launcher",
-            phone.contains("android.intent.category.CAR_LAUNCHER"))
-        assertTrue(phone.contains("android.intent.category.LAUNCHER"))
-        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
-            .contains("Video car-launcher alias discoverable="))
-        assertTrue(manifest.contains("android:label=\"AAYoutube\""))
-        assertFalse(manifest.contains("android:label=\"AaYT Video\""))
-        assertFalse(manifest.contains("android:label=\"AAYouTube Music\""))
-        assertTrue(music.contains("android:exported=\"true\""))
         assertTrue(music.contains("android.media.browse.MediaBrowserService"))
-        assertFalse(music.contains("CATEGORY_PROJECTION"))
-        // The AndroidX navigation side-panel previously froze the shared WebView.
-        assertFalse(manifest.contains("android:name=\".CarVideoService\""))
-        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
-        assertFalse(src("app/build.gradle.kts").contains("androidx.car.app:app:"))
-        for (resource in listOf("xml", "xml-v35")) {
-            val descriptor = src("app/src/main/res/$resource/automotive_app_desc.xml")
-            assertTrue(descriptor.contains("name=\"projection\""))
-            assertTrue(descriptor.contains("name=\"media\""))
-            assertFalse(descriptor.contains("name=\"template\""))
-        }
+        assertFalse(music.contains("CarAppService"))
+        assertFalse(manifest.contains("LegacyProjectionService"))
+        assertEquals(0, Regex("category android:name=\"android.intent.category.CAR_LAUNCHER\"").findAll(manifest).count())
+        val descriptor = src("app/src/main/res/xml/automotive_app_desc.xml")
+        assertTrue(descriptor.contains("name=\"template\""))
+        assertTrue(descriptor.contains("name=\"media\""))
+        assertFalse(descriptor.contains("name=\"projection\""))
+        val build = src("app/build.gradle.kts")
+        assertTrue(build.contains("androidx.car.app:app:1.7.0"))
+        assertFalse(build.contains("aabrowserProjectionSdk"))
+        assertFalse(build.contains("aauto.aar"))
     }
 
     @Test fun musicBrowsesAndControlsAudioWithoutMovingVideoSurface() {
@@ -81,7 +58,7 @@ class AndroidAutoIntegrationContractTest {
 
     @Test fun videoRestoresNativeFullSizeInsteadOfPhoneMiniViewport() {
         val web = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val js = src("app/src/main/assets/aay.js")
         assertTrue(web.contains("fun prepareForCarProjection()"))
         assertTrue(web.contains("mode.value = PlayerMode.FULL"))

@@ -8,8 +8,8 @@ import org.junit.Test
 class CarVideoNavigationContractTest {
     private val source: String by lazy {
         listOf(
-            File("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt"),
-            File("../app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt"),
+            File("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt"),
+            File("../app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt"),
         ).first { it.isFile }.readText()
     }
 

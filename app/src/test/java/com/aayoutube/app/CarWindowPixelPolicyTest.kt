@@ -47,7 +47,7 @@ class CarWindowPixelPolicyTest {
 
     @Test fun manualReadbackNeverStoresPixelsAndDoesNotCreateAnotherPlayer() {
         val probe = source("app/src/main/java/com/aayoutube/app/CarWindowPixelProbe.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val ui = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         assertTrue(probe.contains("PixelCopy.request("))
         assertTrue(probe.contains("Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)"))

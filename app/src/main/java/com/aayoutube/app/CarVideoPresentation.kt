@@ -8,12 +8,7 @@ import android.view.Window
 import android.view.View
 import android.view.MotionEvent
 import android.view.KeyEvent
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
 import android.webkit.WebView
-import com.google.android.gms.car.input.CarEditable
-import com.google.android.gms.car.input.CarEditableListener
-import com.google.android.gms.car.input.InputManager
 import android.view.ViewGroup
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -74,14 +69,14 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.google.android.apps.auto.sdk.CarActivity
+import android.app.Presentation
+import android.content.Context
+import android.view.Display
 
-/**
- * AABrowser-style CarActivity with Compose view-tree owners, adapted to AAYouTube's
- * single WebView, media session and shared lifecycle. The host supplies the car window.
- * No extra Spotify, local player, weather or multi-tab browser is instantiated.
- */
-class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+/** Owns the existing player UI on the AndroidX car surface's virtual display. */
+internal class CarVideoPresentation(context: Context, display: Display) :
+    Presentation(context, display, R.style.Theme_AAYoutube),
+    LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
     private val savedController = SavedStateRegistryController.create(this)
@@ -97,22 +92,21 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var experimentalVideoEnabled = false
     private var experimentalChecks = 0
     private var experimentalRepairs = 0
-    /** One retry budget per CarActivity instance, never reset by onResume/rebind. */
+    /** One retry budget per presentation instance, never reset by onResume/rebind. */
     private var experimentalRecoveryStarted = false
-    private var carInput: LegacyCarInput? = null
     private var lastWidth = 0
     private var lastHeight = 0
     private val refit = Runnable { WebHost.refitCarViewport() }
 
-    // Android Auto recreates this CarActivity (new Surface, restored state)
+    // Android Auto recreates this presentation (new Surface, restored state)
     // while the previous instance is still alive. Each instance has its own
     // owner token so the old one's onStop/onDestroy cannot clear the new
     // one's projection, switch the page to background quality or steal the
     // player back into a window that is no longer on the car screen.
-    private val carToken = "legacy-projection@" + Integer.toHexString(System.identityHashCode(this))
+    private val carToken = "car-surface@" + Integer.toHexString(System.identityHashCode(this))
     private var inactiveLogged = false
     private var carQuitInProgress = false
-    // Legacy CarActivity is not an Android Activity; WebHost IPC arrives
+    // Car presentation is not an Android Activity; WebHost IPC arrives
     // on the :web main thread; the SDK exposes no regular Activity dispatcher.
     private val carQuitCallback: () -> Unit = { shutdownCarOnlySession() }
     private val rebindWhenActive = Runnable {
@@ -225,7 +219,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 experimentalChecks < ExperimentalCarVideoPolicy.MAX_CHECKS) {
                 handler.postDelayed(this, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
             } else {
-                AppLog.add("CAR", "Experimental video: checks finished; legacy projection intact")
+                AppLog.add("CAR", "Experimental video: checks finished; car surface intact")
             }
         }
     }
@@ -248,7 +242,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         longArrayOf(2_000L, 6_000L, 12_000L).forEach { handler.postDelayed(renderProbe, it) }
     }
 
-    // CarActivity uses a virtual display; Activity/application context can
+    // presentation uses a virtual display; Activity/application context can
     // still resolve default display 0 even when its ViewRoot uses display 323.
     private fun projectionContext(fallback: android.content.Context, frame: View? = null):
         android.content.Context {
@@ -310,25 +304,23 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Projection root display=" + display +
             " player display=" + childDisplay +
             " size=" + frame.width + "x" + frame.height)
-        carInput?.bind(player)
     }
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
 
     override fun onCreate(bundle: Bundle?) {
-        // Upstream AABrowser applies the window theme before CarActivity
-        // initialization. Log BEFORE super to diagnose failing car launches.
-        AppLog.add("CAR", "Video CarActivity launching")
-        setTheme(R.style.Theme_AAYoutube)
+        // Log before window creation to diagnose failing car launches.
+        AppLog.add("CAR", "AndroidX car presentation launching")
         super.onCreate(bundle)
         // The new car connection wins: stop any phone-only test display before
         // Android Auto claims the live video host.
         CarVirtualDisplayProbe.cancel()
         experimentalVideoEnabled = Features.current.experimentalVideo
         AppLog.add("CAR", "Experimental video at connection=" + experimentalVideoEnabled)
-        CarMode.resetToCarScreen(this)
+        CarMode.resetToCarScreen(context)
+        savedController.performAttach()
         savedController.performRestore(bundle)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        AppLog.add("CAR", "Legacy AABrowser projection activity created")
+        AppLog.add("CAR", "AndroidX car presentation created")
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
         // The newest car activity instance is the one Android Auto shows.
@@ -344,80 +336,23 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // can stop before this new instance reaches onStart.
         WebHost.requestLink = relink
 
-        val compose = ComposeView(this).apply {
-            setViewTreeLifecycleOwner(this@LegacyProjectionActivity)
-            setViewTreeViewModelStoreOwner(this@LegacyProjectionActivity)
-            setViewTreeSavedStateRegistryOwner(this@LegacyProjectionActivity)
-            setContent { AAYoutubeTheme { LegacyProjectionScreen() } }
+        val compose = ComposeView(context).apply {
+            setViewTreeLifecycleOwner(this@CarVideoPresentation)
+            setViewTreeViewModelStoreOwner(this@CarVideoPresentation)
+            setViewTreeSavedStateRegistryOwner(this@CarVideoPresentation)
+            setContent { AAYoutubeTheme { CarVideoScreen() } }
         }
         setContentView(compose)
-        // Legacy CarActivity owns a separate window; configure its actual decor tree.
+        // Car presentation owns a separate window; configure its actual decor tree.
         carWindow()?.decorView?.let { decor ->
             decor.setViewTreeLifecycleOwner(this)
             decor.setViewTreeViewModelStoreOwner(this)
             decor.setViewTreeSavedStateRegistryOwner(this)
         }
         updateCarWindow()
-        // As in upstream MainCarActivity, avoid destroying the projected WebView
-        // for transient automotive display configuration changes.
-        runCatching {
-            javaClass.getMethod("setIgnoreConfigChanges", Int::class.javaPrimitiveType)
-                .invoke(this, 0xFFFF)
-        }
-        configureLegacyCarInput()
     }
 
-    /**
-     * AABrowser's legacy SDK exposes its car input manager under different method
-     * names in different archived builds. Resolve it without binding to an
-     * unstable obfuscated API; native WebView touch remains the fallback.
-     */
-    private fun findCarInputManager(): Any? {
-        var type: Class<*>? = javaClass
-        while (type != null && type != Any::class.java) {
-            val found = type.declaredMethods.firstOrNull { method ->
-                method.parameterCount == 0 &&
-                    method.returnType.name.endsWith(".input.InputManager")
-            }
-            if (found != null) {
-                val value = runCatching {
-                    found.isAccessible = true
-                    found.invoke(this)
-                }.getOrNull()
-                if (value != null) return value
-            }
-            type = type.superclass
-        }
-        // Some SDK revisions expose a named public getter rather than a typed
-        // no-argument method in the superclass.
-        val named = runCatching {
-            javaClass.getMethod("getInputManager").invoke(this) as? InputManager
-        }.getOrNull()
-        if (named != null) return named
-        return CarActivity::class.java.declaredMethods.firstNotNullOfOrNull { method ->
-            if (method.parameterCount != 0 || !method.name.contains("Input", ignoreCase = true)) null
-            else runCatching {
-                method.isAccessible = true
-                method.invoke(this)
-            }.getOrNull()?.takeIf { it.javaClass.name.contains("InputManager") }
-        }
-    }
-
-    private fun configureLegacyCarInput() {
-        val input = findCarInputManager() as? InputManager
-        carInput?.stop()
-        carInput = input?.let { LegacyCarInput(it) }
-        AppLog.add("CAR", if (input == null) {
-            "Legacy input manager unavailable; retaining WebView touch input"
-        } else {
-            "Legacy car input manager detected: " + input.javaClass.simpleName
-        })
-    }
-
-    /** Match AABrowser's legacy CarActivity window handling, not the phone window. */
-    private fun carWindow(): Window? = runCatching {
-        javaClass.getMethod("c").invoke(this) as? Window
-    }.getOrNull()
+    private fun carWindow(): Window? = window
 
     private fun updateCarWindow() {
         runCatching {
@@ -429,9 +364,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         }.onFailure { AppLog.add("CAR", "Car window insets unavailable: " + it.javaClass.simpleName) }
     }
 
-    /** One shared player, matching AABrowser's projected Compose screen technique. */
+    /** One shared player, matching surface host's projected Compose screen technique. */
     @Composable
-    private fun LegacyProjectionScreen() {
+    private fun CarVideoScreen() {
         val version by WebHost.webVersion.collectAsState()
         val mode by WebHost.mode.collectAsState()
         val browsing by BrowseHost.created.collectAsState()
@@ -484,7 +419,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             // Allow the mini player behind either side rail. The rail is always on
             // top (z-index 20), regardless of car controls side or playback mode.
             val density = LocalDensity.current
-            val miniPrefs = remember { getSharedPreferences("car_mini", android.content.Context.MODE_PRIVATE) }
+            val miniPrefs = remember { context.getSharedPreferences("car_mini", android.content.Context.MODE_PRIVATE) }
             var miniX by remember { mutableStateOf(miniPrefs.getFloat("x", 1f).coerceIn(0f, 1f)) }
             var miniY by remember { mutableStateOf(miniPrefs.getFloat("y", 1f).coerceIn(0f, 1f)) }
             // Landscape car screens (the usual Android Auto shape) get the top-centre pill.
@@ -734,7 +669,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     @Deprecated("Use car host Back dispatcher when available")
     override fun onBackPressed() {
-        if (!carBackToMini()) super.onBackPressed()
+        carBackToMini()
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
@@ -747,7 +682,6 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video projection onStart")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         carStarted = true
-        configureLegacyCarInput()
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
         if (!registered || !WebHost.isActiveCarHost(carToken)) return
         ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
@@ -766,10 +700,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         connectMedia()
         attachIfNeeded()
         scheduleExperimentalRecovery()
+        resumeProjection()
     }
 
-    override fun onResume() {
-        super.onResume()
+    private fun resumeProjection() {
         AppLog.add("CAR", "Video projection onResume")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         if (WebHost.isActiveCarHost(carToken)) WebHost.setHold(false)
@@ -797,7 +731,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         mediaController?.command(Commands.EXIT)
         runCatching {
             androidx.core.content.ContextCompat.startForegroundService(
-                this, android.content.Intent(this, PlaybackService::class.java)
+                context, android.content.Intent(context, PlaybackService::class.java)
                     .setAction(PlaybackService.ACTION_QUIT)
             )
         }.onFailure { AppLog.add("CAR", "Quit intent failed: " + it.javaClass.simpleName) }
@@ -819,7 +753,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.cmd("pause")
         BrowseHost.release()
         WebHost.release()
-        // CarActivity has no finish(). The :web process owns the projection
+        // The :web process owns the car presentation
         // window, so its explicit shutdown ends the car-only session.
         // onStop cancels the car handler, so use a separate shutdown handler.
         Handler(Looper.getMainLooper()).postDelayed({
@@ -830,18 +764,18 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     /** The native media process remains the sole owner of Android Auto media commands. */
     private fun connectMedia() {
         if (!carStarted || mediaController != null) return
-        mediaController = CompatMediaConnection(this) {
+        mediaController = CompatMediaConnection(context) {
             it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)
         }.also { it.connect() }
     }
-    override fun onPause() {
+    private fun pauseProjection() {
         AppLog.add("CAR", "Video projection onPause")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         // Do not pause YouTube: a temporary car window focus loss must preserve audio.
-        super.onPause()
     }
 
     override fun onStop() {
+        pauseProjection()
         AppLog.add("CAR", "Video projection onStop; frameAttached=" +
             (playerContainer?.isAttachedToWindow ?: false))
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -853,8 +787,6 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         ExperimentalCarVideoMonitor.end(carToken)
         lastWidth = 0
         lastHeight = 0
-        carInput?.stop()
-        carInput = null
         // Only this instance's ownership ends here. A newer car window keeps
         // the player, its car layout and its foreground video quality.
         WebHost.releaseCarHost(carToken)
@@ -873,7 +805,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         super.onStop()
     }
 
-    override fun onDestroy() {
+    fun release() {
+        if (lifecycle.currentState == Lifecycle.State.DESTROYED) return
+        dismiss()
+        if (lifecycle.currentState == Lifecycle.State.INITIALIZED) {
+            handler.removeCallbacksAndMessages(null)
+            store.clear()
+            return
+        }
         AppLog.add("CAR", "Video projection onDestroy")
         CarWindowPixelProbe.unregister(carToken)
         CarVideoPatternProbe.unregister(carToken)
@@ -890,124 +829,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.showOnCar(false, carToken)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
-        carInput?.stop()
-        carInput = null
         playerContainer?.let { WebHost.detach(it) }
         playerContainer = null
         mediaController?.disconnect()
         mediaController = null
         WebHost.requestReattachment()
-        super.onDestroy()
     }
 }
 
-/**
- * Android Auto input is NOT the same as WebView/window focus.
- *
- * On the head unit a playback-only WebView receives focus when opened.
- * Calling InputManager.startInput on that event opens the car keyboard and
- * causes some projection hosts to stop the video activity. AABrowser only
- * starts car input after an explicit user selection. Do the same here:
- * the user must TAP an actual HTML text field before starting car input.
- */
-private class LegacyCarInput(private val manager: InputManager) : CarEditable {
-    private var target: WebView? = null
-    private var active = false
-
-    fun bind(web: WebView) {
-        if (target === web && owners[web] === this) return
-        stop()
-        target = web
-        owners[web] = this
-        // Do not listen to WebView focus changes. Video player focus is not
-        // a text-edit request. Return false to preserve swipe/playback touches.
-        web.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                web.postDelayed({
-                    if (target === web && web.isAttachedToWindow) {
-                        web.evaluateJavascript(EDITABLE_FOCUS_SCRIPT) { result ->
-                            if (target !== web || !web.isAttachedToWindow) return@evaluateJavascript
-                            if (result == "true") start()
-                            else stopInputOnly()
-                        }
-                    }
-                }, 220L)
-            }
-            false
-        }
-        AppLog.add("CAR", "Car input bound; keyboard idle until text field tapped")
-    }
-
-    private fun start() {
-        if (active) return
-        AppLog.add("CAR", "Explicit editable tap: requesting car keyboard")
-        // The car root initially owns focus to avoid opening a keyboard on
-        // video launch. Transfer focus only after a real HTML editable tap.
-        target?.requestFocus()
-        runCatching {
-            manager.startInput(this)
-            active = true
-        }.onFailure { AppLog.add("CAR", "Car keyboard failed: " + it.javaClass.simpleName) }
-    }
-
-    private fun stopInputOnly() {
-        if (!active) return
-        active = false
-        runCatching { manager.stopInput() }
-    }
-
-    fun stop() {
-        stopInputOnly()
-        // An old car instance stopping after a newer one bound the same
-        // WebView must not remove the newer instance's touch listener.
-        target?.let { web ->
-            if (owners[web] === this) {
-                web.setOnTouchListener(null)
-                owners.remove(web)
-            }
-        }
-        target = null
-    }
-
-    companion object {
-        private val owners = java.util.WeakHashMap<WebView, LegacyCarInput>()
-        // Traverse YouTube's shadow roots; autofocus on a video is excluded.
-        // This is evaluated only after ACTION_UP, never on window/view focus.
-        private val EDITABLE_FOCUS_SCRIPT = """
-            (function () {
-              var e = document.activeElement;
-              while (e && e.shadowRoot && e.shadowRoot.activeElement)
-                e = e.shadowRoot.activeElement;
-              if (!e) return false;
-              var tag = (e.tagName || '').toLowerCase();
-              if (tag === 'textarea' || e.isContentEditable) return true;
-              if (tag !== 'input') return false;
-              var type = (e.type || 'text').toLowerCase();
-              return !/^(button|submit|reset|checkbox|radio|hidden|file|range|color|image)$/.test(type);
-            })()
-        """.trimIndent()
-    }
-
-    override fun onCreateInputConnection(editorInfo: EditorInfo?): InputConnection? {
-        val web = target ?: return null
-        // Chromium owns text editing. A generic BaseInputConnection consumes car
-        // keyboard characters without forwarding them to the focused HTML field.
-        if (!web.hasFocus()) web.requestFocus()
-        web.onCheckIsTextEditor()
-        val connection = web.onCreateInputConnection(editorInfo)
-        editorInfo?.apply {
-            if (inputType == EditorInfo.TYPE_NULL) inputType =
-                EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_NORMAL
-            imeOptions = imeOptions or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_DONE
-        }
-        if (connection == null) {
-            AppLog.add("CAR", "Search input: Chromium input connection unavailable")
-        } else {
-            AppLog.add("CAR", "Search input: Chromium input connection ready")
-        }
-        return connection
-    }
-
-    override fun setCarEditableListener(carEditableListener: CarEditableListener?) = Unit
-    override fun setInputEnabled(enabled: Boolean) = Unit
-}

@@ -1,6 +1,3 @@
-import java.net.URL
-import java.security.MessageDigest
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -16,7 +13,6 @@ val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt()
 val v = mapOf(
     "material3" to "1.5.0-beta01",
     "mediaCompat" to "1.7.1",
-    "appCompat" to "1.8.0",
     "webkit" to "1.14.0",
     "activityCompose" to "1.11.0",
     "coroutines" to "1.10.2",
@@ -39,10 +35,7 @@ android {
     buildTypes {
         getByName("debug") { versionNameSuffix = "-debug" }
         getByName("release") {
-            // Match working AABrowser's unminified legacy projection build.
-            // The proprietary car SDK uses reflection into Activity/Fragment APIs;
-            // R8 reachability cannot establish those dynamic callbacks safely.
-            // Re-enable only after projected runtime smoke tests establish keep rules.
+            // Keep the shared WebView/player stack unminified for this experimental migration.
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -61,51 +54,8 @@ android {
     }
 }
 
-// Use the exact archived projection AAR consumed by AABrowser (v4/aauto.aar).
-// Pinned to upstream commit + Git blob SHA; never silently take a newer proprietary binary.
-// The SDK is downloaded into build/ (not committed to our repository), and its provenance
-// must be reviewed before distributing a release APK outside personal testing.
-val legacySdkFile = layout.buildDirectory.file("aabrowser-projection/aauto.aar")
-val fetchLegacySdk = tasks.register("fetchAABrowserProjectionSdk") {
-    group = "build setup"
-    description = "Fetch the exact upstream AABrowser legacy projection SDK artifact"
-    outputs.file(legacySdkFile)
-    doLast {
-        val target = legacySdkFile.get().asFile
-        val expectedGitBlob = "678f4afb0434ceb97b23c2237ce4489bc52b4394"
-        val digest = MessageDigest.getInstance("SHA-1")
-        fun shaGitBlob(bytes: ByteArray): String {
-            digest.reset()
-            digest.update("blob ${bytes.size}".toByteArray(Charsets.UTF_8))
-            digest.update(0.toByte())
-            digest.update(bytes)
-            return digest.digest().joinToString("") { "%02x".format(it) }
-        }
-        if (target.isFile && shaGitBlob(target.readBytes()) == expectedGitBlob) return@doLast
-        val source = URL(
-            "https://raw.githubusercontent.com/fcaronte/AABrowser/" +
-                "dca3f543c83445ee4b38761eed824eb92208109f/browser/libs/v4/aauto.aar"
-        )
-        val conn = source.openConnection().apply {
-            connectTimeout = 20_000
-            readTimeout = 30_000
-        }
-        val bytes = conn.getInputStream().use { it.readBytes() }
-        check(bytes.size == 313859 && shaGitBlob(bytes) == expectedGitBlob) {
-            "Upstream AABrowser legacy SDK does not match the pinned artifact"
-        }
-        target.parentFile.mkdirs()
-        target.writeBytes(bytes)
-    }
-}
-val aabrowserProjectionSdk = files(legacySdkFile).builtBy(fetchLegacySdk)
-
 dependencies {
-    // AABrowser's exact legacy Android Auto projection integration (CarActivityService).
-    implementation(aabrowserProjectionSdk)
-    // AABrowser's androidx.fragment stack is transitively supplied by AppCompat;
-    // Jetifier rewrites old android.support.v4.app.FragmentManager references.
-    implementation("androidx.appcompat:appcompat:${v["appCompat"]}")
+    implementation("androidx.car.app:app:1.7.0")
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
     implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
@@ -113,7 +63,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:${v["activityCompose"]}")
 
     // Media session for the notification, lock screen, Bluetooth and Android Auto
-    // AABrowser-compatible MediaBrowserServiceCompat migration dependency.
+    // Independent native Android Auto media browser.
     implementation("androidx.media:media:${v["mediaCompat"]}")
 
     // WebView extras: script injection at document start, header control

@@ -71,7 +71,7 @@ class CarVideoPatternPixelPolicyTest {
     @Test fun readbackOnlyChecksSyntheticPatternAndDiscardsImage() {
         val probe = src("app/src/main/java/com/aayoutube/app/CarVideoPatternReadback.kt")
         val pattern = src("app/src/main/java/com/aayoutube/app/CarVideoPatternProbe.kt")
-        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val ui = src("app/src/main/java/com/aayoutube/app/Screens.kt")
         assertTrue(probe.contains("PixelCopy.request("))
         assertTrue(probe.contains("Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)"))

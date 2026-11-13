@@ -16,7 +16,7 @@ class CarWindowOwnershipContractTest {
         listOf(File(path), File("../$path")).firstOrNull { it.isFile }?.readText()
             ?: error("Missing $path")
 
-    private val car get() = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+    private val car get() = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
     private val web get() = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
 
     @Test fun onlyTheActiveCarActivityBindsThePlayer() {
@@ -47,7 +47,7 @@ class CarWindowOwnershipContractTest {
         assertTrue(activity.contains("if (WebHost.fullscreenView.value == null) bindVideoToCarFrame(frame)"))
         assertTrue(activity.contains("WebHost.requestLink = relink\n        connectMedia()"))
         // onStop/onDestroy cancel it via removeCallbacksAndMessages before releasing.
-        val destroy = activity.substringAfter("override fun onDestroy() {")
+        val destroy = activity.substringAfter("fun release() {")
         assertTrue(destroy.indexOf("handler.removeCallbacksAndMessages(null)") <
             destroy.indexOf("WebHost.releaseCarHost(carToken)"))
     }
@@ -95,13 +95,14 @@ class CarWindowOwnershipContractTest {
         assertTrue(owners.contains("activeCarHost.value = null"))
     }
 
-    @Test fun oldCarInputDoesNotRemoveNewerTouchListener() {
-        val input = car.substringAfter("private class LegacyCarInput(")
-        assertTrue(input.contains("private val owners = java.util.WeakHashMap<WebView, LegacyCarInput>()"))
-        assertTrue(input.contains("owners[web] = this"))
-        val stop = input.substringAfter("fun stop() {").substringBefore("companion object")
-        assertTrue(stop.contains("if (owners[web] === this) {"))
-        assertTrue(stop.indexOf("if (owners[web] === this) {") < stop.indexOf("web.setOnTouchListener(null)"))
+    @Test fun carInputUsesCurrentPresentationAndHostSearch() {
+        val service = source("app/src/main/java/com/aayoutube/app/CarVideoService.kt")
+        assertTrue(service.contains("val target = presentation ?: return"))
+        assertTrue(service.contains("target.dispatchTouchEvent(event)"))
+        assertTrue(service.contains("event.recycle()"))
+        assertTrue(service.contains("SearchTemplate.Builder("))
+        assertTrue(service.contains("android.net.Uri.encode(query)"))
+        assertFalse(car.contains("setOnTouchListener"))
     }
 
     @Test fun blackScreenDiagnosticsReachLogcat() {

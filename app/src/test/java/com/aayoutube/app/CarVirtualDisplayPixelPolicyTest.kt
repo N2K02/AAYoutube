@@ -29,7 +29,7 @@ class CarVirtualDisplayPixelPolicyTest {
         assertTrue(page.contains("CarVirtualDisplayProbe.start(context)"))
         assertTrue(page.contains("flags.experimentalVideo && !diagnostics.active"))
         assertTrue(page.contains("CarVirtualDisplayProbe.cancel()"))
-        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val monitor = src("app/src/main/java/com/aayoutube/app/ExperimentalCarVideoMonitor.kt")
         assertTrue(car.contains("CarVirtualDisplayProbe.cancel()"))
         assertFalse(monitor.contains("CarVirtualDisplayProbe.cancel()"))

@@ -15,7 +15,7 @@ class TopMenuSwipeGestureTest {
         assertTrue(gesture.contains("if (event.type == PointerEventType.Press) onTouch()"))
         assertFalse("the touch must still reach YouTube", gesture.contains("consume()"))
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         assertTrue(phone.contains("Modifier.revealControlsOnTouch {"))
         assertTrue(car.contains(".revealControlsOnTouch { controlsVisible = true; controlsVersion++ }"))
         assertFalse(phone.contains("revealTopMenuOnSwipeDown"))
@@ -30,7 +30,7 @@ class TopMenuSwipeGestureTest {
         assertTrue(features.contains("prefs.getBoolean(\"controlsOnLeft\", d.controlsOnLeft)"))
         assertTrue(features.contains(".putBoolean(\"controlsOnLeft\", n.controlsOnLeft)"))
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         assertTrue(phone.contains("Modifier.align(railAlign)") && phone.contains("left = flags.controlsOnLeft, landscape = phoneLandscape,"))
         assertTrue(car.contains("Modifier.align(railAlign)") && car.contains("left = flags.controlsOnLeft, landscape = carLandscape,"))
         assertTrue(phone.contains("Text(\"Video controls side\""))
@@ -39,7 +39,7 @@ class TopMenuSwipeGestureTest {
 
     @Test fun miniPlayerCanUseTheSpaceOutsideTheActualControlsRail() {
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         // Do not reserve a whole dead strip along the menu side.
         assertTrue(phone.contains("val minX = edge"))
         assertTrue(phone.contains("(constraints.maxWidth.toFloat() - wPx - edge)"))

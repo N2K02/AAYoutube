@@ -22,7 +22,7 @@ class OverlayReadinessTest {
 
     @Test fun bothPhoneAndCarApplyReadinessToSharedRail() {
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
-        val car = source("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val car = source("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
         val rail = source("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
         assertTrue(phone.contains("transportReady = OverlayTransportPolicy.ready("))
         assertTrue(car.contains("transportReady = OverlayTransportPolicy.ready("))

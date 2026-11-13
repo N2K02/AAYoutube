@@ -198,7 +198,7 @@ object WebHost {
     @Volatile var activityVisible = false
         private set
 
-    /** The video is being shown on the car screen (see LegacyProjectionActivity). */
+    /** The video is being shown on the car screen (see CarVideoPresentation). */
     @Volatile var carShown = false
         private set
     private val carOwners = mutableSetOf<String>()
@@ -686,7 +686,7 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
-    fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
+    fun showOnCar(on: Boolean, owner: String) {
         // AABrowser exposes classic projection and wide surfaces independently.
         // A temporary car/phone handoff must not freeze or reset the shared player.
         val alreadyProjected = carShown

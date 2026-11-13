@@ -15,7 +15,7 @@ class YouTubeAppBehaviourTest {
         listOf(File(path), File("../$path")).first { it.isFile }.readText()
     private val ui = src("app/src/main/java/com/aayoutube/app/Screens.kt")
     private val host = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
-    private val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+    private val car = src("app/src/main/java/com/aayoutube/app/CarVideoPresentation.kt")
     private val js = src("app/src/main/assets/aay.js")
 
     private fun back(
