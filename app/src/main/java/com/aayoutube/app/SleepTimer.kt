@@ -21,6 +21,8 @@ internal object SleepTimerPolicy {
         return minutes * 60_000L
     }
     fun remainingMillis(deadline: Long, now: Long): Long = (deadline - now).coerceAtLeast(0L)
+    /** Rounded up so the notification never shows 0 minutes before expiry. */
+    fun notificationMinutes(ms: Long?): Long? = ms?.takeIf { it > 0L }?.let { (it - 1L) / 60_000L + 1L }
     fun formatRemaining(ms: Long): String {
         val seconds = (ms + 999L) / 1000L
         val hours = seconds / 3600L
@@ -39,6 +41,15 @@ internal object SleepTimer {
     private val _remaining = MutableStateFlow<Long?>(null)
     val remaining: StateFlow<Long?> = _remaining
     private var deadline = 0L
+    private var notifiedMinutes: Long? = null
+    /** Only the active playback service subscribes; no extra notification or polling. */
+    var onNotificationMinuteChanged: (() -> Unit)? = null
+    private fun notifyIfMinuteChanged() {
+        val minute = SleepTimerPolicy.notificationMinutes(_remaining.value)
+        if (minute == notifiedMinutes) return
+        notifiedMinutes = minute
+        onNotificationMinuteChanged?.invoke()
+    }
     private val tick = object : Runnable {
         override fun run() {
             if (deadline == 0L) return
@@ -46,6 +57,7 @@ internal object SleepTimer {
             if (left == 0L) {
                 deadline = 0L
                 _remaining.value = null
+                notifyIfMinuteChanged()
                 AppLog.add("TIMER", "Sleep timer elapsed; requesting full app shutdown")
                 // Reuse Quit's media-service cleanup even when no phone Activity is visible.
                 val context = appContext
@@ -72,6 +84,7 @@ internal object SleepTimer {
                 }, 1_800L)
             } else {
                 _remaining.value = left
+                notifyIfMinuteChanged()
                 handler.postDelayed(this, minOf(left, 1000L))
             }
         }
@@ -83,6 +96,7 @@ internal object SleepTimer {
         handler.removeCallbacks(tick)
         deadline = SystemClock.elapsedRealtime() + duration
         _remaining.value = duration
+        notifyIfMinuteChanged()
         AppLog.add("TIMER", "Sleep timer started for ${duration / 60000} minutes")
         handler.postDelayed(tick, minOf(duration, 1000L))
         return true
@@ -92,5 +106,6 @@ internal object SleepTimer {
         handler.removeCallbacks(tick)
         deadline = 0L
         _remaining.value = null
+        notifyIfMinuteChanged()
     }
 }
