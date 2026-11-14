@@ -30,6 +30,33 @@ class SleepTimerTest {
         assertEquals("00:01", SleepTimerPolicy.formatRemaining(1L))
     }
 
+    @Test fun notificationMinutesRoundsUpAndStopsAtZero() {
+        assertNull(SleepTimerPolicy.notificationMinutes(null))
+        assertNull(SleepTimerPolicy.notificationMinutes(0L))
+        assertEquals(1L, SleepTimerPolicy.notificationMinutes(1L))
+        assertEquals(1L, SleepTimerPolicy.notificationMinutes(60_000L))
+        assertEquals(2L, SleepTimerPolicy.notificationMinutes(60_001L))
+        assertEquals(15L, SleepTimerPolicy.notificationMinutes(900_000L))
+        assertEquals(1440L, SleepTimerPolicy.notificationMinutes(86_400_000L))
+    }
+
+    @Test fun notificationUsesOneMediaCardAndKeepsCompactControls() {
+        fun src(path: String) = listOf(File(path), File("../$path")).first { it.isFile }.readText()
+        val notification = src("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt")
+        val service = src("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
+        val timer = src("app/src/main/java/com/aayoutube/app/SleepTimer.kt")
+        assertTrue(notification.contains("Sleep timer: \\$sleepMinutes min"))
+        assertTrue(notification.contains("Cancel sleep timer"))
+        assertTrue(notification.contains("PlaybackService.ACTION_CANCEL_SLEEP_TIMER"))
+        assertTrue(notification.contains("setShowActionsInCompactView(*compact.toIntArray())"))
+        assertTrue(service.contains("if (intent?.action == ACTION_CANCEL_SLEEP_TIMER)"))
+        assertTrue(service.contains("SleepTimer.cancel()"))
+        assertTrue(service.contains("SleepTimer.onNotificationMinuteChanged = {"))
+        assertTrue(service.contains("val sleepMinutes = SleepTimerPolicy.notificationMinutes(SleepTimer.remaining.value)"))
+        assertTrue(timer.contains("notifyIfMinuteChanged()"))
+        assertFalse(notification.contains("NOTIFICATION_ID = 102"))
+    }
+
     @Test fun timerIntegratedIntoExistingSettingsWithoutNewService() {
         fun src(path: String) = listOf(File(path), File("../$path")).first { it.isFile }.readText()
         val screens = src("app/src/main/java/com/aayoutube/app/Screens.kt")
