@@ -45,7 +45,7 @@ class SleepTimerTest {
         val notification = src("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt")
         val service = src("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         val timer = src("app/src/main/java/com/aayoutube/app/SleepTimer.kt")
-        assertTrue(notification.contains("Sleep timer: \\$sleepMinutes min"))
+        assertTrue(notification.contains("Sleep timer: \$sleepMinutes min"))
         assertTrue(notification.contains("Cancel sleep timer"))
         assertTrue(notification.contains("PlaybackService.ACTION_CANCEL_SLEEP_TIMER"))
         assertTrue(notification.contains("setShowActionsInCompactView(*compact.toIntArray())"))
