@@ -250,6 +250,16 @@
     }, true);
   } catch (e) {}
 
+  // Diagnostic log URLs must not reveal video IDs, search queries, tokens or fragments.
+  // Keep only the origin and first route segment; navigation still uses the original URL.
+  function logRoute(url) {
+    if (url == null) return '[none]';
+    try {
+      var parsed = new URL(String(url), location.href);
+      return parsed.origin + '/' + (parsed.pathname.split('/').filter(Boolean)[0] || '');
+    } catch (e) { return '[invalid-url]'; }
+  }
+
   /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
   try {
     document.addEventListener('click', function (e) {
@@ -257,7 +267,7 @@
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
-      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + a.getAttribute('href') : ' (no link)'));
+      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + logRoute(a.getAttribute('href')) : ' (no link)'));
       if (!a) return;
       var href = a.href, before = location.href;
       // Browse page (under the mini player): a video opens in the player, not here.
@@ -270,7 +280,7 @@
       if (/\/watch\?|[?&]list=|\/playlist\?/.test(href) && href !== before) {
         later(function () {
           if (location.href === before) {
-            console.log('[aay] link did nothing after 1.5 s, opening it: ' + href);
+            console.log('[aay] link did nothing after 1.5 s, opening route: ' + logRoute(href));
             location.href = href;
           }
         }, 1500);
@@ -278,7 +288,7 @@
     }, true);
     var origPush = history.pushState;
     history.pushState = function (st, title, url) {
-      console.log('[aay] page change ' + url);
+      console.log('[aay] page change ' + logRoute(url));
       return origPush.apply(this, arguments);
     };
     ['waiting', 'stalled', 'error', 'emptied', 'loadstart', 'loadedmetadata', 'resize', 'seeking', 'ended'].forEach(function (type) {
