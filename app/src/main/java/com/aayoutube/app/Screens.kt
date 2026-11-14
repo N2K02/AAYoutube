@@ -1421,14 +1421,26 @@ fun ExperimentalVideoPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
-    // The single shared app header is owned by AppRoot; the library renders only page content.
-    dev.n2k02.updater.N2K02UpdatePage(
-        controller = LiveUpdater.controller,
-        installGuard = LiveUpdater.installGuard,
-        modifier = Modifier.fillMaxSize(),
-        experimentalEnabled = experimental,
-        onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
-    )
+    val context = LocalContext.current
+    // Keep the shared updater unchanged; a separate, explicit download route
+    // lets users obtain the signed APK for an alternative Android Auto installer.
+    Column(Modifier.fillMaxSize()) {
+        dev.n2k02.updater.N2K02UpdatePage(
+            controller = LiveUpdater.controller,
+            installGuard = LiveUpdater.installGuard,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            experimentalEnabled = experimental,
+            onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
+        )
+        OutlinedButton(
+            onClick = { AndroidAutoInstallHelp.openLink(context, AndroidAutoInstallHelp.RELEASES_URL) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Icon(Icons.Filled.Download, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Download APK for alternative installer")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------- info
