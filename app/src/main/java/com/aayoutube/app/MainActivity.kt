@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         LiveUpdater.init(this)
         CarMode.resetToCarScreen(this)
+        // Track real car-display launches without logging searches, URLs or personal data.
+        logCarActivityEntry("create", intent)
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.setCarScreen(!onPhoneScreen())
         enableEdgeToEdge()
@@ -62,9 +64,20 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        logCarActivityEntry("newIntent", intent)
         // A reused activity can move to another car display.
         WebHost.setCarScreen(!onPhoneScreen())
         handleIntent(intent)
+    }
+
+    private fun logCarActivityEntry(event: String, launch: Intent?) {
+        val displayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
+        val carDisplay = displayId != android.view.Display.DEFAULT_DISPLAY
+        val fromCarLauncher = launch?.categories?.contains("android.intent.category.CAR_LAUNCHER") == true
+        val fromMaps = launch?.categories?.contains("android.intent.category.APP_MAPS") == true
+        // Intent categories are finite platform constants. Never record URI or search text.
+        AppLog.add("CAR", "Video activity $event: display=$displayId" +
+            " carDisplay=$carDisplay launcherCategory=$fromCarLauncher mapsCategory=$fromMaps")
     }
 
     private fun handleIntent(intent: Intent?) {
