@@ -41,7 +41,7 @@ fun SleepTimerPage() {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Sleep timer", style = MaterialTheme.typography.titleLarge)
-        Text("Automatically pause AAYouTube playback when the countdown ends. Works while the app is in the background or on Android Auto as long as the app process is running.")
+        Text("Automatically quit AAYouTube when the countdown ends, stopping playback and releasing app resources. Works while the app is in the background or on Android Auto as long as the app process is running.")
         OutlinedTextField(
             value = amount,
             onValueChange = { value -> if (value.length <= 5 && value.all(Char::isDigit)) amount = value },
@@ -77,7 +77,7 @@ fun SleepTimerPage() {
         } else {
             Text("No active sleep timer", style = MaterialTheme.typography.bodyLarge)
         }
-        Text("The timer pauses music and video; it does not quit the app. Changing the duration and starting again replaces the previous countdown.",
+        Text("When time expires, AAYouTube quits and stops video, music and its background services. Changing the duration and starting again replaces the countdown.",
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
