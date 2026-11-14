@@ -26,17 +26,17 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(video.contains("android:label=\"AAYT Video\""))
         assertTrue(music.contains("android:label=\"AAYT Music\""))
         val phone = manifest.substringAfter("android:name=\".MainActivity\"").substringBefore("</activity>")
-        val videoLauncher = manifest.substringAfter("android:name=\".AutoVideoLauncher\"").substringBefore("</activity-alias>")
-        assertTrue(videoLauncher.contains("android:targetActivity=\".MainActivity\""))
-        assertTrue(videoLauncher.contains("android:label=\"AAYT Video\""))
-        assertTrue(videoLauncher.contains("android.intent.category.CAR_LAUNCHER"))
-        assertTrue(videoLauncher.contains("android.intent.action.MAIN"))
-        assertTrue(videoLauncher.contains("android:exported=\"true\""))
-        assertFalse("Phone launcher must not be listed directly as a car launcher",
-            phone.contains("android.intent.category.CAR_LAUNCHER"))
+        // AABrowser registers a single actual activity with car categories.
+        // No separate launcher alias or competing AndroidX CarAppService.
+        assertTrue(phone.contains("android.intent.category.CAR_LAUNCHER"))
+        assertTrue(phone.contains("androidx.car.app.category.NAVIGATION"))
+        assertTrue(phone.contains("android.intent.category.APP_MAPS"))
         assertTrue(phone.contains("android.intent.category.LAUNCHER"))
+        assertFalse(manifest.contains("android:name=\".AutoVideoLauncher\""))
         assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
-            .contains("Video car-launcher alias discoverable="))
+            .contains("Video MainActivity car-launcher discoverable="))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
+            .contains("Video MainActivity maps discoverable="))
         assertTrue(manifest.contains("android:label=\"AAYoutube\""))
         assertFalse(manifest.contains("android:label=\"AaYT Video\""))
         assertFalse(manifest.contains("android:label=\"AAYouTube Music\""))
@@ -49,7 +49,7 @@ class AndroidAutoIntegrationContractTest {
         assertFalse(src("app/build.gradle.kts").contains("androidx.car.app:app:"))
         for (resource in listOf("xml", "xml-v35")) {
             val descriptor = src("app/src/main/res/$resource/automotive_app_desc.xml")
-            assertTrue(descriptor.contains("name=\"projection\""))
+            assertFalse(descriptor.contains("name=\"projection\""))
             assertTrue(descriptor.contains("name=\"media\""))
             assertFalse(descriptor.contains("name=\"template\""))
         }
