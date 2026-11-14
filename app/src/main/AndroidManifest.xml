@@ -52,7 +52,6 @@
         <activity
             android:name=".MainActivity"
             android:process=":web"
-            android:label="AAYT Video"
             android:exported="true"
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
