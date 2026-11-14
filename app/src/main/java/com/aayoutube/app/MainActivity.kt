@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
             WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
         }
         LiveUpdater.onResume(this)
+        AndroidAutoInstallHelp.refreshInstalledApps()
         updatePip()
     }
 
