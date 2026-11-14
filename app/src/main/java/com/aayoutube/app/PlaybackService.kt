@@ -51,7 +51,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
         val canNext: Boolean, val canPrev: Boolean,
-        val artwork: String, val bitmapReady: Boolean
+        val artwork: String, val bitmapReady: Boolean,
+        val playing: Boolean
     )
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
@@ -659,18 +660,28 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     private fun updateNotification(s: Snap) {
         handler.removeCallbacks(demoteForeground)
-        if (!s.playing) {
-            lastNotification = null
-            if (foreground && !recoveringPlayback) {
-                // Explicit pause is still reflected immediately in MediaSession state.
-                // Hold the foreground briefly for an unexpected background pause.
-                handler.postDelayed(demoteForeground, 8_000L)
-            }
-            return
-        }
         val cover = MediaArtworkLoader.urlFor(s.art, s.id)
         val key = NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev,
-            cover, artworkLoader.bitmapFor(cover) != null)
+            cover, artworkLoader.bitmapFor(cover) != null, s.playing)
+        if (!s.playing) {
+            // Android 17's system media player uses the session state, but the
+            // existing Notification action can retain an old icon until refreshed.
+            // Reflect Pause immediately while foreground grace is still active.
+            if (foreground && lastNotification != key) {
+                runCatching {
+                    getSystemService(android.app.NotificationManager::class.java).notify(
+                        CarMediaNotificationManager.NOTIFICATION_ID,
+                        notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover))
+                    )
+                    lastNotification = key
+                }.onFailure {
+                    AppLog.add("MEDIA", "Paused notification refresh failed: " + it.javaClass.simpleName)
+                }
+            }
+            if (foreground && !recoveringPlayback)
+                handler.postDelayed(demoteForeground, 8_000L)
+            return
+        }
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
