@@ -44,7 +44,7 @@ class AndroidAutoIntegrationContractTest {
         val mainActivity = src("app/src/main/java/com/aayoutube/app/MainActivity.kt")
         assertTrue(mainActivity.contains("logCarActivityEntry(\"create\", intent)"))
         assertTrue(mainActivity.contains("logCarActivityEntry(\"newIntent\", intent)"))
-        assertTrue(mainActivity.contains("carDisplay=$carDisplay"))
+        assertTrue(mainActivity.contains("carDisplay=\$carDisplay"))
         assertFalse(mainActivity.contains("AppLog.add(\"CAR\", launch?.dataString"))
 
         assertFalse(manifest.contains("android:name=\".AutoVideoLauncher\""))
