@@ -50,10 +50,12 @@ internal fun SleepTimerChip(onClick: () -> Unit) {
                     }
                 }
                 .clickable(onClick = onClick),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            shape = RoundedCornerShape(18.dp),
-            shadowElevation = 4.dp,
+            // Match the phone/Android Auto navigation rail appearance.
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = RoundedCornerShape(50),
+            tonalElevation = 3.dp,
+            shadowElevation = 6.dp,
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
