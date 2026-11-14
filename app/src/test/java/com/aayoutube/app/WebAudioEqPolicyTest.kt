@@ -31,15 +31,15 @@ class WebAudioEqPolicyTest {
         assertEquals(1f, p.preamp, 0f)
     }
 
-    @Test fun preampLeavesHalfTheLargestBoostAsHeadroom() {
+    @Test fun preampIncludesTheCombinedResponseAndBassShelf() {
         val p = WebAudioEqPolicy.params(on.copy(bands = listOf(6f, 4f, 0f, -3f, 0f)))
-        assertEquals(10f.pow(-6f * 0.5f / 20f), p.preamp, 1e-5f)
+        assertTrue(p.preamp < 10f.pow(-6f / 20f))
         assertTrue(p.limiter)
         assertEquals(WebAudioEqPolicy.Q, p.q, 0.0)
         val bass = WebAudioEqPolicy.params(on.copy(bass = 1f))
         assertEquals(9.0, bass.bassDb, 1e-6)
         assertEquals(120.0, bass.bassHz, 0.0)
-        assertEquals(10f.pow(-9f * 0.5f / 20f), bass.preamp, 1e-5f)
+        assertTrue(bass.preamp < 10f.pow(-9f / 20f))
     }
 
     @Test fun tinyBandsAreIgnoredAndCutsNeverRaisePreamp() {
@@ -58,26 +58,26 @@ class WebAudioEqPolicyTest {
 
         val hp = WebAudioEqPolicy.params(on.copy(mode = SoundSpaceMode.HEADPHONE_3D, intensity = i))
         assertEquals(1.25f, hp.sideGain, 1e-5f)
-        assertEquals(0.425f, hp.crossGain, 1e-5f)
-        assertEquals(1f / (1f + 0.425f * 0.6f), hp.crossNorm, 1e-5f)
+        assertEquals(0.225f, hp.crossGain, 1e-5f)
+        assertEquals(1f / (1f + 0.225f), hp.crossNorm, 1e-5f)
         assertEquals(0.00027f, hp.crossDelaySec, 1e-7f)
-        assertEquals(0.09f, hp.reverbWet, 1e-5f)
-        assertEquals(0.80f, hp.reverbFeedback, 0f)
+        assertEquals(0.02f, hp.reverbWet, 1e-5f)
+        assertEquals(0.65f, hp.reverbFeedback, 0f)
 
         val hall = WebAudioEqPolicy.params(on.copy(mode = SoundSpaceMode.HALL, intensity = i))
-        assertEquals(1.1f, hall.sideGain, 1e-5f)
-        assertEquals(0.26f, hall.reverbWet, 1e-5f)
-        assertEquals(0.88f, hall.reverbFeedback, 0f)
+        assertEquals(1f, hall.sideGain, 1e-5f)
+        assertEquals(0.075f, hall.reverbWet, 1e-5f)
+        assertEquals(0.70f, hall.reverbFeedback, 0f)
         assertEquals(0.018f, hall.reverbPreSec, 0f)
 
         val cinema = WebAudioEqPolicy.params(on.copy(mode = SoundSpaceMode.CINEMA, intensity = i))
         assertEquals(1.4f, cinema.sideGain, 1e-5f)
-        assertEquals(0.15f, cinema.reverbWet, 1e-5f)
+        assertEquals(0.04f, cinema.reverbWet, 1e-5f)
 
         val orbit = WebAudioEqPolicy.params(on.copy(mode = SoundSpaceMode.ORBIT_8D, intensity = i))
         assertEquals(0.5f, orbit.orbitDepth, 0f)
         assertEquals(9.0, orbit.orbitPeriodSec, 0.0)
-        assertEquals(0.5f * (1f - 0.25f), orbit.orbitKeep, 1e-6f)
+        assertEquals(1f - 0.25f, orbit.orbitKeep, 1e-6f)
         assertEquals(0f, orbit.crossGain, 0f)
     }
 
@@ -133,6 +133,41 @@ class WebAudioEqPolicyTest {
         assertFalse(WebAudioEqPolicy.releaseNeedsReload(on, off, WebAudioEqState.UNSUPPORTED))
         assertFalse(WebAudioEqPolicy.releaseNeedsReload(off, on, WebAudioEqState.ACTIVE))
         assertFalse(WebAudioEqPolicy.releaseNeedsReload(on, on.copy(bass = 0.5f), WebAudioEqState.ACTIVE))
+    }
+
+
+    @Test fun everySpatialModeAtZeroIsNeutral() {
+        for (mode in SoundSpaceMode.entries) {
+            val p = WebAudioEqPolicy.params(on.copy(mode = mode, intensity = 0f))
+            assertEquals(mode.name, 1f, p.preamp, 0f)
+            assertEquals(1f, p.sideGain, 0f)
+            assertEquals(0f, p.crossGain, 0f)
+            assertEquals(0f, p.reverbWet, 0f)
+            assertEquals(0f, p.orbitDepth, 0f)
+            assertFalse(p.limiter)
+        }
+    }
+
+    @Test fun webAudioFixturesAreGeneratedFromTheLivePolicy() {
+        val fixtures = src(".github/scripts/eq-fixtures.jsonl")
+        for ((name, bands) in SoundEqPolicy.presets) {
+            for (bass in listOf(0f, 1f)) {
+                val s = on.copy(bands = bands, bass = bass)
+                assertTrue(name, fixtures.contains(WebAudioEqPolicy.params(s).toJson()))
+            }
+        }
+        for (mode in SoundSpaceMode.entries) {
+            for (intensity in listOf(0f, 0.6f, 1f)) {
+                assertTrue(mode.name, fixtures.contains(WebAudioEqPolicy.params(on.copy(mode = mode, intensity = intensity)).toJson()))
+            }
+        }
+    }
+
+    @Test fun nativeFallbackNeverStacksUnprotectedBoosts() {
+        for ((name, bands) in SoundEqPolicy.presets) {
+            val s = on.copy(bands = bands, bass = 1f)
+            for (hz in SoundEqPolicy.bandHz) assertTrue(name, SoundEqPolicy.fallbackGainAtHz(hz, s) <= 0f)
+        }
     }
 
     private fun src(path: String): String =

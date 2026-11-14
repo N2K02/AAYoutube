@@ -29,12 +29,12 @@ import androidx.compose.material.icons.rounded.Article
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
@@ -157,6 +157,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Settings("Settings", Icons.Filled.Settings),
     // Append to preserve previously saved tab ordinals when updating the app.
     ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
+    InstallationHelp("Android Auto installation", Icons.Filled.InstallMobile),
+    SleepTimer("Sleep timer", Icons.Filled.Timer),
 }
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
@@ -240,6 +242,24 @@ fun AppRoot(activity: MainActivity) {
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
     var equalizerOpen by rememberSaveable { mutableStateOf(false) }
+    val phoneDisplay = (activity.display?.displayId ?: android.view.Display.DEFAULT_DISPLAY) ==
+        android.view.Display.DEFAULT_DISPLAY
+    var showInstallHelp by remember {
+        mutableStateOf(phoneDisplay && AndroidAutoInstallHelp.shouldPrompt(context, BuildConfig.VERSION_CODE))
+    }
+    if (showInstallHelp) {
+        AndroidAutoFirstLaunchHelp(
+            onDismiss = { hide ->
+                AndroidAutoInstallHelp.acknowledge(context, BuildConfig.VERSION_CODE, hide)
+                showInstallHelp = false
+            },
+            onOpenGuide = { hide ->
+                AndroidAutoInstallHelp.acknowledge(context, BuildConfig.VERSION_CODE, hide)
+                showInstallHelp = false
+                tab = Tab.InstallationHelp.ordinal
+            },
+        )
+    }
     LaunchedEffect(tab) { if (tab != Tab.Watch.ordinal) lastPanel = Tab.entries[tab] }
     val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
@@ -471,6 +491,8 @@ fun AppRoot(activity: MainActivity) {
                                 Tab.Watch -> Unit
                                 Tab.Features -> FeaturesPage()
                                 Tab.ExperimentalVideo -> ExperimentalVideoPage()
+                                Tab.InstallationHelp -> AndroidAutoInstallationPage()
+                                Tab.SleepTimer -> SleepTimerPage()
                                 Tab.Lyrics -> LyricsSettingsPage()
                                 Tab.Update -> UpdatePage()
                                 Tab.Info -> InfoPage()
@@ -590,6 +612,10 @@ fun AppRoot(activity: MainActivity) {
                 },
                 onRelease = { it.removeAllViews() },
             )
+        }
+        // In-app only; no notification action or system overlay permission.
+        if (phoneDisplay && !inPip && fullscreen == null) {
+            SleepTimerChip(onClick = { tab = Tab.SleepTimer.ordinal })
         }
     }
 }
@@ -845,7 +871,7 @@ private fun AAYoutubeSettingsMenu(
                 leadingContent = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth().clickable(onClick = onEqualizer),
             )
-            listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+            listOf(Tab.Features, Tab.SleepTimer, Tab.ExperimentalVideo, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
@@ -855,6 +881,8 @@ private fun AAYoutubeSettingsMenu(
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
                             Tab.ExperimentalVideo -> "Optional Android Auto video recovery tests"
+                            Tab.InstallationHelp -> "Video not showing? Installation methods and updates"
+                            Tab.SleepTimer -> "Pause playback after a set number of minutes or hours"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
                             Tab.Info -> "App information"
                             Tab.Update -> "Version, experimental releases and update checks"
@@ -1400,7 +1428,6 @@ fun ExperimentalVideoPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
-    // The single shared app header is owned by AppRoot; the library renders only page content.
     dev.n2k02.updater.N2K02UpdatePage(
         controller = LiveUpdater.controller,
         installGuard = LiveUpdater.installGuard,

@@ -19,8 +19,8 @@ const BASE = {
 };
 
 /** Loads the page script against a real offline context with a controllable page. */
-function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.youtube.com/x' } = {}) {
-  const off = new OfflineAudioContext(2, RATE * 2, RATE);
+function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.youtube.com/x', rate = RATE, duration = 2 } = {}) {
+  const off = new OfflineAudioContext(2, rate * 2, rate);
   const timers = [];
   const listeners = {};
   const statuses = [];
@@ -37,10 +37,10 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
       if (p === 'createMediaElementSource') return () => {
         calls.routed++;
         const o = t.createOscillator(); o.frequency.value = hz;
-        const g = t.createGain(); g.gain.value = amp; o.connect(g); o.start();
+        const g = t.createGain(); g.gain.value = amp; g.gain.setValueAtTime(0, duration); o.connect(g); o.start();
         if (stereo === 'mono') return g;
         const m = t.createChannelMerger(2);
-        const inv = t.createGain(); inv.gain.value = stereo === 'side' ? -1 : 1;
+        const inv = t.createGain(); inv.gain.value = stereo === 'side' ? -1 : stereo === 'left' ? 0 : 1;
         g.connect(m, 0, 0); g.connect(inv); inv.connect(m, 0, 1);
         return m;
       };
@@ -66,24 +66,24 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
     clearTimeout: id => { if (timers[id - 1]) timers[id - 1].f = null; },
   };
   vm.runInNewContext(source, sandbox);
-  const fire = (name) => (listeners[name] || []).forEach(f => f({ target: video }));
+  const fire = (name, target = video) => (listeners[name] || []).forEach(f => f({ target }));
   const runTimers = (maxMs) => {
     for (const t of timers.splice(0)) if (t.f && t.at <= maxMs) t.f();
   };
   const render = async () => {
     const buf = await off.startRendering();
     const m = ch => {
-      const d = buf.getChannelData(ch).subarray(RATE);
+      const d = buf.getChannelData(ch).subarray(rate);
       let s = 0, pk = 0;
       for (const x of d) { s += x * x; pk = Math.max(pk, Math.abs(x)); }
       return { rms: Math.sqrt(s / d.length), peak: pk };
     };
-    return { L: m(0), R: m(1) };
+    return { L: m(0), R: m(1), left: buf.getChannelData(0), right: buf.getChannelData(1) };
   };
   return { eq: c => window.__aay.eq(c), video, statuses, calls, fire, runTimers, render,
     stateChange: () => onState && onState(),
     pending: () => timers.filter(t => t.f).map(t => t.at),
-    setState: s => { state = s; } };
+    setState: s => { state = s; }, document, offline: off };
 }
 
 const db = (a, b) => 20 * Math.log10(a / b);
@@ -124,30 +124,29 @@ test('mono streams reach both ears', async () => {
   assert.ok(r.R.rms > 0.1);
 });
 
-test('bass boost preset matches mRadio levels with preamp headroom', async () => {
-  const cfg = { ...BASE, bands: [6, 4, 0, 0, 0], preamp: Math.pow(10, -6 * 0.5 / 20), limiter: true };
+test('bass boost preserves its tonal curve with full headroom', async () => {
+  const cfg = fixtures.find(f => f.name === 'Bass boost:0.0').params;
   const low = page({ hz: 60, amp: 0.3 }); low.eq(cfg);
   const high = page({ hz: 3600, amp: 0.3 }); high.eq(cfg);
-  near(db((await low.render()).L.rms, 0.3 / Math.SQRT2), 3.4, 0.4, '60 Hz');
-  near(db((await high.render()).L.rms, 0.3 / Math.SQRT2), -3, 0.2, '3.6 kHz');
+  const lr = await low.render(), hr = await high.render();
+  near(db(lr.L.rms, hr.L.rms), 6.4, 0.4, 'bass-to-mid tonal difference');
+  near(db(hr.L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(cfg.preamp), 0.15, 'full headroom');
 });
 
-test('wide scales the side signal exactly like mRadio', async () => {
+test('wide preserves the side signal level after reserving spatial headroom', async () => {
   const p = page({ amp: 0.3, stereo: 'side' });
   p.eq({ ...BASE, sideGain: 2.2 });
-  near(db((await p.render()).L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(2.2), 0.05, 'side gain');
+  near(db((await p.render()).L.rms, 0.3 / Math.SQRT2), 0, 0.05, 'normalised side level');
 });
 
-test('headphone 3D and hall stay balanced and near unity', async () => {
-  const hp = page({ hz: 300, amp: 0.3 });
-  hp.eq({ ...BASE, sideGain: 1.25, crossGain: 0.425, crossNorm: 1 / (1 + 0.425 * 0.6),
-    crossDelay: 0.00027, wet: 0.09, feedback: 0.8, damp: 0.5, pre: 0.01, limiter: true });
-  const r = await hp.render();
-  near(db(r.L.rms, r.R.rms), 0, 1, 'HP3D balance');
-  near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 2, 'HP3D level');
-  const hall = page({ hz: 500, amp: 0.3 });
-  hall.eq({ ...BASE, sideGain: 1.1, wet: 0.26, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true });
-  near(db((await hall.render()).L.rms, 0.3 / Math.SQRT2), 0, 2, 'hall level');
+test('headphone 3D and Concert keep stereo balanced with their spatial reserve', async () => {
+  for (const name of ['HEADPHONE_3D:1', 'HALL:1']) {
+    const cfg = fixtures.find(f => f.name === name).params;
+    const p = page({ hz: 300, amp: 0.3 }); p.eq(cfg);
+    const r = await p.render();
+    near(db(r.L.rms, r.R.rms), 0, 1, `${name} balance`);
+    near(db(r.L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(cfg.preamp), 1, `${name} headroom`);
+  }
 });
 
 test('8D orbit pans with mRadio equal-power law', async () => {
@@ -195,21 +194,163 @@ test('long non-MediaSource playback falls back after 4 s', () => {
   assert.equal(p.calls.routed, 0);
 });
 
-test('switching between reverb modes only glides parameters (no rewire, no click)', () => {
+test('reverb time changes fade and replace the tail instead of pitching existing audio', () => {
   const p = page();
   const hall = { ...BASE, sideGain: 1.1, wet: 0.26, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true };
   p.eq(hall);
   p.runTimers(0);
   p.eq({ ...hall, sideGain: 1.4, wet: 0.15, feedback: 0.84, damp: 0.4, pre: 0.012 }); // Cinema
-  assert.ok(!p.pending().includes(50), 'Hall -> Cinema keeps the graph and glides values');
+  assert.ok(p.pending().includes(50), 'Hall -> Cinema fades before changing delay times');
   p.eq({ ...hall, wet: 0 , sideGain: 1.6 }); // Wide: reverb stage leaves -> faded rewire
   assert.ok(p.pending().includes(50));
 });
 
-test('reverb tail decays (stable feedback) and stays near unity loudness', async () => {
-  const p = page({ hz: 500, amp: 0.3 });
-  p.eq({ ...BASE, wet: 0.4, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true });
+test('Concert tail decays after playback stops', async () => {
+  const p = page({ hz: 500, amp: 0.3, duration: 0.25 });
+  p.eq(fixtures.find(f => f.name === 'HALL:1').params);
   const r = await p.render();
-  assert.ok(Number.isFinite(r.L.rms) && r.L.peak <= 1.0001);
-  near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 3, 'reverb level');
+  function rms(start, end) {
+    const data = r.left.subarray(start * RATE, end * RATE);
+    return Math.sqrt(data.reduce((sum, x) => sum + x * x, 0) / data.length);
+  }
+  assert.ok(rms(0.3, 0.4) > 1e-5, 'room has an audible tail');
+  assert.ok(rms(1, 1.2) < rms(0.3, 0.4) * 0.01, 'tail retires cleanly');
+  assert.ok(r.left.every(x => Number.isFinite(x) && Math.abs(x) < 1));
+});
+
+
+// These settings come from WebAudioEqPolicy, and Kotlin CI verifies they stay in sync.
+const fixtures = fs.readFileSync('.github/scripts/eq-fixtures.jsonl', 'utf8').trim().split('\n').map(JSON.parse);
+function thd(samples, hz) {
+  const data = samples.subarray(RATE);
+  let sine = 0, cosine = 0, power = 0;
+  for (let i=0; i<data.length; i++) {
+    sine += data[i]*Math.sin(2*Math.PI*hz*i/RATE);
+    cosine += data[i]*Math.cos(2*Math.PI*hz*i/RATE);
+    power += data[i]*data[i];
+  }
+  const fundamental = 2*(sine*sine+cosine*cosine)/data.length;
+  return Math.sqrt(Math.max(0, power-fundamental)/fundamental);
+}
+test('all tonal presets plus extra bass stay clean at high input level', async () => {
+  for (const f of fixtures.filter(f => f.kind === 'preset')) {
+    for (const hz of [60, 230, 910, 3600, 14000]) {
+      const p = page({ hz, amp: 0.95 }); p.eq(f.params);
+      if (!f.params.limiter) continue; // native Flat path is intentionally not routed
+      const r = await p.render();
+      assert.ok(r.L.peak <= 0.99, `${f.name} at ${hz} Hz peak ${r.L.peak}`);
+      assert.ok(thd(r.left,hz) < 0.005, `${f.name} at ${hz} Hz distortion ${thd(r.left,hz)}`);
+    }
+  }
+});
+test('Concert keeps dry stereo and does not feed left-only music into the right ear', async () => {
+  const f = fixtures.find(f => f.name === 'HALL:1');
+  const p = page({ hz: 1000, amp: 0.95, stereo: 'left' }); p.eq(f.params);
+  const r = await p.render();
+  assert.ok(r.R.peak < 1e-6, `right channel ${r.R.peak}`);
+  assert.ok(thd(r.left, 1000) < 0.005);
+});
+test('all zero-intensity modes keep the native path', () => {
+  for (const f of fixtures.filter(f => f.kind === 'spatial' && f.name.endsWith(':0'))) {
+    const p = page(); p.eq(f.params); assert.equal(p.calls.routed,0,f.name);
+  }
+});
+
+
+test('active preset ramps reserve headroom before boosts, including rapid retargets', async () => {
+  // A tiny cut keeps the same active topology while the 60 Hz band is boosted.
+  // Disable the limiter so it cannot conceal transition overload.
+  const p = page({ hz: 60, amp: 0.95 });
+  p.eq({ ...BASE, bands: [0, 0, -0.1, 0, 0] });
+  const changes = [
+    [0.5, { ...BASE, bands: [12, 0, 0, 0, 0], preamp: 10 ** (-12.6 / 20) }],
+    [0.52, { ...BASE, bands: [6, 4, 0, 0, 0], bassDb: 9, preamp: 10 ** (-20 / 20) }],
+    [1.0, { ...BASE, bands: [0, 0, -0.1, 0, 0] }],
+  ];
+  let result;
+  const pauses = changes.map(([time, cfg]) => p.offline.suspend(time).then(() => {
+    p.eq(cfg);
+    return p.offline.resume();
+  }));
+  result = await p.render();
+  await Promise.all(pauses);
+  const signal = result.left.subarray(RATE / 2);
+  const peak = signal.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
+  assert.ok(peak <= 0.981, `no overload without the limiter, peak=${peak}`);
+  const settled = result.left.subarray(Math.floor(RATE * 1.6));
+  const rms = Math.sqrt(settled.reduce((sum, x) => sum + x * x, 0) / settled.length);
+  near(rms, 0.95 / Math.SQRT2, 0.005, 'returns to original listening level');
+  let jump = 0;
+  for (let i = 1; i < signal.length; i++) jump = Math.max(jump, Math.abs(signal[i] - signal[i - 1]));
+  assert.ok(jump < 0.03, `gain changes stay smooth, max sample jump=${jump}`);
+});
+
+
+for (const hz of [60, 1000, 14000]) {
+  test(`rapid changes through every tonal preset stay below full scale at ${hz} Hz`, async () => {
+    const presets = fixtures.filter(x => x.kind === 'preset' && x.name.endsWith(':1.0'));
+    assert.equal(presets.length, 10);
+    const p = page({ hz, amp: 0.95 });
+    p.eq({ ...presets[0].params, limiter: false });
+    const changes = presets.slice(1).map((x, i) => p.offline.suspend(0.3 + i * 0.08).then(() => {
+      p.eq({ ...x.params, limiter: false });
+      return p.offline.resume();
+    }));
+    const result = await p.render();
+    await Promise.all(changes);
+    const peak = result.left.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
+    assert.ok(peak <= 0.981, `peak=${peak} without limiter repair`);
+  });
+}
+
+
+test('native filter response calibrates preset headroom at each context sample rate', async () => {
+  for (const rate of [8000, 32000, 44100, 48000, 96000]) {
+    for (const name of ['Bass boost:1.0', 'Treble boost:0.0']) {
+      const cfg = { ...fixtures.find(f => f.name === name).params, limiter: false };
+      const hz = Math.min(14000, rate * 0.4);
+      const p = page({ hz, amp: 0.95, rate }); p.eq(cfg);
+      const r = await p.render();
+      assert.ok(r.L.peak < 0.981, `${name} at ${rate}: peak=${r.L.peak}`);
+      assert.ok(r.left.every(Number.isFinite), `${name} finite at ${rate}`);
+      assert.ok(r.L.rms > 0.005, `${name} not muted at ${rate}`);
+    }
+  }
+});
+
+
+test('unrelated media never wakes the suspended equalizer', () => {
+  const p = page();
+  p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.video.paused = true; p.fire('pause'); p.runTimers(2000);
+  assert.equal(p.calls.suspend, 1);
+  const unrelated = Object.assign(Object.create(Object.getPrototypeOf(p.video)),
+    { paused: false, ended: false, currentSrc: 'https://example.com/unrouted.mp4' });
+  p.fire('play', unrelated); p.fire('playing', unrelated);
+  assert.equal(p.calls.resume, 0);
+  p.video.paused = false; p.fire('play');
+  assert.equal(p.calls.resume, 1, 'routed music resumes immediately');
+});
+
+test('hidden paused audio suspends without waiting for a throttled timer', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.document.hidden = true;
+  p.video.paused = true; p.fire('pause');
+  assert.equal(p.calls.suspend, 1);
+  p.stateChange(); assert.equal(p.calls.resume, 0);
+  p.video.paused = false; p.fire('playing');
+  assert.equal(p.calls.resume, 1);
+});
+
+test('detached videos cannot keep a hidden audio context running', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.video.isConnected = false;
+  p.document.hidden = true; p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 1);
+});
+
+test('background playback continues while routed music is actually playing', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.document.hidden = true; p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 0);
 });

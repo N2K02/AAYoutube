@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
             WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
         }
         LiveUpdater.onResume(this)
+        AndroidAutoInstallHelp.refreshInstalledApps()
         updatePip()
     }
 
@@ -165,6 +166,7 @@ class MainActivity : ComponentActivity() {
     }
 
     fun quit() {
+        SleepTimer.cancel()
         AppLog.add("UI", "Quit")
         compatConnection?.command(Commands.EXIT)
         // Deliver Quit even when MediaBrowser is disconnected or still reconnecting.
@@ -184,6 +186,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun closeEverything() {
+        SleepTimer.cancel()
         WebHost.onQuit = null
         WebHost.requestLink = null
         releaseController()

@@ -952,6 +952,35 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   assert.equal(p.video.paused, false, 'trusted player gesture can Play');
 });
 
+test('anonymous center div tap resumes an explicitly paused video', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  // YouTube renders the center Play overlay as an anonymous div without selectors.
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 160, clientY: 90,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'real video-area Play tap must not be force-paused');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'watchdog also respects resumed play');
+});
+
+test('outside video tap does not override an explicit pause', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 400, clientY: 350,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'unrelated tap must not permit autoplay');
+});
+
 test('manual Pause before autoplay video appears cancels the deferred request', () => {
   const opts = { noVideo: true, autoplay: true };
   const p = playerPage(opts);
@@ -1066,6 +1095,25 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
   p.window.__aay.mini(false);
 });
 
+
+test('phone center Play resumes after a previous explicit native Pause', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  p.window.__aay.cmd('pause');
+  assert.equal(p.video.paused, true, 'a real native pause remains in effect');
+  // The phone YouTube center overlay can be a generic div within #movie_player.
+  // It must count as an explicit resume gesture when the video is paused.
+  p.emit('pointerdown', {
+    isTrusted: true,
+    target: { closest: selector => selector.includes('#movie_player') ? {} : null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'a trusted Play must not immediately be re-paused');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'recovery watchdog must honor the resumed playback');
+});
 
 test('video format preference hides unwanted formats from YouTube', () => {
   const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';

@@ -10,15 +10,13 @@ Audio graph on YouTube's own `<video>` element inside the WebView:
            -> mid/side widening | 8D equal-power orbit (9 s lap)
            -> Headphone 3D cross-feed (0.27 ms, 700 Hz low-pass)
            -> dry + reverb send (Hall / Cinema / Headphone 3D / 8D)
-           -> mRadio soft limiter (tanh above 0.8)
+           -> linked native DynamicsCompressor -> transparent emergency guard near full scale
 
-`WebAudioEqPolicy` computes every parameter exactly as mRadio's
-`SoundEngine.apply()` does (unit tested), and the page applies them with
+`WebAudioEqPolicy` computes the shared preset and spatial tuning parameters (unit tested), and the page applies them with
 30 ms smoothing. All six mRadio 3D modes work. Only built-in nodes are used
 (no AudioWorklet module or ScriptProcessor), so YouTube's CSP cannot block
 it and DSP runs on Chromium's audio thread. Mono streams are upmixed to
-stereo like mRadio. Reverb is four damped feedback combs (mRadio/Freeverb
-style), about 5x cheaper than the earlier convolution reverb; 8D
+stereo like mRadio. Reverb is four gain-normalised, filtered stereo feedback combs; 8D
 uses level panning without mRadio's small inter-ear delay and rear muffling.
 
 Safety rules in the page script:
@@ -106,8 +104,9 @@ are visible in the sheet.
 - An Android effect engine reporting initialized is **not proof** that
   Chromium's actual audio passes through it. The phone and car must be
   audibly tested on each audio route.
-- Android native Equalizer/BassBoost has no mRadio-style PCM limiter;
-  large positive gains can clip. Start from Flat, then make small changes.
+- Android native Equalizer/BassBoost has no PCM limiter. The fallback shifts
+  its complete requested EQ/bass curve into cuts and keeps BassBoost disabled;
+  OEM band limits can still change the resulting shape.
 - No second decoder, duplicated audio stream, audio loopback, playback
   capture, Shizuku or root-based processing is started.
 
@@ -145,3 +144,5 @@ The equalizer writes **no logs** (Kotlin or page script); a contract
 test enforces this. Diagnose dropouts with McpAdbAndroidLogger instead:
 Chromium's own `SyncReader::Read timed out, audio glitch count=N` line
 shows whether the realtime audio thread misses deadlines.
+
+See [Music fidelity](MUSIC_FIDELITY.md) for the revised Concert, full headroom and distortion checks.

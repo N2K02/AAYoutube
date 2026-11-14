@@ -5,7 +5,7 @@
 //
 //   video -> preamp -> 5x peaking (Q 0.9) -> 120 Hz low shelf
 //         -> mid/side widening | 8D orbit pan -> delayed low-passed cross-feed
-//         -> dry + reverb send -> mRadio soft limiter -> speakers
+//         -> dry + reverb send -> linked peak compressor + emergency full-scale guard -> speakers
 //
 // Only the stages the current settings use are connected, because Chromium
 // renders this graph on a realtime thread: idle stages would still cost CPU
@@ -45,10 +45,10 @@
   }
   function settled() { return EQ.count ? (want() ? 'active' : 'off') : (want() ? 'waiting' : 'off'); }
 
-  function soft(x) { // mRadio SoundEngine.soft()
+  function soft(x) { // Emergency guard; transparent throughout the normal operating range.
     var a = Math.abs(x);
-    if (a <= 0.8) return x;
-    var y = 0.8 + 0.2 * Math.tanh((a - 0.8) / 0.2);
+    if (a <= 0.999) return x;
+    var y = 0.999 + 0.001 * Math.tanh((a - 0.999) / 0.001);
     return x < 0 ? -y : y;
   }
   var LIMIT_CURVE = (function () {
@@ -58,19 +58,27 @@
     return c;
   })();
 
-  function set(p, v) {
+  function set(p, v, start) {
     if (!p || !isFinite(v)) return;
-    try { p.setTargetAtTime(v, EQ.ctx.currentTime, 0.03); } catch (e) { p.value = v; }
+    try {
+      var now = EQ.ctx.currentTime;
+      if (start !== undefined) {
+        var held = p.value;
+        p.cancelScheduledValues(now); p.setValueAtTime(held, now);
+      }
+      p.setTargetAtTime(v, start === undefined ? now : start, 0.03);
+    } catch (e) { p.value = v; }
   }
 
-  // mRadio-style comb reverb: four damped feedback echoes (Freeverb tunings at
+  // Stereo room: four damped, gain-normalised feedback echoes (short tunings at
   // 48 kHz). Costs a few delay/filter nodes per sample, unlike a convolution
   // reverb, which was the single heaviest part of the equalizer.
   var COMBS = [0.0253, 0.0269, 0.0290, 0.0307];
   function setVerb(feedback, damp) {
-    var g = EQ.g, fb = Math.max(0, Math.min(0.95, feedback || 0));
+    var g = EQ.g, fb = Math.max(0, Math.min(0.75, feedback || 0));
     var cutoff = 1200 + (1 - Math.max(0, Math.min(1, damp || 0))) * 6000; // damping darkens the tail
     g.combs.forEach(function (c) { set(c.fb.gain, fb); set(c.lp.frequency, cutoff); });
+    set(g.verbIn.gain, 1 - fb);
   }
 
   // Every node is created once; only the stages the current settings need are
@@ -85,9 +93,25 @@
     keep(g.input);
     g.pre = gain(1);
     g.bands = (EQ.cfg && EQ.cfg.bandHz || [60, 230, 910, 3600, 14000]).map(function (hz) {
-      var f = keep(ctx.createBiquadFilter()); f.type = 'peaking'; f.frequency.value = hz; f.Q.value = 0.9; f.gain.value = 0; return f;
+      var f = keep(ctx.createBiquadFilter()); f.type = 'peaking'; f.frequency.value = Math.min(hz, ctx.sampleRate * 0.45); f.Q.value = 0.9; f.gain.value = 0; return f;
     });
     g.shelf = keep(ctx.createBiquadFilter()); g.shelf.type = 'lowshelf'; g.shelf.frequency.value = 120; g.shelf.gain.value = 0;
+    // Unconnected response probes use the browser's exact filter maths/rate.
+    // They are never rendered and are reused for every settings change.
+    g.responseFilters = g.bands.map(function (f) {
+      var probe = ctx.createBiquadFilter(); probe.type = 'peaking';
+      probe.frequency.value = f.frequency.value; return probe;
+    });
+    var shelfProbe = ctx.createBiquadFilter(); shelfProbe.type = 'lowshelf';
+    g.responseFilters.push(shelfProbe);
+    var points = [];
+    for (var k = 0; k <= 512; k++) points.push(10 * Math.pow(ctx.sampleRate * 0.049, k / 512));
+    points.push(0, ctx.sampleRate * 0.5);
+    g.bands.forEach(function (f) { points.push(f.frequency.value); });
+    g.responseHz = new Float32Array(points);
+    g.responseMagnitude = new Float32Array(points.length);
+    g.responsePhase = new Float32Array(points.length);
+    g.responseDb = new Float64Array(points.length);
 
     g.split = keep(ctx.createChannelSplitter(2));
     g.mid = gain(1); g.sideRaw = gain(1);
@@ -105,17 +129,23 @@
     g.amp = gain(Math.SQRT2); g.ps = keep(ctx.createChannelSplitter(2));
     g.orbitDepth = gain(0); g.osc = null;
 
-    g.verbIn = gain(1); // mRadio feeds its reverb the mono sum
-    g.verbIn.channelCount = 1; g.verbIn.channelCountMode = 'explicit'; g.verbIn.channelInterpretation = 'speakers';
+    g.verbIn = gain(0.3); // Normalised stereo send; dry stereo stays untouched.
+    g.verbIn.channelCount = 2; g.verbIn.channelCountMode = 'explicit';
+    g.verbHp = keep(ctx.createBiquadFilter()); g.verbHp.type = 'highpass'; g.verbHp.frequency.value = 180; g.verbHp.Q.value = 0.5;
+    g.verbSplit = keep(ctx.createChannelSplitter(2));
+    g.verbMerge = keep(ctx.createChannelMerger(2));
     g.preDelay = keep(ctx.createDelay(0.1)); g.wet = gain(0);
     g.combs = COMBS.map(function (sec) {
       var d = keep(ctx.createDelay(0.05)), lp = keep(ctx.createBiquadFilter()), fb = gain(0);
       d.delayTime.value = sec; lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.5;
       return { d: d, lp: lp, fb: fb };
     });
-    g.combOut = gain(0.25);
+    g.combOut = gain(0.5);
     g.sum = gain(1);
     g.limitIn = gain(0.5); g.shaper = keep(ctx.createWaveShaper()); g.shaper.curve = LIMIT_CURVE;
+    g.compressor = keep(ctx.createDynamicsCompressor());
+    g.compressor.threshold.value = -0.18; g.compressor.knee.value = 0;
+    g.compressor.ratio.value = 20; g.compressor.attack.value = 0; g.compressor.release.value = 0.08;
     g.out = gain(1);
     g.out.connect(ctx.destination);
     EQ.g = g;
@@ -129,16 +159,26 @@
     var space = orbit || cross || Math.abs(c.sideGain - 1) > 1e-4;
     var limit = !!c.limiter;
     return { eq: eq, space: space, orbit: orbit, cross: cross, wet: wet, limit: limit,
-      key: [eq, space, orbit, cross, wet, limit].join() };
+      key: [eq, space, orbit, cross, wet, limit, wet ? c.feedback : 0, wet ? c.pre : 0].join() };
   }
 
   function wire(p) {
     var g = EQ.g, ctx = EQ.ctx;
     g.all.forEach(function (n) { if (n !== g.out) try { n.disconnect(); } catch (e) {} });
     if (g.osc) { try { g.osc.stop(); g.osc.disconnect(); } catch (e) {} g.osc = null; }
+    var verbKey = EQ.cfg.feedback + ":" + EQ.cfg.pre;
+    if (p.wet && (!g.wasWet || g.verbKey !== verbKey)) {
+      g.combs.forEach(function (c, i) {
+        var old = c.d; c.d = ctx.createDelay(0.05); c.d.delayTime.value = COMBS[i];
+        g.all[g.all.indexOf(old)] = c.d;
+      });
+    }
+    g.wasWet = p.wet; g.verbKey = verbKey;
+    g.preDelay.delayTime.cancelScheduledValues(ctx.currentTime);
+    g.preDelay.delayTime.value = EQ.cfg.pre || 0;
     var n = g.input;
+    if (p.eq || p.space || p.wet) { n.connect(g.pre); n = g.pre; }
     if (p.eq) {
-      n.connect(g.pre); n = g.pre;
       g.bands.forEach(function (f) { n.connect(f); n = f; });
       n.connect(g.shelf); n = g.shelf;
     }
@@ -167,36 +207,95 @@
     }
     n.connect(g.sum);
     if (p.wet) {
-      n.connect(g.verbIn); g.verbIn.connect(g.preDelay);
-      g.combs.forEach(function (c) {
-        g.preDelay.connect(c.d);
+      n.connect(g.verbHp); g.verbHp.connect(g.verbIn); g.verbIn.connect(g.preDelay);
+      g.preDelay.connect(g.verbSplit);
+      g.combs.forEach(function (c, i) {
+        g.verbSplit.connect(c.d, i % 2);
         c.d.connect(c.lp); c.lp.connect(c.fb); c.fb.connect(c.d); // damped feedback loop
-        c.d.connect(g.combOut);
+        c.d.connect(g.verbMerge, 0, i % 2);
       });
-      g.combOut.connect(g.wet); g.wet.connect(g.sum);
+      g.verbMerge.connect(g.combOut); g.combOut.connect(g.wet); g.wet.connect(g.sum);
     }
-    if (p.limit) { g.sum.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
+    if (p.limit) { g.sum.connect(g.compressor); g.compressor.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
     else g.sum.connect(g.out);
   }
 
   // Values only: smoothed, and only when they differ, so slider drags stay cheap.
-  function setIf(p, v, last) {
+  function setIf(p, v, last, start) {
     if (!p || !isFinite(v) || last[0] === v) return;
     last[0] = v;
-    set(p, v);
+    set(p, v, start);
   }
   var LAST = {};
   function slot(k) { return LAST[k] || (LAST[k] = [NaN]); }
 
+  // Gain is linear but filter gains are in dB. Independent ramps can overload
+  // between two safe presets. Hold a conservative bound across the whole ramp,
+  // then restore the measured steady-state headroom on the audio timeline.
+  function reserveTransitionHeadroom(c) {
+    var g = EQ.g, old = g.valueConfig;
+    var changed = !old || c.bassDb !== old.bassDb || c.preamp !== old.preamp ||
+      c.bands.some(function (v, i) { return v !== old.bands[i]; });
+    if (!changed) return undefined;
+    var now = EQ.ctx.currentTime, p = g.pre.gain;
+    var boost = Math.max(0, g.shelf.gain.value, c.bassDb);
+    g.bands.forEach(function (f, i) { boost += Math.max(0, f.gain.value, effectiveBand(c, i)); });
+    function spatial(x) {
+      return Math.max(1, x.sideGain || 1, x.orbit > 0 ? 1 + 1.1 * x.orbit : 1) * (1 + 2 * (x.wet || 0));
+    }
+    var reserve = Math.pow(10, -(boost + 0.5) / 20) / Math.max(spatial(c), old ? spatial(old) : 1);
+    var held = p.value;
+    p.cancelScheduledValues(now);
+    p.setValueAtTime(held, now);
+    var safe = Math.min(held, c.preamp, reserve);
+    p.linearRampToValueAtTime(safe, now + 0.01);
+    p.setValueAtTime(safe, now + 0.31);
+    // Ten time constants leave less than 0.005 dB of even a 100 dB change;
+    // the 0.5 dB reserve covers the residual. Native scheduling works hidden.
+    p.setTargetAtTime(c.preamp, now + 0.31, 0.03);
+    g.valueConfig = { bassDb: c.bassDb, preamp: c.preamp, bands: c.bands.slice(),
+      sideGain: c.sideGain, orbit: c.orbit, wet: c.wet };
+    return now + 0.01;
+  }
+
+  function actualRateHeadroom(c) {
+    var g = EQ.g, key = [c.bands.join(','), c.bassDb, c.bassHz, c.q].join(':');
+    if (g.responseKey !== key) {
+      g.responseDb.fill(0);
+      g.responseFilters.forEach(function (f, i) {
+        var shelf = i === g.bands.length;
+        f.Q.value = c.q || 0.9;
+        if (shelf) f.frequency.value = c.bassHz || 120;
+        f.gain.value = shelf ? c.bassDb : effectiveBand(c, i);
+        f.getFrequencyResponse(g.responseHz, g.responseMagnitude, g.responsePhase);
+        for (var k = 0; k < g.responseHz.length; k++) {
+          g.responseDb[k] += 20 * Math.log10(Math.max(1e-20, g.responseMagnitude[k]));
+        }
+      });
+      var peak = 0;
+      for (var k = 0; k < g.responseDb.length; k++) peak = Math.max(peak, g.responseDb[k]);
+      g.responseGain = peak < 0.01 ? 1 : Math.pow(10, -(peak + 0.5) / 20);
+      g.responseKey = key;
+    }
+    var spatial = (c.orbit > 0 ? 1 + 1.1 * c.orbit : c.sideGain) * (1 + 2 * c.wet);
+    return g.responseGain / spatial;
+  }
+
+  function effectiveBand(c, i) {
+    return (c.bandHz || [60, 230, 910, 3600, 14000])[i] < EQ.ctx.sampleRate * 0.45 ? (c.bands[i] || 0) : 0;
+  }
+
   function values(c) {
     var g = EQ.g;
-    setIf(g.pre.gain, c.preamp, slot('pre'));
+    // Kotlin supplies the requested curve; the live context supplies its rate.
+    c = Object.assign({}, c, { preamp: actualRateHeadroom(c) });
+    var eqStart = reserveTransitionHeadroom(c);
     g.bands.forEach(function (f, i) {
-      setIf(f.Q, c.q || 0.9, slot('q' + i));
-      setIf(f.gain, c.bands[i] || 0, slot('b' + i));
+      setIf(f.Q, c.q || 0.9, slot('q' + i), eqStart);
+      setIf(f.gain, effectiveBand(c, i), slot('b' + i), eqStart);
     });
-    setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'));
-    setIf(g.shelf.gain, c.bassDb, slot('sg'));
+    setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'), eqStart);
+    setIf(g.shelf.gain, c.bassDb, slot('sg'), eqStart);
     setIf(g.side.gain, c.orbit > 0 ? c.orbitKeep : c.sideGain, slot('side'));
     setIf(g.orbitDepth.gain, c.orbit * 0.8, slot('od'));
     [g.toL, g.toR].forEach(function (x, i) {
@@ -206,7 +305,7 @@
     setIf(g.accL.gain, c.crossNorm, slot('nL'));
     setIf(g.accR.gain, c.crossNorm, slot('nR'));
     setIf(g.preDelay.delayTime, c.pre || 0, slot('pd'));
-    setIf(g.wet.gain, c.wet * 0.6, slot('wet'));
+    setIf(g.wet.gain, c.wet, slot('wet'));
     if (c.wet > 0) setVerb(c.feedback, c.damp);
   }
 
@@ -276,7 +375,7 @@
   }
 
   function anyPlaying() {
-    for (var i = 0; i < EQ.els.length; i++) if (!EQ.els[i].paused && !EQ.els[i].ended) return true;
+    for (var i = 0; i < EQ.els.length; i++) if (EQ.els[i].isConnected !== false && !EQ.els[i].paused && !EQ.els[i].ended) return true;
     return false;
   }
   // A routed element is silent while the context is suspended: resume at once,
@@ -289,17 +388,23 @@
   }
   // Paused or ended: stop rendering after a grace period so the device's audio
   // output closes (battery, and Android no longer sees an active player).
+  function suspendIfIdle() {
+    if (!EQ.ctx || !EQ.count || anyPlaying() || EQ.ctx.state !== 'running') return;
+    EQ.idle = true;
+    try { EQ.ctx.suspend(); } catch (e) {}
+  }
   function idleCheck() {
     clearTimeout(EQ.idleTimer);
-    EQ.idleTimer = setTimeout(function () {
-      if (!EQ.ctx || !EQ.count || anyPlaying() || EQ.ctx.state !== 'running') return;
-      EQ.idle = true;
-      try { EQ.ctx.suspend(); } catch (e) {}
-    }, 2000);
+    // Hidden-page timers can be throttled: release idle audio immediately.
+    if (document.hidden) { suspendIfIdle(); return; }
+    EQ.idleTimer = setTimeout(suspendIfIdle, 2000);
   }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) idleCheck();
+  });
   function wake(e) {
     var t = e.target;
-    if (!(t instanceof HTMLMediaElement)) return;
+    if (!(t instanceof HTMLMediaElement) || !EQ.hooked.has(t)) return;
     clearTimeout(EQ.idleTimer);
     EQ.idle = false;
     keepRunning();
@@ -319,10 +424,9 @@
   document.addEventListener('playing', function (e) {
     var t = e.target;
     if (!(t instanceof HTMLMediaElement)) return;
-    clearTimeout(EQ.idleTimer);
-    EQ.idle = false;
-    keepRunning();
     attach(t);
+    if (EQ.hooked.has(t)) wake(e);
+    else if (EQ.count && !anyPlaying()) idleCheck();
   }, true);
 
   var A = window.__aay || (window.__aay = {});
