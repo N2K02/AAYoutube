@@ -35,18 +35,26 @@ object CarMode {
         val state = pm.getComponentEnabledSetting(component)
         AppLog.add("CAR", "Video projection manifest discoverable=$discovered; enabledState=$state")
 
-        // The legacy projection service alone is not a CAR_LAUNCHER activity.
-        // PR #22 removed MainActivity's old car-launcher filter, causing the
-        // AAYT Video shortcut to disappear from Customize launcher.
+        // MainActivity uses the same car-launchable intent categories as AABrowser.
+        // A second activity alias would create duplicate launcher identities.
         val launcherQuery = Intent(Intent.ACTION_MAIN)
             .setPackage(c.packageName)
             .addCategory("android.intent.category.CAR_LAUNCHER")
         val carLaunchers = runCatching {
             pm.queryIntentActivities(launcherQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
         }.getOrDefault(emptyList())
-        val aliasName = c.packageName + ".AutoVideoLauncher"
-        val carLauncherFound = carLaunchers.any { it.activityInfo?.name == aliasName }
-        AppLog.add("CAR", "Video car-launcher alias discoverable=$carLauncherFound" +
+        val expectedActivity = MainActivity::class.java.name
+        val carLauncherFound = carLaunchers.any { it.activityInfo?.name == expectedActivity }
+        AppLog.add("CAR", "Video MainActivity car-launcher discoverable=$carLauncherFound" +
             "; entries=" + carLaunchers.size)
+
+        val mapsQuery = Intent(Intent.ACTION_MAIN)
+            .setPackage(c.packageName)
+            .addCategory("android.intent.category.APP_MAPS")
+        val mapsFound = runCatching {
+            pm.queryIntentActivities(mapsQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
+                .any { it.activityInfo?.name == expectedActivity }
+        }.getOrDefault(false)
+        AppLog.add("CAR", "Video MainActivity maps discoverable=$mapsFound")
     }
 }
