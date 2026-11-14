@@ -1,8 +1,6 @@
 package com.aayoutube.app
 
 import kotlin.math.abs
-import kotlin.math.max
-import kotlin.math.pow
 
 /**
  * mRadio's SoundEngine.apply() translated into the numbers the in-page Web Audio
@@ -73,17 +71,16 @@ internal object WebAudioEqPolicy {
         val bands = if (on) s.bands.map { if (abs(it) >= 0.1f) it else 0f }
             else List(SoundEqPolicy.bandHz.size) { 0f }
         val bassDb = if (on) (s.bass * 9.0).takeIf { it >= 0.1 } ?: 0.0 else 0.0
-        val maxBoost = max(bands.maxOrNull() ?: 0f, bassDb.toFloat()).coerceAtLeast(0f)
-        // mRadio: make room for the boost so the loudest parts don't clip.
-        val preamp = 10f.pow(-maxBoost * 0.5f / 20f)
+        // Full cascaded response, including overlap between bass shelf and graphic bands.
+        val preamp = MusicHeadroom.gain(bands, bassDb)
 
-        val mode = if (on) s.mode else SoundSpaceMode.OFF
+        val mode = if (on && s.intensity > 0f) s.mode else SoundSpaceMode.OFF
         val i = s.intensity.coerceIn(0f, 1f)
         var side = 1f
         var cross = 0f
         var crossDelay = 0f
         var mix = 0f
-        var feedback = 0.84f
+        var feedback = 0.65f
         var damp = 0.4f
         var pre = 0f
         var orbit = 0f
@@ -92,25 +89,25 @@ internal object WebAudioEqPolicy {
             SoundSpaceMode.WIDE -> side = 1f + 1.2f * i
             SoundSpaceMode.HEADPHONE_3D -> {
                 side = 1f + 0.5f * i
-                cross = 0.25f + 0.35f * i
+                cross = 0.45f * i
                 crossDelay = 0.00027f
-                mix = 0.05f + 0.08f * i
-                feedback = 0.80f; damp = 0.5f; pre = 0.010f
+                mix = 0.04f * i
+                feedback = 0.65f; damp = 0.5f; pre = 0.010f
             }
             SoundSpaceMode.HALL -> {
-                side = 1f + 0.2f * i
-                mix = 0.12f + 0.28f * i
-                feedback = 0.88f; damp = 0.3f; pre = 0.018f
+                side = 1f
+                mix = 0.15f * i
+                feedback = 0.70f; damp = 0.3f; pre = 0.018f
             }
             SoundSpaceMode.CINEMA -> {
                 side = 1f + 0.8f * i
-                mix = 0.08f + 0.14f * i
-                feedback = 0.84f; damp = 0.4f; pre = 0.012f
+                mix = 0.08f * i
+                feedback = 0.65f; damp = 0.4f; pre = 0.012f
             }
             SoundSpaceMode.ORBIT_8D -> {
                 orbit = i
-                mix = 0.05f + 0.10f * i
-                feedback = 0.80f; damp = 0.5f; pre = 0.008f
+                mix = 0.04f * i
+                feedback = 0.65f; damp = 0.5f; pre = 0.008f
             }
         }
         val anyEq = bands.any { it != 0f } || bassDb > 0.0
@@ -120,10 +117,10 @@ internal object WebAudioEqPolicy {
             q = Q,
             bassDb = bassDb,
             bassHz = BASS_HZ,
-            preamp = if (on) preamp else 1f,
+            preamp = if (on) preamp / ((if (orbit > 0f) 1f + 1.1f * i else side) * (1f + 2f * mix)) else 1f,
             sideGain = side,
             crossGain = cross,
-            crossNorm = 1f / (1f + cross * 0.6f),
+            crossNorm = 1f / (1f + cross),
             crossDelaySec = crossDelay,
             crossLowPassHz = 700.0,
             reverbWet = mix,
@@ -132,7 +129,7 @@ internal object WebAudioEqPolicy {
             reverbPreSec = pre,
             orbitDepth = orbit,
             orbitPeriodSec = 9.0,
-            orbitKeep = 0.5f * (1f - orbit * 0.5f),
+            orbitKeep = 1f - orbit * 0.5f,
             // mRadio bypasses the limiter only when nothing changes the sound.
             limiter = on && (anyEq || mode != SoundSpaceMode.OFF),
         )

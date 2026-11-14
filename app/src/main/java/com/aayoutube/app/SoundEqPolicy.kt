@@ -18,7 +18,7 @@ internal enum class SoundSpaceMode(
     WIDE("Wide", "Pushes the sound out beyond the speakers or earbuds.", true),
     HEADPHONE_3D("Headphone 3D",
         "Puts the music in front of you, like speakers in a room. Best on headphones.", true),
-    HALL("Concert hall", "Adds the space and echo of a large hall.", false),
+    HALL("Concert hall", "Subtle stereo room, keeping the original music clear.", false),
     CINEMA("Cinema", "Wide, deep and enveloping.", false),
     ORBIT_8D("8D orbit", "The sound slowly circles around your head. Best on headphones.", false),
 }
@@ -87,6 +87,15 @@ internal object SoundEqPolicy {
         val ratio = ((ln(frequencyHz.toDouble()) - ln(bandHz[lower].toDouble())) /
             (ln(bandHz[upper].toDouble()) - ln(bandHz[lower].toDouble()))).toFloat()
         return clean[lower] + (clean[upper] - clean[lower]) * ratio
+    }
+
+    /** Native backend has no preamp/limiter: shift the complete requested curve into cuts. */
+    fun fallbackGainAtHz(hz: Int, settings: SoundEqSettings): Float {
+        val s = safe(settings)
+        val bassDb = s.bass * 9f
+        val reserve = (s.bands.maxOrNull() ?: 0f).coerceAtLeast(0f) + bassDb
+        val bass = bassDb / (1f + (hz / 120f) * (hz / 120f))
+        return (gainAtHz(hz, s.bands) + bass - reserve).coerceIn(-12f, 0f)
     }
 
     fun millibels(db: Float, minimum: Int, maximum: Int): Short =

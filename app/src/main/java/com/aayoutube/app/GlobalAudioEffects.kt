@@ -153,7 +153,7 @@ internal object GlobalAudioEffects {
             if (range.size < 2) error("Invalid system EQ range")
             for (band in 0 until eq.numberOfBands.toInt()) {
                 val hz = eq.getCenterFreq(band.toShort()) / 1000
-                val db = SoundEqPolicy.gainAtHz(hz, settings.bands)
+                val db = SoundEqPolicy.fallbackGainAtHz(hz, settings)
                 eq.setBandLevel(band.toShort(),
                     SoundEqPolicy.millibels(db, range[0].toInt(), range[1].toInt()))
             }
@@ -164,10 +164,7 @@ internal object GlobalAudioEffects {
         val bassOkay = if (!eqOkay || bassBoost == null) false else runCatching {
             bassBoost?.let {
                 it.enabled = false
-                if (settings.bass > 0f) {
-                    it.setStrength(SoundEqPolicy.strength(settings.bass))
-                    it.enabled = true
-                }
+                // Bass is included in the cut-only EQ curve; never stack an unprotected boost.
             }
             bassBoost?.hasControl() == true
         }.getOrDefault(false)
@@ -180,7 +177,7 @@ internal object GlobalAudioEffects {
         val virtualOkay = if (!eqOkay || virtualizer == null) false else runCatching {
             virtualizer?.let {
                 it.enabled = false
-                if (spatial) {
+                if (spatial && settings.intensity > 0f) {
                     val strength = if (settings.mode == SoundSpaceMode.WIDE)
                         settings.intensity * 0.65f else settings.intensity
                     it.setStrength(SoundEqPolicy.strength(strength))

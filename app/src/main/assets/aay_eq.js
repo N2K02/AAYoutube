@@ -5,7 +5,7 @@
 //
 //   video -> preamp -> 5x peaking (Q 0.9) -> 120 Hz low shelf
 //         -> mid/side widening | 8D orbit pan -> delayed low-passed cross-feed
-//         -> dry + reverb send -> mRadio soft limiter -> speakers
+//         -> dry + reverb send -> linked peak compressor + emergency full-scale guard -> speakers
 //
 // Only the stages the current settings use are connected, because Chromium
 // renders this graph on a realtime thread: idle stages would still cost CPU
@@ -45,10 +45,10 @@
   }
   function settled() { return EQ.count ? (want() ? 'active' : 'off') : (want() ? 'waiting' : 'off'); }
 
-  function soft(x) { // mRadio SoundEngine.soft()
+  function soft(x) { // Emergency guard; transparent throughout the normal operating range.
     var a = Math.abs(x);
-    if (a <= 0.8) return x;
-    var y = 0.8 + 0.2 * Math.tanh((a - 0.8) / 0.2);
+    if (a <= 0.999) return x;
+    var y = 0.999 + 0.001 * Math.tanh((a - 0.999) / 0.001);
     return x < 0 ? -y : y;
   }
   var LIMIT_CURVE = (function () {
@@ -63,14 +63,15 @@
     try { p.setTargetAtTime(v, EQ.ctx.currentTime, 0.03); } catch (e) { p.value = v; }
   }
 
-  // mRadio-style comb reverb: four damped feedback echoes (Freeverb tunings at
+  // Stereo room: four damped, gain-normalised feedback echoes (short tunings at
   // 48 kHz). Costs a few delay/filter nodes per sample, unlike a convolution
   // reverb, which was the single heaviest part of the equalizer.
   var COMBS = [0.0253, 0.0269, 0.0290, 0.0307];
   function setVerb(feedback, damp) {
-    var g = EQ.g, fb = Math.max(0, Math.min(0.95, feedback || 0));
+    var g = EQ.g, fb = Math.max(0, Math.min(0.75, feedback || 0));
     var cutoff = 1200 + (1 - Math.max(0, Math.min(1, damp || 0))) * 6000; // damping darkens the tail
     g.combs.forEach(function (c) { set(c.fb.gain, fb); set(c.lp.frequency, cutoff); });
+    set(g.verbIn.gain, 1 - fb);
   }
 
   // Every node is created once; only the stages the current settings need are
@@ -105,17 +106,23 @@
     g.amp = gain(Math.SQRT2); g.ps = keep(ctx.createChannelSplitter(2));
     g.orbitDepth = gain(0); g.osc = null;
 
-    g.verbIn = gain(1); // mRadio feeds its reverb the mono sum
-    g.verbIn.channelCount = 1; g.verbIn.channelCountMode = 'explicit'; g.verbIn.channelInterpretation = 'speakers';
+    g.verbIn = gain(0.3); // Normalised stereo send; dry stereo stays untouched.
+    g.verbIn.channelCount = 2; g.verbIn.channelCountMode = 'explicit';
+    g.verbHp = keep(ctx.createBiquadFilter()); g.verbHp.type = 'highpass'; g.verbHp.frequency.value = 180; g.verbHp.Q.value = 0.5;
+    g.verbSplit = keep(ctx.createChannelSplitter(2));
+    g.verbMerge = keep(ctx.createChannelMerger(2));
     g.preDelay = keep(ctx.createDelay(0.1)); g.wet = gain(0);
     g.combs = COMBS.map(function (sec) {
       var d = keep(ctx.createDelay(0.05)), lp = keep(ctx.createBiquadFilter()), fb = gain(0);
       d.delayTime.value = sec; lp.type = 'lowpass'; lp.frequency.value = 4000; lp.Q.value = 0.5;
       return { d: d, lp: lp, fb: fb };
     });
-    g.combOut = gain(0.25);
+    g.combOut = gain(0.5);
     g.sum = gain(1);
     g.limitIn = gain(0.5); g.shaper = keep(ctx.createWaveShaper()); g.shaper.curve = LIMIT_CURVE;
+    g.compressor = keep(ctx.createDynamicsCompressor());
+    g.compressor.threshold.value = -0.18; g.compressor.knee.value = 0;
+    g.compressor.ratio.value = 20; g.compressor.attack.value = 0; g.compressor.release.value = 0.08;
     g.out = gain(1);
     g.out.connect(ctx.destination);
     EQ.g = g;
@@ -129,16 +136,26 @@
     var space = orbit || cross || Math.abs(c.sideGain - 1) > 1e-4;
     var limit = !!c.limiter;
     return { eq: eq, space: space, orbit: orbit, cross: cross, wet: wet, limit: limit,
-      key: [eq, space, orbit, cross, wet, limit].join() };
+      key: [eq, space, orbit, cross, wet, limit, wet ? c.feedback : 0, wet ? c.pre : 0].join() };
   }
 
   function wire(p) {
     var g = EQ.g, ctx = EQ.ctx;
     g.all.forEach(function (n) { if (n !== g.out) try { n.disconnect(); } catch (e) {} });
     if (g.osc) { try { g.osc.stop(); g.osc.disconnect(); } catch (e) {} g.osc = null; }
+    var verbKey = EQ.cfg.feedback + ":" + EQ.cfg.pre;
+    if (p.wet && (!g.wasWet || g.verbKey !== verbKey)) {
+      g.combs.forEach(function (c, i) {
+        var old = c.d; c.d = ctx.createDelay(0.05); c.d.delayTime.value = COMBS[i];
+        g.all[g.all.indexOf(old)] = c.d;
+      });
+    }
+    g.wasWet = p.wet; g.verbKey = verbKey;
+    g.preDelay.delayTime.cancelScheduledValues(ctx.currentTime);
+    g.preDelay.delayTime.value = EQ.cfg.pre || 0;
     var n = g.input;
+    if (p.eq || p.space || p.wet) { n.connect(g.pre); n = g.pre; }
     if (p.eq) {
-      n.connect(g.pre); n = g.pre;
       g.bands.forEach(function (f) { n.connect(f); n = f; });
       n.connect(g.shelf); n = g.shelf;
     }
@@ -167,15 +184,16 @@
     }
     n.connect(g.sum);
     if (p.wet) {
-      n.connect(g.verbIn); g.verbIn.connect(g.preDelay);
-      g.combs.forEach(function (c) {
-        g.preDelay.connect(c.d);
+      n.connect(g.verbHp); g.verbHp.connect(g.verbIn); g.verbIn.connect(g.preDelay);
+      g.preDelay.connect(g.verbSplit);
+      g.combs.forEach(function (c, i) {
+        g.verbSplit.connect(c.d, i % 2);
         c.d.connect(c.lp); c.lp.connect(c.fb); c.fb.connect(c.d); // damped feedback loop
-        c.d.connect(g.combOut);
+        c.d.connect(g.verbMerge, 0, i % 2);
       });
-      g.combOut.connect(g.wet); g.wet.connect(g.sum);
+      g.verbMerge.connect(g.combOut); g.combOut.connect(g.wet); g.wet.connect(g.sum);
     }
-    if (p.limit) { g.sum.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
+    if (p.limit) { g.sum.connect(g.compressor); g.compressor.connect(g.limitIn); g.limitIn.connect(g.shaper); g.shaper.connect(g.out); }
     else g.sum.connect(g.out);
   }
 
@@ -206,7 +224,7 @@
     setIf(g.accL.gain, c.crossNorm, slot('nL'));
     setIf(g.accR.gain, c.crossNorm, slot('nR'));
     setIf(g.preDelay.delayTime, c.pre || 0, slot('pd'));
-    setIf(g.wet.gain, c.wet * 0.6, slot('wet'));
+    setIf(g.wet.gain, c.wet, slot('wet'));
     if (c.wet > 0) setVerb(c.feedback, c.damp);
   }
 

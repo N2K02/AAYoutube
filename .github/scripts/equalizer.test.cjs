@@ -40,7 +40,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
         const g = t.createGain(); g.gain.value = amp; o.connect(g); o.start();
         if (stereo === 'mono') return g;
         const m = t.createChannelMerger(2);
-        const inv = t.createGain(); inv.gain.value = stereo === 'side' ? -1 : 1;
+        const inv = t.createGain(); inv.gain.value = stereo === 'side' ? -1 : stereo === 'left' ? 0 : 1;
         g.connect(m, 0, 0); g.connect(inv); inv.connect(m, 0, 1);
         return m;
       };
@@ -78,7 +78,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
       for (const x of d) { s += x * x; pk = Math.max(pk, Math.abs(x)); }
       return { rms: Math.sqrt(s / d.length), peak: pk };
     };
-    return { L: m(0), R: m(1) };
+    return { L: m(0), R: m(1), left: buf.getChannelData(0), right: buf.getChannelData(1) };
   };
   return { eq: c => window.__aay.eq(c), video, statuses, calls, fire, runTimers, render,
     stateChange: () => onState && onState(),
@@ -195,13 +195,13 @@ test('long non-MediaSource playback falls back after 4 s', () => {
   assert.equal(p.calls.routed, 0);
 });
 
-test('switching between reverb modes only glides parameters (no rewire, no click)', () => {
+test('reverb time changes fade and replace the tail instead of pitching existing audio', () => {
   const p = page();
   const hall = { ...BASE, sideGain: 1.1, wet: 0.26, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true };
   p.eq(hall);
   p.runTimers(0);
   p.eq({ ...hall, sideGain: 1.4, wet: 0.15, feedback: 0.84, damp: 0.4, pre: 0.012 }); // Cinema
-  assert.ok(!p.pending().includes(50), 'Hall -> Cinema keeps the graph and glides values');
+  assert.ok(p.pending().includes(50), 'Hall -> Cinema fades before changing delay times');
   p.eq({ ...hall, wet: 0 , sideGain: 1.6 }); // Wide: reverb stage leaves -> faded rewire
   assert.ok(p.pending().includes(50));
 });
@@ -212,4 +212,42 @@ test('reverb tail decays (stable feedback) and stays near unity loudness', async
   const r = await p.render();
   assert.ok(Number.isFinite(r.L.rms) && r.L.peak <= 1.0001);
   near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 3, 'reverb level');
+});
+
+
+// These settings come from WebAudioEqPolicy, and Kotlin CI verifies they stay in sync.
+const fixtures = fs.readFileSync('.github/scripts/eq-fixtures.jsonl', 'utf8').trim().split('\n').map(JSON.parse);
+function thd(samples, hz) {
+  const data = samples.subarray(RATE);
+  let sine = 0, cosine = 0, power = 0;
+  for (let i=0; i<data.length; i++) {
+    sine += data[i]*Math.sin(2*Math.PI*hz*i/RATE);
+    cosine += data[i]*Math.cos(2*Math.PI*hz*i/RATE);
+    power += data[i]*data[i];
+  }
+  const fundamental = 2*(sine*sine+cosine*cosine)/data.length;
+  return Math.sqrt(Math.max(0, power-fundamental)/fundamental);
+}
+test('all tonal presets plus extra bass stay clean at high input level', async () => {
+  for (const f of fixtures.filter(f => f.kind === 'preset')) {
+    for (const hz of [60, 230, 910, 3600, 14000]) {
+      const p = page({ hz, amp: 0.95 }); p.eq(f.params);
+      if (!f.params.limiter) continue; // native Flat path is intentionally not routed
+      const r = await p.render();
+      assert.ok(r.L.peak <= 0.99, `${f.name} at ${hz} Hz peak ${r.L.peak}`);
+      assert.ok(thd(r.left,hz) < 0.005, `${f.name} at ${hz} Hz distortion ${thd(r.left,hz)}`);
+    }
+  }
+});
+test('Concert keeps dry stereo and does not feed left-only music into the right ear', async () => {
+  const f = fixtures.find(f => f.name === 'HALL:1');
+  const p = page({ hz: 1000, amp: 0.95, stereo: 'left' }); p.eq(f.params);
+  const r = await p.render();
+  assert.ok(r.R.peak < 1e-6, `right channel ${r.R.peak}`);
+  assert.ok(thd(r.left, 1000) < 0.005);
+});
+test('all zero-intensity modes keep the native path', () => {
+  for (const f of fixtures.filter(f => f.kind === 'spatial' && f.name.endsWith(':0'))) {
+    const p = page(); p.eq(f.params); assert.equal(p.calls.routed,0,f.name);
+  }
 });
