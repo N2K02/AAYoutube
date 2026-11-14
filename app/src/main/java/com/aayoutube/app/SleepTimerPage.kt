@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -39,10 +41,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 
 @Composable
 fun SleepTimerPage() {
-    var amount by rememberSaveable { mutableStateOf(SleepTimerPolicy.DEFAULT_MINUTES.toString()) }
-    var hours by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    var hours by rememberSaveable { mutableStateOf(SleepTimerSettings.loadHours(context)) }
+    var amount by rememberSaveable {
+        mutableStateOf(SleepTimerSettings.loadAmount(context, hours).toString())
+    }
     val remaining by SleepTimer.remaining.collectAsState()
     val duration = SleepTimerPolicy.durationMillis(amount.toLongOrNull() ?: 0L, hours)
+    // Persist valid edits, including plus/minus and unit selection, without starting playback.
+    LaunchedEffect(amount, hours) {
+        val selected = amount.toLongOrNull() ?: return@LaunchedEffect
+        SleepTimerSettings.saveSelection(context, selected, hours)
+    }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -88,7 +98,17 @@ fun SleepTimerPage() {
             listOf("Minutes", "Hours").forEachIndexed { index, label ->
                 SegmentedButton(
                     selected = hours == (index == 1),
-                    onClick = { hours = index == 1 },
+                    onClick = {
+                        val selectedHours = index == 1
+                        if (hours != selectedHours) {
+                            val current = amount.toLongOrNull()
+                            val nextAmount = current?.coerceIn(
+                                1L, if (selectedHours) 24L else SleepTimerPolicy.MAX_MINUTES
+                            ) ?: if (selectedHours) 1L else SleepTimerPolicy.DEFAULT_MINUTES
+                            hours = selectedHours
+                            amount = nextAmount.toString()
+                        }
+                    },
                     shape = SegmentedButtonDefaults.itemShape(index, 2),
                     label = { Text(label) },
                 )
