@@ -23,6 +23,10 @@
     <!-- To show the Android Auto app version on the Info page. -->
     <queries>
         <package android:name="com.google.android.projection.gearhead" />
+        <package android:name="com.mag.unknownauto" />
+        <package android:name="dev.n2k02.localadb" />
+        <package android:name="com.aaenabler.app" />
+        <package android:name="com.example.kinginstaller" />
     </queries>
 
     <application
