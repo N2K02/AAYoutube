@@ -952,6 +952,35 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   assert.equal(p.video.paused, false, 'trusted player gesture can Play');
 });
 
+test('anonymous center div tap resumes an explicitly paused video', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  // YouTube renders the center Play overlay as an anonymous div without selectors.
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 160, clientY: 90,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'real video-area Play tap must not be force-paused');
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'watchdog also respects resumed play');
+});
+
+test('outside video tap does not override an explicit pause', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 400, clientY: 350,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'unrelated tap must not permit autoplay');
+});
+
 test('manual Pause before autoplay video appears cancels the deferred request', () => {
   const opts = { noVideo: true, autoplay: true };
   const p = playerPage(opts);
