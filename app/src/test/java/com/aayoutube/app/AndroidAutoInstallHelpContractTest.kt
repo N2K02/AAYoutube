@@ -17,6 +17,15 @@ class AndroidAutoInstallHelpContractTest {
         assertTrue(help.contains("https://github.com/fcaronte/KingInstaller/releases"))
         assertTrue(help.contains("https://github.com/malebuffy/AAEnabler"))
         assertTrue(help.contains("https://github.com/N2K02/LocalAdb"))
+        assertTrue(help.contains("https://github.com/GitMag/UnknownAuto/releases/latest"))
+        assertEquals(4, AndroidAutoInstallHelp.installers.size)
+        assertEquals(setOf("com.example.kinginstaller", "com.aaenabler.app",
+            "dev.n2k02.localadb", "com.mag.unknownauto"),
+            AndroidAutoInstallHelp.installers.map { it.packageName }.toSet())
+        listOf("com.example.kinginstaller", "com.aaenabler.app",
+            "dev.n2k02.localadb", "com.mag.unknownauto").forEach { packageId ->
+            assertTrue(manifest.contains(packageId))
+        }
         assertTrue(help.contains("normal ADB installation alone may not fix"))
         assertTrue(help.contains("installers.none { it.url == url }"))
     }
@@ -51,6 +60,11 @@ class AndroidAutoInstallHelpContractTest {
         assertFalse(help.contains("Download the signed APK from the existing updater/release"))
         assertTrue(help.contains("Card(colors = CardDefaults.cardColors("))
         assertTrue(help.contains("installer.description"))
+        assertTrue(help.contains("if (installed)"))
+        assertTrue(help.contains("AndroidAutoInstallHelp.isInstalled(context, installer)"))
+        assertTrue(help.contains("Installed"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/MainActivity.kt")
+            .contains("AndroidAutoInstallHelp.refreshInstalledApps()"))
         assertFalse(help.contains("Text(\"Video visibility\""))
         assertFalse(help.contains("\"Mark Video as showing\""))
         assertFalse(help.contains("\"Video still missing\""))
