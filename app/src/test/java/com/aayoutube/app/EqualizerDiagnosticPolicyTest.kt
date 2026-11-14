@@ -47,7 +47,7 @@ class EqualizerDiagnosticPolicyTest {
             val path = "app/src/main/java/com/aayoutube/app/$it"
             assertFalse(it, File(path).isFile || File("../$path").isFile)
         }
-        assertTrue(manifest.contains("android:process=\":web\""))
+        assertFalse("one process, as in AABrowser", manifest.contains("android:process="))
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
     }
 }

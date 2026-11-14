@@ -20,7 +20,7 @@ class AndroidAutoIntegrationContractTest {
         val service = src("app/src/main/java/com/aayoutube/app/LegacyProjectionService.kt")
         assertTrue(service.contains("Android Auto requested legacy projection service"))
         assertTrue(service.contains("Android Auto resolving projected video activity"))
-        assertTrue(video.contains("android:process=\":web\""))
+        assertFalse("one process, as in AABrowser", manifest.contains("android:process="))
         // Android Auto has independent video/music entries; their labels
         // must not change the phone launcher name.
         assertTrue(video.contains("android:label=\"AAYT Video\""))
