@@ -100,6 +100,17 @@ class SleepTimerTest {
         assertTrue(chip.contains("SleepTimer.chipMinutes.collectAsState()"))
         assertTrue(chip.contains("Sleep in:"))
         assertTrue(chip.contains("detectDragGestures"))
+        val navigation = src("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
+        listOf(
+            "surfaceContainerHigh.copy(alpha = 0.88f)",
+            "contentColor = MaterialTheme.colorScheme.onSurface",
+            "RoundedCornerShape(50)",
+            "tonalElevation = 3.dp",
+            "shadowElevation = 6.dp",
+        ).forEach { style ->
+            assertTrue("Sleep Timer overlay missing: $style", chip.contains(style))
+            assertTrue("Navigation overlay missing: $style", navigation.contains(style))
+        }
         assertTrue(chip.contains(".clickable(onClick = onClick)"))
         assertTrue(screens.contains("if (phoneDisplay && !inPip && fullscreen == null)"))
         assertTrue(screens.contains("SleepTimerChip(onClick = { tab = Tab.SleepTimer.ordinal })"))
