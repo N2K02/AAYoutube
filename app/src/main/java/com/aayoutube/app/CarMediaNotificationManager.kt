@@ -40,7 +40,7 @@ internal class CarMediaNotificationManager(
     )
 
     fun placeholder(): Notification = NotificationCompat.Builder(service, CHANNEL_ID)
-        .setSmallIcon(android.R.drawable.ic_media_play)
+        .setSmallIcon(com.aayoutube.app.R.drawable.ic_stat_app)
         .setContentTitle("AAYoutube")
         .setContentText("Preparing playback")
         .setOnlyAlertOnce(true)
@@ -54,7 +54,7 @@ internal class CarMediaNotificationManager(
 
     fun playback(snapshot: Snap, token: MediaSessionCompat.Token, artwork: Bitmap? = null): Notification {
         val builder = NotificationCompat.Builder(service, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setSmallIcon(com.aayoutube.app.R.drawable.ic_stat_app)
             .setContentTitle(snapshot.title.ifBlank { "AAYoutube" })
             .setContentText(snapshot.artist)
             .setLargeIcon(artwork)
