@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
@@ -381,39 +382,48 @@ fun AppRoot(activity: MainActivity) {
     // page's own history (asked live from the WebView, because YouTube changes pages without
     // reloading), then YouTube home. On the home page the app goes to the background (it keeps playing).
     // YouTube Home: a playing video shrinks to the mini player instead of stopping.
+    val homeHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     val goYouTubeHome: () -> Unit = {
         tab = Tab.Watch.ordinal
-        if (WebHost.mode.value == WebHost.PlayerMode.FULL && WebHost.isOnWatchPage())
-            WebHost.enterMini()
-        else if (WebHost.mode.value == WebHost.PlayerMode.MINI)
-            BrowseHost.navigate(WebHost.home())
-        else WebHost.openUrl(WebHost.home())
+        when (PlayerNavigationPolicy.home(
+            fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
+            miniPlayer = WebHost.mode.value == WebHost.PlayerMode.MINI,
+            onWatchPage = WebHost.isOnWatchPage(),
+            fullscreen = WebHost.fullscreenView.value != null,
+        )) {
+            // The mini player cannot open over Chromium's fullscreen view: leave it first.
+            PlayerNavigationPolicy.Home.ExitFullscreenThenMini -> {
+                WebHost.exitFullscreen()
+                homeHandler.post { WebHost.enterMini() }
+            }
+            PlayerNavigationPolicy.Home.Mini -> WebHost.enterMini()
+            PlayerNavigationPolicy.Home.BrowseHome -> BrowseHost.navigate(WebHost.home())
+            PlayerNavigationPolicy.Home.OpenHome -> WebHost.openUrl(WebHost.home())
+        }
     }
     val goBack: () -> Unit = {
-        when {
-            equalizerOpen -> equalizerOpen = false
-            fullscreen != null -> WebHost.exitFullscreen()
+        when (PlayerNavigationPolicy.back(
+            equalizerOpen = equalizerOpen,
+            fullscreen = fullscreen != null,
+            landscapeFill = WebHost.landscapeFill.value,
+            onSettingsTab = tab == Tab.Settings.ordinal,
+            onWatchTab = tab == Tab.Watch.ordinal,
+            fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
+            onWatchPage = WebHost.isOnWatchPage(),
+        )) {
+            PlayerNavigationPolicy.Back.CloseEqualizer -> equalizerOpen = false
+            PlayerNavigationPolicy.Back.ExitFullscreen -> WebHost.exitFullscreen()
             // Landscape video: Back first shows the watch page (player + playlist).
-            WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()
-            tab == Tab.Settings.ordinal -> tab = Tab.Watch.ordinal
-            tab != Tab.Watch.ordinal -> tab = Tab.Settings.ordinal
-            // Browsing under the mini player (or after closing it): back moves through the browse page.
-            WebHost.mode.value != WebHost.PlayerMode.FULL && BrowseHost.goBack() -> Unit
-            // Car screen: already on Home; stay on the car screen instead of disappearing from it.
-            WebHost.carDisplay && WebHost.mode.value != WebHost.PlayerMode.FULL -> AppLog.add("UI", "Back on Home (car screen): nothing to go back to")
-            WebHost.mode.value != WebHost.PlayerMode.FULL -> activity.moveTaskToBack(true)
-            // Car screen: back from a video always shrinks it into the mini player with YouTube
-            // Home underneath, like the YouTube app (playing or paused).
-            WebHost.carDisplay && WebHost.isOnWatchPage() -> WebHost.enterMini()
-            // Even a paused video goes to mini-player. A stale MediaSession snapshot or
-            // YouTube SPA history must never make Back navigate the main player to Home.
-            WebHost.isOnWatchPage() -> WebHost.enterMini()
-            WebHost.goBack() -> Unit
-            WebHost.carDisplay -> AppLog.add("UI", "Back on YouTube home (car screen): nothing to go back to")
-            else -> {
-                AppLog.add("UI", "Back on YouTube home: app to background")
-                activity.moveTaskToBack(true)
-            }
+            PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()
+            PlayerNavigationPolicy.Back.ToWatchTab -> tab = Tab.Watch.ordinal
+            PlayerNavigationPolicy.Back.ToSettingsTab -> tab = Tab.Settings.ordinal
+            // Browsing under the mini player (or after closing it). On the car screen stay put.
+            PlayerNavigationPolicy.Back.BrowseBack ->
+                if (!BrowseHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
+            // Playing or paused, phone or car: a video shrinks to the mini player.
+            PlayerNavigationPolicy.Back.Mini -> WebHost.enterMini()
+            PlayerNavigationPolicy.Back.PageBack ->
+                if (!WebHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
         }
     }
     BackHandler(enabled = true) { goBack() }
@@ -476,6 +486,19 @@ fun AppRoot(activity: MainActivity) {
         }
         // App-owned watch header overlays the WebView without relayout.
         // Android Auto's separate native host bars remain host-controlled.
+        val phoneLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
+        val screenCfg = LocalConfiguration.current
+        val screenAlongPx = with(LocalDensity.current) {
+            (if (phoneLandscape) screenCfg.screenWidthDp else screenCfg.screenHeightDp).dp.toPx()
+        }
+        val (railAlign, railDrag) = rememberEdgeDrag(
+            left = flags.controlsOnLeft, landscape = phoneLandscape,
+            containerPx = screenAlongPx, onActivity = { topMenuEpoch++ },
+        )
+        val videoOnScreen = VideoRefreshPolicy.capped(
+            watchTab = watchTab, playing = snap.playing, playerMode = playerMode,
+        )
+        LaunchedEffect(videoOnScreen) { activity.setVideoRefreshCap(videoOnScreen) }
         if (watchTab && headerAllowed) {
             // Same small floating side rail as Android Auto (one shared side
             // setting, Right by default). Any touch on the page shows it.
@@ -483,8 +506,11 @@ fun AppRoot(activity: MainActivity) {
                 visible = topMenuVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 8.dp).zIndex(20f),
+                modifier = Modifier.align(railAlign)
+                    .then(
+                        if (phoneLandscape) Modifier.statusBarsPadding().padding(top = 8.dp)
+                        else Modifier.padding(horizontal = 8.dp)
+                    ).then(railDrag).zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
@@ -502,6 +528,7 @@ fun AppRoot(activity: MainActivity) {
                     },
                     onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
+                    vertical = ControlsSidePolicy.vertical(phoneLandscape),
                 ) {
                     BarIcon(
                         Icons.Filled.MusicNote,
@@ -517,6 +544,13 @@ fun AppRoot(activity: MainActivity) {
                         enabled = canLyrics,
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
+                    if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))
+                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Phone,
+                        onClick = {
+                            Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
+                            topMenuEpoch++
+                        },
+                        tint = if (VideoFitPolicy.normalize(flags.videoFit) != "fit") MaterialTheme.colorScheme.primary else null)
                     Box {
                         BarIcon(Icons.Filled.Settings, "Settings", BarSize.Phone,
                             onClick = { tab = Tab.Settings.ordinal })
@@ -919,7 +953,7 @@ fun FeaturesPage() {
             Toggle("Hide Shorts", "Removes Shorts shelves; Shorts links open as normal videos.", f.hideShorts) { s, v -> s.copy(hideShorts = v) }
             Toggle("Hide promos", "Removes banners that ask you to install or upgrade.", f.hidePromos) { s, v -> s.copy(hidePromos = v) }
             Toggle("Background play", "Prevents YouTube pausing when the screen is hidden. Android Auto playback also uses the media service.", f.backgroundPlay) { s, v -> s.copy(backgroundPlay = v) }
-            Toggle("Save battery in background", "With the app hidden for a minute, the unseen video drops to 360p while the audio keeps playing. Your quality returns as soon as you open the app. Never in PiP, Android Auto, ads or live streams; turns itself off if audio stalls.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
+            Toggle("Save battery in background", "With the app hidden for a minute, the unseen video drops to 144p while the audio keeps playing. Your quality returns as soon as you open the app. Never in PiP, Android Auto, ads or live streams; turns itself off if audio stalls.", f.lowQualityInBackground, enabled = f.backgroundPlay) { s, v -> s.copy(lowQualityInBackground = v) }
             ListItem(headlineContent = { Text("Video quality") },
                 supportingContent = { Text("Starts at 720p; choosing another resolution in YouTube’s quality menu saves it for future videos. Current: " + f.preferredQuality) },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer))
@@ -949,6 +983,7 @@ fun FeaturesPage() {
             }
             CodecPicker(f.videoCodec) { v -> Features.update { it.copy(videoCodec = v) } }
             Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
+            Toggle("Skip buttons seek 10 seconds", "Next and Previous on Android Auto's player, the notification and headsets jump 10 seconds inside the video instead of changing video.", f.skipSeeks) { s, v -> s.copy(skipSeeks = v) }
             Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
             Toggle("Hide end-screen cards", "Removes suggested-video cards over the end of a video.", f.hideEndCards) { s, v -> s.copy(hideEndCards = v) }
         }
@@ -982,9 +1017,13 @@ fun FeaturesPage() {
                 }
             }
             Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp, top = 4.dp)) {
+                val sideEnabled = ControlsSidePolicy.sideSettingEnabled(
+                    LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+                )
                 Text("Video controls side", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Where the floating video controls sit, on your phone and Android Auto.",
+                    if (sideEnabled) "Where the floating video controls sit in portrait, on your phone and Android Auto."
+                    else "In landscape the video controls are always at the top centre. Rotate to portrait to change the side.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -995,6 +1034,7 @@ fun FeaturesPage() {
                         SegmentedButton(
                             selected = f.controlsOnLeft == left,
                             onClick = { Features.update { it.copy(controlsOnLeft = left) } },
+                            enabled = sideEnabled,
                             shape = SegmentedButtonDefaults.itemShape(index = i, count = sides.size),
                         ) { Text(ControlsSidePolicy.label(left)) }
                     }

@@ -157,7 +157,14 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
-  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini); }
+  // Layout transitions (YouTube fullscreen, landscape fill, mini/expand) re-parent or
+  // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
+  // A short transit window drops those involuntary pauses; a real tap on Pause
+  // still wins through userPauseEligibleUntil.
+  var transitUntil = 0;
+  A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
+  function inTransit() { return Date.now() < transitUntil; }
+  function holding() { return inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini)); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
@@ -243,6 +250,16 @@
     }, true);
   } catch (e) {}
 
+  // Diagnostic log URLs must not reveal video IDs, search queries, tokens or fragments.
+  // Keep only the origin and first route segment; navigation still uses the original URL.
+  function logRoute(url) {
+    if (url == null) return '[none]';
+    try {
+      var parsed = new URL(String(url), location.href);
+      return parsed.origin + '/' + (parsed.pathname.split('/').filter(Boolean)[0] || '');
+    } catch (e) { return '[invalid-url]'; }
+  }
+
   /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
   try {
     document.addEventListener('click', function (e) {
@@ -250,7 +267,7 @@
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
-      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + a.getAttribute('href') : ' (no link)'));
+      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + logRoute(a.getAttribute('href')) : ' (no link)'));
       if (!a) return;
       var href = a.href, before = location.href;
       // Browse page (under the mini player): a video opens in the player, not here.
@@ -263,7 +280,7 @@
       if (/\/watch\?|[?&]list=|\/playlist\?/.test(href) && href !== before) {
         later(function () {
           if (location.href === before) {
-            console.log('[aay] link did nothing after 1.5 s, opening it: ' + href);
+            console.log('[aay] link did nothing after 1.5 s, opening route: ' + logRoute(href));
             location.href = href;
           }
         }, 1500);
@@ -271,7 +288,7 @@
     }, true);
     var origPush = history.pushState;
     history.pushState = function (st, title, url) {
-      console.log('[aay] page change ' + url);
+      console.log('[aay] page change ' + logRoute(url));
       return origPush.apply(this, arguments);
     };
     ['waiting', 'stalled', 'error', 'emptied', 'loadstart', 'loadedmetadata', 'resize', 'seeking', 'ended'].forEach(function (type) {
@@ -364,6 +381,36 @@
     }, { capture: true, passive: true });
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
   }
+
+  /* ---------- 1f. Keep the video in view when a playlist moves on (as AABrowser) ----------
+   * On the mobile page the playlist sits under the video. When the next song starts,
+   * YouTube scrolls or focuses its row and the video slides off the top. While a
+   * playlist plays and the page is at the top, those playlist scrolls are dropped.
+   * Everything else on YouTube scrolls normally. */
+  if (!BROWSE) (function () {
+    var PANEL = 'ytm-playlist-panel-renderer,ytm-playlist-panel-video-renderer,' +
+      'ytm-playlist-engagement-panel,[class*="playlist-panel"]';
+    function guarding(el) {
+      try {
+        return /^\/watch/.test(location.pathname) && /[?&]list=/.test(location.search) &&
+          (window.scrollY || 0) < 80 && !!el && typeof el.closest === 'function' && !!el.closest(PANEL);
+      } catch (e) { return false; }
+    }
+    var proto = window.Element && Element.prototype;
+    if (!proto || proto.__aayPlaylistGuard) return;
+    proto.__aayPlaylistGuard = true;
+    var scrollIntoView = proto.scrollIntoView;
+    if (typeof scrollIntoView === 'function') proto.scrollIntoView = function () {
+      if (guarding(this)) return;
+      return scrollIntoView.apply(this, arguments);
+    };
+    var hproto = window.HTMLElement && HTMLElement.prototype;
+    var focus = hproto && hproto.focus;
+    if (typeof focus === 'function') hproto.focus = function (opts) {
+      if (guarding(this)) return focus.call(this, { preventScroll: true });
+      return focus.apply(this, arguments);
+    };
+  })();
 
   /* ---------- 1g. AABrowser-style tap-to-seek for Android Auto ---------- */
   // The Car App Library surface exposes taps, not horizontal scrubbing gestures.
@@ -682,8 +729,26 @@
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
   var styleEl = null;
+  // Fit / Fill / Stretch (AABrowser's video-fit) for a video that fills the screen:
+  // our car / landscape layout and YouTube's own fullscreen. Fit is the page default.
+  var VFIT_BOX = 'html.aay-car video.html5-main-video,:fullscreen video.html5-main-video,' +
+    ':-webkit-full-screen video.html5-main-video';
+  function vfitCss(cls, fit) {
+    return VFIT_BOX.split(',').map(function (sel) {
+      return sel.indexOf('html.') === 0 ? sel.replace('html.', 'html.' + cls + '.') : 'html.' + cls + ' ' + sel;
+    }).join(',') + '{left:0!important;top:0!important;width:100%!important;height:100%!important;' +
+      'object-fit:' + fit + '!important}';
+  }
+  var CSS_VFIT = vfitCss('aay-vfill', 'cover') + vfitCss('aay-vstretch', 'fill');
+  function applyVideoFit() {
+    var root = document.documentElement;
+    if (!root) return;
+    root.classList.toggle('aay-vfill', CFG.videoFit === 'fill');
+    root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
+  }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;
+    applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
@@ -1382,6 +1447,7 @@
       rydApply();
       openFirstResult();
       carLayout();
+      landPlaylist();
       reportAccount();
     } catch (e) {}
   }
@@ -1563,6 +1629,31 @@
   // Set by the app as soon as the screen starts to leave (before PiP or the background kick in).
   A.setHold = function (on) { A.hold = !!on; };
 
+  /* Landscape watch page (not the filled video): after the next video in a Mix or
+   * playlist, YouTube collapses the queue into a small "Next:" bar and leaves the
+   * right column empty. Expand it once per video, only when it is that collapsed bar. */
+  var landPlaylistFor = '', landPlaylistTries = 0;
+  function landPlaylist() {
+    if (BROWSE || A.isLand || A.isMini || A.inPip || A.isCar) return;
+    if (!/^\/watch/.test(location.pathname) || innerWidth <= innerHeight) return;
+    var m = location.search.match(/[?&]v=([^&]+)/), vid = m ? m[1] : '';
+    if (!vid || !/[?&]list=/.test(location.search)) return;
+    if (landPlaylistFor !== vid) { landPlaylistFor = vid; landPlaylistTries = 0; }
+    if (landPlaylistTries >= 4) return;
+    var panel = document.querySelector('ytm-playlist-panel-renderer') ||
+      document.querySelector('ytm-playlist-panel-entry-point') ||
+      document.querySelector('[class*="playlist-panel"]');
+    if (!panel) return;
+    var r = panel.getBoundingClientRect();
+    var text = (panel.textContent || '').trim();
+    var collapsed = r.height > 0 && r.height < innerHeight * 0.3 && /^\s*Next\s*:/i.test(text) ||
+      !!panel.querySelector('[aria-expanded="false"]');
+    if (!collapsed) { landPlaylistTries = 4; return; }
+    landPlaylistTries++;
+    var target = panel.querySelector('[aria-expanded="false"]') || panel;
+    try { target.click(); } catch (e) {}
+  }
+
   // While in picture in picture, check every 2 s that video frames still arrive. If the sound
   // plays but the picture is stuck (black), seek to the current position: that restarts the
   // video decoder without stopping the sound for more than a moment.
@@ -1694,7 +1785,7 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
-    var on = !!(A.isCar || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
@@ -1752,6 +1843,51 @@
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
   };
+  // Android Auto: the watch page (player + playlist) instead of the filled video.
+  A.carPage = function (on) {
+    A.isCarPage = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
+  };
+
+  /* YouTube's fullscreen / minimise button while sideways or on Android Auto.
+   * There the app itself fills the screen (it is not Chromium fullscreen), so
+   * YouTube's minimise has nothing to leave and opens its "more videos" panel.
+   * Like AABrowser's fullscreen and back, the button instead switches between
+   * the filled video and the watch page with its playlist. Portrait phone and
+   * Chromium's real fullscreen keep YouTube's own behaviour. */
+  if (!BROWSE) (function () {
+    var FS_BUTTON = '.fullscreen-icon,.ytp-fullscreen-button,[class*="fullscreen-button" i],' +
+      '[class*="FullscreenButton"],button[aria-label*="full screen" i],button[aria-label*="fullscreen" i]';
+    function fsButton(e) {
+      var t = e.target;
+      if (!t || typeof t.closest !== 'function') return null;
+      return t.closest(FS_BUTTON);
+    }
+    function owned() {
+      if (A.isMini || A.inPip || !/^\/(watch|live\/)/.test(location.pathname)) return false;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return false;
+      return !!A.isCar || window.innerWidth > window.innerHeight;
+    }
+    // YouTube must not see the press at all, or its own fullscreen handler runs.
+    ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(function (type) {
+      window.addEventListener(type, function (e) {
+        if (fsButton(e) && owned()) e.stopImmediatePropagation();
+      }, { capture: true, passive: true });
+    });
+    window.addEventListener('click', function (e) {
+      if (!fsButton(e) || !owned()) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (N && typeof N.fsToggle === 'function') N.fsToggle();
+    }, true);
+  })();
+
   // Phone held sideways on a watch page: the video and YouTube's controls fill the screen.
   A.land = function (on) {
     A.isLand = !!on;
@@ -1879,15 +2015,18 @@
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
   }
   /* Battery saver with the screen off / app hidden: nothing can show the video,
-   * so drop it to 360p: ~90% less decoding than 1080p, yet still decent for
+   * so drop it to 144p (lowest tier: least decoding while audio plays), enough for
    * the few seconds YouTube may play from that buffer after you return. Safeguards:
    *  - only after 60 s hidden (checking a message never touches quality);
-   *  - only when Chromium itself reports the page hidden, and never in PiP, the
-   *    mini player, on the car screen, during an ad or on a live stream;
+   *  - only when the app reports it is not on screen (A.isBg: no visible activity,
+   *    not PiP). Chromium's own hidden flag is NOT required: the WebView stays
+   *    attached for background play, so Chromium can still report it visible and
+   *    keep decoding 720p at full frame rate behind other apps (~100% CPU measured);
+   *  - never in PiP, the mini player, on the car screen, during an ad or on a live stream;
    *  - the saved quality comes back the moment the app is visible again;
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
-  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'medium';
+  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'tiny';
   var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
   function realHidden() {
     try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
@@ -1896,7 +2035,7 @@
   function bgSaverActive() {
     if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
     if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
-    if (!realHidden() || isAd()) return false;
+    if (isAd()) return false;
     var v = getVideo();
     if (!v || !isFinite(v.duration)) return false; // never on live streams
     if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }

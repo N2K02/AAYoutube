@@ -37,12 +37,19 @@ data class FeatureFlags(
     val topMenuTimeoutSeconds: Int = TopMenuPolicy.DEFAULT_SECONDS,
     /** Floating video controls rail on the left instead of the right (phone and car). */
     val controlsOnLeft: Boolean = false,
+    /** Where the controls sit along their edge (0..1); dragged by the user. */
+    val controlsPosPortrait: Float = 0.5f,
+    val controlsPosLandscape: Float = 0.5f,
     /** Opt-in car-only surface recovery; never changes the media service. */
     val experimentalVideo: Boolean = false,
     /** Speed every video starts at; a speed picked in YouTube's menu replaces it when remembered. */
     val playbackSpeed: Float = 1f,
     val rememberSpeed: Boolean = true,
     val loopVideo: Boolean = false,
+    /** Filled video (car, landscape, fullscreen): fit, fill (cropped) or stretch. */
+    val videoFit: String = "fit",
+    /** Android Auto / headset skip buttons seek 10 s instead of changing video. */
+    val skipSeeks: Boolean = false,
     /** "default" leaves YouTube's own caption choice alone. */
     val captions: String = "default",
     /** Double-tap seek length; 10 is YouTube's own gesture. */
@@ -66,6 +73,7 @@ data class FeatureFlags(
         .put("speed", playbackSpeed.toDouble())
         .put("rememberSpeed", rememberSpeed)
         .put("loop", loopVideo)
+        .put("videoFit", VideoFitPolicy.normalize(videoFit))
         .put("captions", captions)
         .put("seekSeconds", seekSeconds)
         .put("hideComments", hideComments)
@@ -86,7 +94,7 @@ object Features {
         val d = FeatureFlags()
         // Old installs had background tiny (144p) enabled by default. Migrate once
         // to 720p continuity; users may deliberately re-enable the battery saver.
-        // V3: the background saver now waits 60 s (360p), never runs in PiP/car/ads/live and
+        // V3: the background saver now waits 60 s (144p), never runs in PiP/car/ads/live and
         // restores quality if audio stalls, so it is on by default once. A later Off by
         // the user is kept.
         val lowQuality = if (prefs.getBoolean("qualityPolicyV3", false)) {
@@ -115,10 +123,14 @@ object Features {
                 prefs.getInt("topMenuTimeoutSeconds", d.topMenuTimeoutSeconds)
             ),
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
+            controlsPosPortrait = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosPortrait", d.controlsPosPortrait)),
+            controlsPosLandscape = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosLandscape", d.controlsPosLandscape)),
             experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
             playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
             rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
             loopVideo = prefs.getBoolean("loopVideo", d.loopVideo),
+            videoFit = VideoFitPolicy.normalize(prefs.getString("videoFit", d.videoFit)),
+            skipSeeks = prefs.getBoolean("skipSeeks", d.skipSeeks),
             captions = PlayerPrefsPolicy.normalizeCaptions(prefs.getString("captions", d.captions)),
             seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
@@ -158,10 +170,14 @@ object Features {
             .putBoolean("resumeLastPage", n.resumeLast)
             .putInt("topMenuTimeoutSeconds", n.topMenuTimeoutSeconds)
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
+            .putFloat("controlsPosPortrait", n.controlsPosPortrait)
+            .putFloat("controlsPosLandscape", n.controlsPosLandscape)
             .putBoolean("experimentalVideo", n.experimentalVideo)
             .putFloat("playbackSpeed", n.playbackSpeed)
             .putBoolean("rememberSpeed", n.rememberSpeed)
             .putBoolean("loopVideo", n.loopVideo)
+            .putString("videoFit", VideoFitPolicy.normalize(n.videoFit))
+            .putBoolean("skipSeeks", n.skipSeeks)
             .putString("captions", n.captions)
             .putInt("seekSeconds", n.seekSeconds)
             .putBoolean("hideComments", n.hideComments)

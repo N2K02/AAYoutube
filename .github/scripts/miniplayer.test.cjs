@@ -438,34 +438,38 @@ function hideForSaver(p) {
   p.flush();
 }
 
-test('background saver waits 60 s, needs a really hidden page and restores on return', () => {
+test('background saver waits 60 s and restores on return', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   p.setRealHidden(true);
   p.window.__aay.setBg(true);
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'quick app switch keeps quality');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'quick app switch keeps quality');
   p.window.__aay.setBg(false);
   p.advance(70000);
   p.flush();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   hideForSaver(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.setRealHidden(false);
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible again: saved quality at once');
 });
 
-test('background saver never runs on a page Chromium still shows, or on live streams', () => {
+test('background saver trusts the app off-screen state even if Chromium still says visible; never on live streams', () => {
+  // Measured on device: the attached background-play WebView kept reporting
+  // visible and decoded 720p at full frame rate behind other apps.
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
-  p.window.__aay.setBg(true); // native says hidden, Chromium does not
+  p.window.__aay.setBg(true); // native says off screen, Chromium does not
   p.advance(60600); p.flush();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'on screen again: saved quality at once');
   const live = playerPage({ quality: true });
   live.window.__aay.config({ lowQuality: true });
   live.video.duration = Infinity;
   hideForSaver(live);
-  assert.notDeepEqual(live.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.notDeepEqual(live.qualityCalls.at(-1), ['tiny', 'tiny']);
 });
 
 test('background saver backs off for the session if audio stalls after lowering quality', () => {
@@ -473,7 +477,7 @@ test('background saver backs off for the session if audio stalls after lowering 
   p.window.__aay.config({ lowQuality: true });
   p.video.paused = false;
   hideForSaver(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   const t = p.video.currentTime;
   p.runIntervals();          // sample position
   p.advance(9000);           // audio clock does not move for 9 s
@@ -482,18 +486,18 @@ test('background saver backs off for the session if audio stalls after lowering 
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'stall restores quality');
   p.window.__aay.setBg(false);
   hideForSaver(p);
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'not retried this session');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'not retried this session');
 });
 
 test('background quality policy restores visible PiP frames', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   hideForSaver(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.pip(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP restores 720p instead of tiny');
   p.window.__aay.pip(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'normal background playback may reduce quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
 });
@@ -503,7 +507,7 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   const p = playerPage({ quality: true });
   p.window.__aay.config({ lowQuality: true });
   hideForSaver(p);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.car(true);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
   p.window.__aay.mini(true);
@@ -512,7 +516,7 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   p.window.__aay.car(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'still-visible mini returns to saved HD');
   p.window.__aay.mini(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'true hidden background may use low quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
 });
 
 test('video state reaches the media process after initialization', () => {
@@ -1090,4 +1094,21 @@ test('video format preference hides unwanted formats from YouTube', () => {
   av1.window.__aay.config({ videoCodec: 'h264' });
   assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
   assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
+});
+
+
+test('navigation diagnostics redact queries, video identifiers and fragments', () => {
+  const start = source.indexOf('  function logRoute(url) {');
+  const end = source.indexOf('\n  }', start) + 4;
+  assert.ok(start >= 0 && end > start, 'route-only log formatter exists');
+  const sandbox = { URL, location: { href: 'https://m.youtube.com/watch?v=secret' } };
+  vm.runInNewContext(source.slice(start, end), sandbox);
+  assert.equal(sandbox.logRoute('https://m.youtube.com/watch?v=private-id&token=secret#frag'),
+    'https://m.youtube.com/watch');
+  assert.equal(sandbox.logRoute('/shorts/private-id?si=secret'), 'https://m.youtube.com/shorts');
+  assert.equal(sandbox.logRoute('/results?search_query=private+search'), 'https://m.youtube.com/results');
+  assert.equal(sandbox.logRoute(null), '[none]');
+  assert.match(source, /opening route: ' \+ logRoute\(href\)/);
+  assert.match(source, /page change ' \+ logRoute\(url\)/);
+  assert.match(source, /link ' \+ logRoute\(a\.getAttribute\('href'\)\)/);
 });

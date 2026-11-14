@@ -44,6 +44,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         LiveUpdater.init(this)
         CarMode.resetToCarScreen(this)
+        // Track real car-display launches without logging searches, URLs or personal data.
+        logCarActivityEntry("create", intent)
         // On the car display a reopened video plays by itself; on the phone it waits for you.
         WebHost.setCarScreen(!onPhoneScreen())
         enableEdgeToEdge()
@@ -62,9 +64,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        logCarActivityEntry("newIntent", intent)
         // A reused activity can move to another car display.
         WebHost.setCarScreen(!onPhoneScreen())
         handleIntent(intent)
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun logCarActivityEntry(event: String, launch: Intent?) {
+        val displayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
+        val carDisplay = displayId != android.view.Display.DEFAULT_DISPLAY
+        // Never record URI or search text.
+        AppLog.add("CAR", "Video activity $event: display=$displayId carDisplay=$carDisplay")
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -140,6 +151,17 @@ class MainActivity : ComponentActivity() {
         compatConnection = CompatMediaConnection(this) {
             it.transportControls.sendCustomAction(Commands.HELLO, Bundle.EMPTY)
         }.also { it.connect() }
+    }
+
+    /** Video on screen: ask for 60 Hz instead of the panel's 120 Hz. YouTube video is
+     * 24-60 fps, so the extra refreshes only cost compositor/GPU work (surfaceflinger
+     * measured ~50% CPU during 720p playback). 0f gives the choice back to Android. */
+    fun setVideoRefreshCap(on: Boolean) {
+        val rate = VideoRefreshPolicy.preferredRate(on)
+        val lp = window.attributes
+        if (lp.preferredRefreshRate == rate) return
+        lp.preferredRefreshRate = rate
+        window.attributes = lp
     }
 
     fun quit() {

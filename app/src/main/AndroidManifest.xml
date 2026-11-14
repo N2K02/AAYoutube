@@ -15,10 +15,9 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!--
-        Two processes, on purpose:
-        - main process: the media session, notification and Android Auto (no WebView, no screens)
-        - ":web" process: the WebView and the app screens
-        A WebView crash or freeze therefore can never take Android Auto down with it.
+        One process, as in AABrowser: the screens, the WebView, the Android Auto video
+        projection and the media service all run together. (The WebView's renderer is
+        still Chromium's own sandboxed process.)
     -->
 
     <!-- To show the Android Auto app version on the Info page. -->
@@ -43,14 +42,13 @@
             android:name="android.max_aspect"
             android:value="4.0" />
 
-        <!-- Single projected video entry for Android Auto. -->
+        <!-- Same car descriptor as AABrowser's projection entry (service + projection + media). -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
 
         <activity
             android:name=".MainActivity"
-            android:process=":web"
             android:exported="true"
             android:launchMode="singleTop"
             android:supportsPictureInPicture="true"
@@ -91,33 +89,14 @@
             </intent-filter>
         </activity>
 
-        <!-- Restore the distinct Android Auto car-launcher entry that main
-             previously exposed with CAR_LAUNCHER on MainActivity. PR #22
-             removed that filter while migrating to LegacyProjectionService,
-             and the video icon stopped appearing in Customize launcher.
-             An alias gives Android Auto its own label without renaming the
-             phone's MainActivity/LAUNCHER entry. Direct activities are for
-             supported parked use; the legacy projection service remains
-             available for hosts that support that integration. -->
-        <activity-alias
-            android:name=".AutoVideoLauncher"
-            android:enabled="true"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:label="AAYT Video"
-            android:targetActivity=".MainActivity">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
+        <!-- As in AABrowser, MainActivity is a plain phone activity: Android Auto finds the
+             video through the projection service below, not through activity categories. -->
 
         <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
         <!-- Exact AABrowser legacy CarActivityService entry, backed by the pinned aauto.aar.
              CarActivity is instantiated by the projection SDK; it is NOT a manifest Activity. -->
         <service
             android:name=".LegacyProjectionService"
-            android:process=":web"
             android:enabled="true"
             android:exported="true"
             android:label="AAYT Video">
@@ -130,7 +109,6 @@
 
         <service
             android:name=".WebHostService"
-            android:process=":web"
             android:exported="false" />
 
         <!-- Independent Android Auto MUSIC entry. The native MediaBrowserServiceCompat
@@ -165,7 +143,6 @@
         <!-- Shares a downloaded update APK with Android's installer (read-only, not exported) -->
         <provider
             android:name=".UpdateFileProvider"
-            android:process=":web"
             android:authorities="${applicationId}.updates"
             android:exported="false"
             android:grantUriPermissions="true" />

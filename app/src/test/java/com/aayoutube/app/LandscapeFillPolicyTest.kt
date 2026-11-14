@@ -1,6 +1,7 @@
 package com.aayoutube.app
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,9 +32,11 @@ class LandscapeFillPolicyTest {
         val host = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val ui = src("app/src/main/java/com/aayoutube/app/Screens.kt")
         assertTrue(host.contains("if (landscapeFill.value) dismissLandscapeFill() else enterMini()"))
-        assertTrue(ui.contains("WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()"))
-        assertTrue(ui.indexOf("WebHost.landscapeFill.value -> WebHost.dismissLandscapeFill()") <
-            ui.indexOf("WebHost.isOnWatchPage() -> WebHost.enterMini()"))
+        assertTrue(ui.contains("PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()"))
+        // Back from the landscape video shows the watch page before the mini player.
+        assertEquals(PlayerNavigationPolicy.Back.ShowWatchPage, PlayerNavigationPolicy.back(
+            equalizerOpen = false, fullscreen = false, landscapeFill = true, onSettingsTab = false,
+            onWatchTab = true, fullPlayer = true, onWatchPage = true))
         assertTrue(ui.contains("WebHost.landscapeDismissed.value = false"))
         // Closing YouTube's own fullscreen while sideways must not fall back into the fill layout.
         assertTrue(host.contains("private fun onFullscreenClosed()"))
@@ -53,6 +56,6 @@ class LandscapeFillPolicyTest {
         assertTrue(host.contains("window.__aay.land(\$on)"))
         assertTrue(host.contains("if (landscapeFill.value) view.evaluateJavascript("))
         assertTrue(js.contains("A.land = function (on)"))
-        assertTrue(js.contains("!!(A.isCar || A.isLand)"))
+        assertTrue(js.contains("!!((A.isCar && !A.isCarPage) || A.isLand)"))
     }
 }
