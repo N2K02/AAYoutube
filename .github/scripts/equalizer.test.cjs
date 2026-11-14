@@ -83,7 +83,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
   return { eq: c => window.__aay.eq(c), video, statuses, calls, fire, runTimers, render,
     stateChange: () => onState && onState(),
     pending: () => timers.filter(t => t.f).map(t => t.at),
-    setState: s => { state = s; } };
+    setState: s => { state = s; }, offline: off };
 }
 
 const db = (a, b) => 20 * Math.log10(a / b);
@@ -251,3 +251,50 @@ test('all zero-intensity modes keep the native path', () => {
     const p = page(); p.eq(f.params); assert.equal(p.calls.routed,0,f.name);
   }
 });
+
+
+test('active preset ramps reserve headroom before boosts, including rapid retargets', async () => {
+  // A tiny cut keeps the same active topology while the 60 Hz band is boosted.
+  // Disable the limiter so it cannot conceal transition overload.
+  const p = page({ hz: 60, amp: 0.95 });
+  p.eq({ ...BASE, bands: [0, 0, -0.1, 0, 0] });
+  const changes = [
+    [0.5, { ...BASE, bands: [12, 0, 0, 0, 0], preamp: 10 ** (-12.6 / 20) }],
+    [0.52, { ...BASE, bands: [6, 4, 0, 0, 0], bassDb: 9, preamp: 10 ** (-20 / 20) }],
+    [1.0, { ...BASE, bands: [0, 0, -0.1, 0, 0] }],
+  ];
+  let result;
+  const pauses = changes.map(([time, cfg]) => p.offline.suspend(time).then(() => {
+    p.eq(cfg);
+    return p.offline.resume();
+  }));
+  result = await p.render();
+  await Promise.all(pauses);
+  const signal = result.left.subarray(RATE / 2);
+  const peak = signal.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
+  assert.ok(peak <= 0.981, `no overload without the limiter, peak=${peak}`);
+  const settled = result.left.subarray(Math.floor(RATE * 1.6));
+  const rms = Math.sqrt(settled.reduce((sum, x) => sum + x * x, 0) / settled.length);
+  near(rms, 0.95 / Math.SQRT2, 0.005, 'returns to original listening level');
+  let jump = 0;
+  for (let i = 1; i < signal.length; i++) jump = Math.max(jump, Math.abs(signal[i] - signal[i - 1]));
+  assert.ok(jump < 0.03, `gain changes stay smooth, max sample jump=${jump}`);
+});
+
+
+for (const hz of [60, 1000, 14000]) {
+  test(`rapid changes through every tonal preset stay below full scale at ${hz} Hz`, async () => {
+    const presets = fixtures.filter(x => x.kind === 'preset' && x.name.endsWith(':1.0'));
+    assert.equal(presets.length, 10);
+    const p = page({ hz, amp: 0.95 });
+    p.eq({ ...presets[0].params, limiter: false });
+    const changes = presets.slice(1).map((x, i) => p.offline.suspend(0.3 + i * 0.08).then(() => {
+      p.eq({ ...x.params, limiter: false });
+      return p.offline.resume();
+    }));
+    const result = await p.render();
+    await Promise.all(changes);
+    const peak = result.left.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
+    assert.ok(peak <= 0.981, `peak=${peak} without limiter repair`);
+  });
+}

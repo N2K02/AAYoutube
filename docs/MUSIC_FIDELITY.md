@@ -19,3 +19,9 @@ Regression checks cover all ten presets with extra bass, high-level sine distort
 0% neutrality, stereo separation, mode changes and stale tails. Tones establish linearity
 and peak safety for the tested cases; they do not replace music listening tests or prove
 intersample true-peak protection.
+
+Preset transitions now reserve a conservative combined-band gain before any boost ramps.
+The preamp falls over 10 ms; filter ramps then start, and measured steady-state gain
+returns after 300 ms of settling. Scheduling uses AudioParam automation, including when
+the page is hidden. Rapid-retarget and all-preset transitions are tested with the limiter
+disabled so overload cannot be hidden by compression.

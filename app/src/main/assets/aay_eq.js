@@ -58,9 +58,16 @@
     return c;
   })();
 
-  function set(p, v) {
+  function set(p, v, start) {
     if (!p || !isFinite(v)) return;
-    try { p.setTargetAtTime(v, EQ.ctx.currentTime, 0.03); } catch (e) { p.value = v; }
+    try {
+      var now = EQ.ctx.currentTime;
+      if (start !== undefined) {
+        var held = p.value;
+        p.cancelScheduledValues(now); p.setValueAtTime(held, now);
+      }
+      p.setTargetAtTime(v, start === undefined ? now : start, 0.03);
+    } catch (e) { p.value = v; }
   }
 
   // Stereo room: four damped, gain-normalised feedback echoes (short tunings at
@@ -198,23 +205,52 @@
   }
 
   // Values only: smoothed, and only when they differ, so slider drags stay cheap.
-  function setIf(p, v, last) {
+  function setIf(p, v, last, start) {
     if (!p || !isFinite(v) || last[0] === v) return;
     last[0] = v;
-    set(p, v);
+    set(p, v, start);
   }
   var LAST = {};
   function slot(k) { return LAST[k] || (LAST[k] = [NaN]); }
 
+  // Gain is linear but filter gains are in dB. Independent ramps can overload
+  // between two safe presets. Hold a conservative bound across the whole ramp,
+  // then restore the measured steady-state headroom on the audio timeline.
+  function reserveTransitionHeadroom(c) {
+    var g = EQ.g, old = g.valueConfig;
+    var changed = !old || c.bassDb !== old.bassDb || c.preamp !== old.preamp ||
+      c.bands.some(function (v, i) { return v !== old.bands[i]; });
+    if (!changed) return undefined;
+    var now = EQ.ctx.currentTime, p = g.pre.gain;
+    var boost = Math.max(0, g.shelf.gain.value, c.bassDb);
+    g.bands.forEach(function (f, i) { boost += Math.max(0, f.gain.value, c.bands[i] || 0); });
+    function spatial(x) {
+      return Math.max(1, x.sideGain || 1, x.orbit > 0 ? 1 + 1.1 * x.orbit : 1) * (1 + 2 * (x.wet || 0));
+    }
+    var reserve = Math.pow(10, -(boost + 0.5) / 20) / Math.max(spatial(c), old ? spatial(old) : 1);
+    var held = p.value;
+    p.cancelScheduledValues(now);
+    p.setValueAtTime(held, now);
+    var safe = Math.min(held, c.preamp, reserve);
+    p.linearRampToValueAtTime(safe, now + 0.01);
+    p.setValueAtTime(safe, now + 0.31);
+    // Ten time constants leave less than 0.005 dB of even a 100 dB change;
+    // the 0.5 dB reserve covers the residual. Native scheduling works hidden.
+    p.setTargetAtTime(c.preamp, now + 0.31, 0.03);
+    g.valueConfig = { bassDb: c.bassDb, preamp: c.preamp, bands: c.bands.slice(),
+      sideGain: c.sideGain, orbit: c.orbit, wet: c.wet };
+    return now + 0.01;
+  }
+
   function values(c) {
     var g = EQ.g;
-    setIf(g.pre.gain, c.preamp, slot('pre'));
+    var eqStart = reserveTransitionHeadroom(c);
     g.bands.forEach(function (f, i) {
-      setIf(f.Q, c.q || 0.9, slot('q' + i));
-      setIf(f.gain, c.bands[i] || 0, slot('b' + i));
+      setIf(f.Q, c.q || 0.9, slot('q' + i), eqStart);
+      setIf(f.gain, c.bands[i] || 0, slot('b' + i), eqStart);
     });
-    setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'));
-    setIf(g.shelf.gain, c.bassDb, slot('sg'));
+    setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'), eqStart);
+    setIf(g.shelf.gain, c.bassDb, slot('sg'), eqStart);
     setIf(g.side.gain, c.orbit > 0 ? c.orbitKeep : c.sideGain, slot('side'));
     setIf(g.orbitDepth.gain, c.orbit * 0.8, slot('od'));
     [g.toL, g.toR].forEach(function (x, i) {
