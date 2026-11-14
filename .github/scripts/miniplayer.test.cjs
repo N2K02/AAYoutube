@@ -1095,3 +1095,20 @@ test('video format preference hides unwanted formats from YouTube', () => {
   assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
   assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
 });
+
+
+test('navigation diagnostics redact queries, video identifiers and fragments', () => {
+  const start = source.indexOf('  function logRoute(url) {');
+  const end = source.indexOf('\n  }', start) + 4;
+  assert.ok(start >= 0 && end > start, 'route-only log formatter exists');
+  const sandbox = { URL, location: { href: 'https://m.youtube.com/watch?v=secret' } };
+  vm.runInNewContext(source.slice(start, end), sandbox);
+  assert.equal(sandbox.logRoute('https://m.youtube.com/watch?v=private-id&token=secret#frag'),
+    'https://m.youtube.com/watch');
+  assert.equal(sandbox.logRoute('/shorts/private-id?si=secret'), 'https://m.youtube.com/shorts');
+  assert.equal(sandbox.logRoute('/results?search_query=private+search'), 'https://m.youtube.com/results');
+  assert.equal(sandbox.logRoute(null), '[none]');
+  assert.match(source, /opening route: ' \+ logRoute\(href\)/);
+  assert.match(source, /page change ' \+ logRoute\(url\)/);
+  assert.match(source, /link ' \+ logRoute\(a\.getAttribute\('href'\)\)/);
+});
