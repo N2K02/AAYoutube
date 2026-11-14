@@ -39,6 +39,32 @@ internal object SleepTimerPolicy {
     }
 }
 
+/** Only duration preferences are persisted; starting a countdown always requires a tap. */
+internal object SleepTimerSettings {
+    private const val PREFS = "sleep_timer_settings"
+    private const val AMOUNT = "duration_amount"
+    private const val HOURS = "duration_hours"
+
+    fun restoredAmount(saved: Long, hours: Boolean): Long =
+        saved.takeIf { SleepTimerPolicy.durationMillis(it, hours) != null }
+            ?: if (hours) 1L else SleepTimerPolicy.DEFAULT_MINUTES
+
+    fun loadHours(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(HOURS, false)
+
+    fun loadAmount(context: Context, hours: Boolean): Long {
+        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(AMOUNT, if (hours) 1L else SleepTimerPolicy.DEFAULT_MINUTES)
+        return restoredAmount(saved, hours)
+    }
+
+    fun saveSelection(context: Context, amount: Long, hours: Boolean) {
+        if (SleepTimerPolicy.durationMillis(amount, hours) == null) return
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(AMOUNT, amount).putBoolean(HOURS, hours).apply()
+    }
+}
+
 /** Process-wide countdown: stays active while navigating between phone/car and Settings. */
 internal object SleepTimer {
     private val handler = Handler(Looper.getMainLooper())
