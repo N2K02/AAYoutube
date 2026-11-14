@@ -30,6 +30,26 @@ class AABrowserYouTubeFeaturesTest {
                 .contains("Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }"))
     }
 
+    @Test fun fitButtonOnlyOnAPlayingFilledVideo() {
+        assertTrue(VideoFitPolicy.buttonShown(filled = true, playing = true))
+        assertFalse("portrait / watch page", VideoFitPolicy.buttonShown(filled = false, playing = true))
+        assertFalse("not yet playing", VideoFitPolicy.buttonShown(filled = true, playing = false))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/Screens.kt")
+            .contains("if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+            .contains("if (VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing))"))
+    }
+
+    @Test fun carMiniPlayerMatchesThePhone() {
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        assertFalse(car.contains("\"Expand video\""))
+        val mini = car.substringAfter("// Same mini player as the phone").substringBefore("val fullscreenView = full")
+        assertTrue(mini.contains("detectTapGestures(onTap = { WebHost.expandPlayer(); BrowseHost.pause() })"))
+        assertTrue(mini.contains("WebHost.cmd(if (playing.playing) \"pause\" else \"play\")"))
+        assertTrue(mini.contains("onClick = { WebHost.closePlayer() }"))
+        assertTrue(mini.contains("fillMaxWidth(fraction)"))
+    }
+
     @Test fun playlistScrollGuardOnlyWhileAPlaylistPlaysAtTheTop() {
         val guard = js.substringAfter("1f. Keep the video in view when a playlist moves on").substringBefore("1g. AABrowser-style tap-to-seek")
         assertTrue(guard.contains("/[?&]list=/.test(location.search)"))

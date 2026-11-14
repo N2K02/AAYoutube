@@ -544,6 +544,7 @@ fun AppRoot(activity: MainActivity) {
                         enabled = canLyrics,
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
+                    if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))
                     BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Phone,
                         onClick = {
                             Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }

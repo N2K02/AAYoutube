@@ -25,6 +25,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
@@ -440,6 +444,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val browsing by BrowseHost.created.collectAsState()
         val browseRevision by BrowseHost.revision.collectAsState()
         val mini = mode == WebHost.PlayerMode.MINI
+        val carWatchPage by WebHost.carPage.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
         val carTestPattern by CarVideoPatternProbe.state.collectAsState()
@@ -581,20 +586,38 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     },
                 )
             }
+            // Same mini player as the phone: play/pause top left, close top right,
+            // red progress line at the bottom; tap to expand, drag to move.
             if (mini) {
-                Text(
-                    "Expand video",
-                    Modifier.offset {
-                        val labelY = if (playerY > with(density) { 48.dp.toPx() })
-                            playerY - with(density) { 42.dp.toPx() }
-                        else playerY + with(density) { miniHeight.toPx() } + with(density) { 4.dp.toPx() }
-                        IntOffset(playerX.roundToInt(), labelY.roundToInt())
-                    }.clickable { WebHost.expandPlayer(); BrowseHost.pause() }
-                        .background(Color(0xCC111111), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                val fraction = if (playing.durMs > 0)
+                    (playing.posMs.toFloat() / playing.durMs).coerceIn(0f, 1f) else 0f
+                Box(
+                    miniVideoModifier.pointerInput(Unit) {
+                        detectTapGestures(onTap = { WebHost.expandPlayer(); BrowseHost.pause() })
+                    },
+                ) {
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.cmd(if (playing.playing) "pause" else "play") },
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(40.dp),
+                    ) {
+                        androidx.compose.material3.Icon(
+                            if (playing.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (playing.playing) "Pause" else "Play",
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.closePlayer() },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(40.dp),
+                    ) {
+                        androidx.compose.material3.Icon(Icons.Filled.Close, contentDescription = "Close",
+                            modifier = Modifier.size(22.dp))
+                    }
+                    Box(
+                        Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
+                            .background(Color(0xFFFF0033)),
+                    )
+                }
             }
             val fullscreenView = full
             // An inactive (being replaced) car window must not take the
@@ -668,11 +691,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
                 ) {
-                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Car,
-                        onClick = {
-                            Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
-                            controlsVersion++
-                        })
+                    if (VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing))
+                        BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Car,
+                            onClick = {
+                                Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
+                                controlsVersion++
+                            })
                     BarIcon(
                         Icons.Rounded.PowerSettingsNew,
                         "Quit AAYoutube", BarSize.Car,

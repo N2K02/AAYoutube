@@ -12,6 +12,10 @@ internal object VideoFitPolicy {
         else -> "Video: fit"
     }
 
+    /** The fit button only where it changes something: a video filling a sideways
+     * screen (phone landscape, Android Auto), and only once it is playing. */
+    fun buttonShown(filled: Boolean, playing: Boolean): Boolean = filled && playing
+
     /** Skip buttons as AABrowser's option: 10 s back / forward inside the video. */
     const val SKIP_MS = 10_000L
     fun seekTarget(posMs: Long, durMs: Long, forward: Boolean): Long {
