@@ -614,6 +614,10 @@ fun AppRoot(activity: MainActivity) {
                 onRelease = { it.removeAllViews() },
             )
         }
+        // In-app only; no notification action or system overlay permission.
+        if (phoneDisplay && !inPip && fullscreen == null) {
+            SleepTimerChip(onClick = { tab = Tab.SleepTimer.ordinal })
+        }
     }
 }
 
