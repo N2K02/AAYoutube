@@ -1067,23 +1067,23 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
 });
 
 
-test('cued YouTube control resyncs while video is already playing', () => {
+test('phone center Play resumes after a previous explicit native Pause', () => {
   const p = playerPage();
-  let state = 5, plays = 0;
-  const player = p.document.getElementById('movie_player') || {};
-  player.getPlayerState = () => state;
-  player.playVideo = () => { plays++; state = 1; };
-  p.document.getElementById = (id) => (id === 'movie_player' ? player : null);
-  p.video.paused = false;
-  p.video.ended = false;
-  p.video.readyState = 4;
-  p.window.__aay.mini(true);
+  p.flush();
   p.runIntervals();
-  assert.equal(plays, 1, 'cued control corrected');
-  p.video.paused = true;
-  state = 5;
+  p.window.__aay.cmd('pause');
+  assert.equal(p.video.paused, true, 'a real native pause remains in effect');
+  // The phone YouTube center overlay can be a generic div within #movie_player.
+  // It must count as an explicit resume gesture when the video is paused.
+  p.emit('pointerdown', {
+    isTrusted: true,
+    target: { closest: selector => selector.includes('#movie_player') ? {} : null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false, 'a trusted Play must not immediately be re-paused');
   p.runIntervals();
-  assert.equal(plays, 1, 'explicitly paused video is never resumed to fix UI');
+  assert.equal(p.video.paused, false, 'recovery watchdog must honor the resumed playback');
 });
 
 test('video format preference hides unwanted formats from YouTube', () => {
