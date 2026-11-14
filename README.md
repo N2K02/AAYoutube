@@ -15,11 +15,11 @@ Two processes keep the car safe from WebView trouble:
 Battery: wake lock only while playing, lowest video quality when the screen is hidden, page frozen when idle, everything released after 15 minutes paused.
 
 ## Android Auto
-Experimental PR #47 registers the existing `MainActivity` directly using AABrowser-style `CAR_LAUNCHER`, `APP_MAPS`, and navigation intent categories, and uses the media-only automotive descriptor. There is no separate launcher alias or AndroidX `CarAppService`. The previous legacy projection service remains as a fallback during this single-build compatibility evaluation; the native Music service remains unchanged.
+Experimental PR #47 follows AABrowser's Android Auto registration: the video is found through the legacy projection service (`CATEGORY_PROJECTION`, pinned `aauto.aar`) with the `service` + `projection` + `media` automotive descriptor. `MainActivity` is a plain phone activity with no car categories, and there is no AndroidX car service.
 
-This does **not** establish that a browser/video app is a navigation app or that Android Auto 18 will accept the entry. The car host may filter unsupported categories regardless of installer source. Video is intended only for parked use. Test on a real head unit; never bypass host driving restrictions.
+For diagnosis, check the Logs screen for `Video projection manifest discoverable=`.
 
-For diagnosis, check the Logs screen for `Video MainActivity car-launcher discoverable=` and `Video MainActivity maps discoverable=`. Those checks prove package-manager matching on the phone, not host launcher acceptance.
+
 
 ## Releases
 Every push to `main` builds a signed APK and publishes `v1.0`, `v1.1`, ... Needs the `SIGNING_PASSPHRASE` secret.

@@ -70,14 +70,12 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun logCarActivityEntry(event: String, launch: Intent?) {
         val displayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
         val carDisplay = displayId != android.view.Display.DEFAULT_DISPLAY
-        val fromCarLauncher = launch?.categories?.contains("android.intent.category.CAR_LAUNCHER") == true
-        val fromMaps = launch?.categories?.contains("android.intent.category.APP_MAPS") == true
-        // Intent categories are finite platform constants. Never record URI or search text.
-        AppLog.add("CAR", "Video activity $event: display=$displayId" +
-            " carDisplay=$carDisplay launcherCategory=$fromCarLauncher mapsCategory=$fromMaps")
+        // Never record URI or search text.
+        AppLog.add("CAR", "Video activity $event: display=$displayId carDisplay=$carDisplay")
     }
 
     private fun handleIntent(intent: Intent?) {

@@ -43,8 +43,7 @@
             android:name="android.max_aspect"
             android:value="4.0" />
 
-        <!-- AABrowser-compatible car launcher metadata, with independent music browsing. -->
-        <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="7" />
+        <!-- Same car descriptor as AABrowser's projection entry (service + projection + media). -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -62,9 +61,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-                <category android:name="android.intent.category.APP_MAPS" />
             </intent-filter>
             <meta-data
                 android:name="android.max_aspect"
@@ -87,10 +83,6 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- Match AABrowser's car link/activity discovery while keeping YouTube hosts scoped. -->
-                <category android:name="android.intent.category.CAR_LAUNCHER" />
-                <category android:name="androidx.car.app.category.NAVIGATION" />
-                <category android:name="android.intent.category.APP_MAPS" />
                 <data android:scheme="https" />
                 <data android:host="youtube.com" />
                 <data android:host="www.youtube.com" />
@@ -99,7 +91,8 @@
             </intent-filter>
         </activity>
 
-        <!-- AABrowser-style single car-launchable MainActivity: no parallel alias. -->
+        <!-- As in AABrowser, MainActivity is a plain phone activity: Android Auto finds the
+             video through the projection service below, not through activity categories. -->
 
         <!-- Keeps the web process alive and relays commands to the WebView (bound only by PlaybackService) -->
         <!-- Exact AABrowser legacy CarActivityService entry, backed by the pinned aauto.aar.

@@ -34,27 +34,5 @@ object CarMode {
         val component = ComponentName(c, LegacyProjectionService::class.java)
         val state = pm.getComponentEnabledSetting(component)
         AppLog.add("CAR", "Video projection manifest discoverable=$discovered; enabledState=$state")
-
-        // MainActivity uses the same car-launchable intent categories as AABrowser.
-        // A second activity alias would create duplicate launcher identities.
-        val launcherQuery = Intent(Intent.ACTION_MAIN)
-            .setPackage(c.packageName)
-            .addCategory("android.intent.category.CAR_LAUNCHER")
-        val carLaunchers = runCatching {
-            pm.queryIntentActivities(launcherQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
-        }.getOrDefault(emptyList())
-        val expectedActivity = MainActivity::class.java.name
-        val carLauncherFound = carLaunchers.any { it.activityInfo?.name == expectedActivity }
-        AppLog.add("CAR", "Video MainActivity car-launcher discoverable=$carLauncherFound" +
-            "; entries=" + carLaunchers.size)
-
-        val mapsQuery = Intent(Intent.ACTION_MAIN)
-            .setPackage(c.packageName)
-            .addCategory("android.intent.category.APP_MAPS")
-        val mapsFound = runCatching {
-            pm.queryIntentActivities(mapsQuery, PackageManager.MATCH_DISABLED_COMPONENTS)
-                .any { it.activityInfo?.name == expectedActivity }
-        }.getOrDefault(false)
-        AppLog.add("CAR", "Video MainActivity maps discoverable=$mapsFound")
     }
 }

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<automotiveApp>
-    <!-- Same descriptor shape as AABrowser; the native music service stays separate. -->
+<automotiveApp xmlns:tools="http://schemas.android.com/tools">
+    <!-- Same as AABrowser: the projected video entry plus the media (music) entry.
+         AABrowser's extra "template" line belongs to its AndroidX wide service, which
+         AAYoutube does not ship (it froze the shared WebView). -->
+    <uses name="service" tools:ignore="InvalidUsesTagAttribute" />
+    <uses name="projection" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="media" />
 </automotiveApp>
