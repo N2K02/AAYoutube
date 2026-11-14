@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -19,6 +20,8 @@ import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
@@ -126,51 +129,104 @@ fun AndroidAutoFirstLaunchHelp(onDismiss: (Boolean) -> Unit, onOpenGuide: (Boole
     )
 }
 
-/** Settings submenu; shows only phone-side information and opens trusted external project pages. */
+/** Compact Settings submenu; all diagnostics are phone-side only. */
 @Composable
 fun AndroidAutoInstallationPage() {
     val context = LocalContext.current
     var missing by remember { mutableStateOf(AndroidAutoInstallHelp.isMissing(context)) }
     val declared = remember { AndroidAutoInstallHelp.videoServiceDeclaredAndEnabled(context) }
     Column(
-        modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("AAYT Video not appearing?", style = MaterialTheme.typography.titleLarge)
-        Text("First check Android Auto → Customize launcher. In Android Auto Developer settings, enable Unknown sources if available, then reconnect your car.")
-        Text(
-            if (declared) "Video projection service: declared and enabled on this phone."
-            else "Video projection service: not discoverable or disabled on this phone.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text("This phone-side check cannot confirm that Android Auto will show or accept the app.")
-        HorizontalDivider()
-        Text("Installation options", style = MaterialTheme.typography.titleMedium)
-        AndroidAutoInstallHelp.installers.forEach { installer ->
-            ListItem(
-                headlineContent = { Text(installer.name) },
-                supportingContent = { Text(installer.description) },
-                leadingContent = { Icon(Icons.Filled.InstallMobile, contentDescription = null) },
-                trailingContent = {
-                    TextButton(onClick = { AndroidAutoInstallHelp.openLink(context, installer.url) }) {
-                        Text("Open")
-                    }
-                },
-            )
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("AAYT Video not appearing?", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Check Android Auto → Customize launcher. In Developer settings, enable Unknown sources if available, then reconnect your car.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    if (declared) "Projection service: enabled on this phone"
+                    else "Projection service: not discoverable or disabled",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "This phone-side check cannot confirm that Android Auto will show or accept the app.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        HorizontalDivider()
-        Text("Updating AAYouTube", style = MaterialTheme.typography.titleMedium)
-        Text("If a special installer was needed to make Video visible, installing an update normally may make it disappear again. Download the signed APK from the existing updater/release and install that APK using the same trusted installer. Keep the existing package/signature; do not uninstall unless necessary.")
-        Text("These tools do not add Android Auto support to incompatible apps, and results vary by phone and Android Auto version. Video is for parked use.")
-        OutlinedButton(onClick = {
-            missing = !missing
-            AndroidAutoInstallHelp.reportMissing(context, missing)
-        }) { Text(if (missing) "Mark Video as showing" else "Video still missing") }
+
         Text(
-            if (missing) "Noted. Installation help may appear after a future app update."
-            else "Video visibility issue not reported.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "Installation options",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
         )
+        AndroidAutoInstallHelp.installers.forEach { installer ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.InstallMobile,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(installer.name, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = {
+                            AndroidAutoInstallHelp.openLink(context, installer.url)
+                        }) { Text("Open") }
+                    }
+                    Text(
+                        installer.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Video visibility", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "These tools cannot make an incompatible app compatible with Android Auto. Video is intended for parked use.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedButton(onClick = {
+                    missing = !missing
+                    AndroidAutoInstallHelp.reportMissing(context, missing)
+                }) {
+                    Text(if (missing) "Mark Video as showing" else "Video still missing")
+                }
+                Text(
+                    if (missing) "Issue reported. Help can be shown after an update."
+                    else "No visibility issue reported.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
