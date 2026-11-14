@@ -1,5 +1,8 @@
 package com.aayoutube.app
 
+import android.content.Context
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -31,6 +34,8 @@ internal object SleepTimerPolicy {
 /** Process-wide countdown: stays active while navigating between phone/car and Settings. */
 internal object SleepTimer {
     private val handler = Handler(Looper.getMainLooper())
+    private var appContext: Context? = null
+    fun init(context: Context) { appContext = context.applicationContext }
     private val _remaining = MutableStateFlow<Long?>(null)
     val remaining: StateFlow<Long?> = _remaining
     private var deadline = 0L
@@ -41,8 +46,30 @@ internal object SleepTimer {
             if (left == 0L) {
                 deadline = 0L
                 _remaining.value = null
-                AppLog.add("TIMER", "Sleep timer elapsed; pausing playback")
-                WebHost.cmd("pause")
+                AppLog.add("TIMER", "Sleep timer elapsed; requesting full app shutdown")
+                // Reuse Quit's media-service cleanup even when no phone Activity is visible.
+                val context = appContext
+                if (context != null) {
+                    runCatching {
+                        ContextCompat.startForegroundService(
+                            context,
+                            Intent(context, PlaybackService::class.java)
+                                .setAction(PlaybackService.ACTION_QUIT),
+                        )
+                    }.onFailure {
+                        AppLog.add("TIMER", "Service Quit delivery failed: " + it.javaClass.simpleName)
+                    }
+                }
+                // Fallback if the media service is unavailable or its IPC is stale.
+                handler.postDelayed({
+                    val close = WebHost.onQuit ?: WebHost.onCarQuit
+                    if (close != null) close()
+                    else {
+                        WebHost.cmd("pause")
+                        BrowseHost.release()
+                        WebHost.release()
+                    }
+                }, 1_800L)
             } else {
                 _remaining.value = left
                 handler.postDelayed(this, minOf(left, 1000L))
@@ -65,6 +92,5 @@ internal object SleepTimer {
         handler.removeCallbacks(tick)
         deadline = 0L
         _remaining.value = null
-        serial++
     }
 }
