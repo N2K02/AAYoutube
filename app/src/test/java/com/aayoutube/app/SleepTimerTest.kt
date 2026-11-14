@@ -47,6 +47,31 @@ class SleepTimerTest {
         assertTrue(page.contains("SleepTimerPolicy.adjustAmount(current, 1, hours)"))
     }
 
+    @Test fun restoredTimerSettingUsesSavedUnitAndRejectsInvalidValues() {
+        assertEquals(15L, SleepTimerSettings.restoredAmount(15L, false))
+        assertEquals(90L, SleepTimerSettings.restoredAmount(90L, false))
+        assertEquals(2L, SleepTimerSettings.restoredAmount(2L, true))
+        assertEquals(24L, SleepTimerSettings.restoredAmount(24L, true))
+        assertEquals(15L, SleepTimerSettings.restoredAmount(0L, false))
+        assertEquals(1L, SleepTimerSettings.restoredAmount(0L, true))
+        assertEquals(1L, SleepTimerSettings.restoredAmount(25L, true))
+        assertEquals(15L, SleepTimerSettings.restoredAmount(1441L, false))
+    }
+
+    @Test fun timerSettingsAreSavedOnEditWithoutAutoStartingCountdown() {
+        fun src(path: String) = listOf(File(path), File("../$path")).first { it.isFile }.readText()
+        val page = src("app/src/main/java/com/aayoutube/app/SleepTimerPage.kt")
+        val engine = src("app/src/main/java/com/aayoutube/app/SleepTimer.kt")
+        assertTrue(page.contains("SleepTimerSettings.loadAmount(context, hours)"))
+        assertTrue(page.contains("SleepTimerSettings.loadHours(context)"))
+        assertTrue(page.contains("LaunchedEffect(amount, hours)"))
+        assertTrue(page.contains("SleepTimerSettings.saveSelection(context, selected, hours)"))
+        assertTrue(engine.contains("getSharedPreferences(PREFS, Context.MODE_PRIVATE)"))
+        assertTrue(engine.contains(".putLong(AMOUNT, amount).putBoolean(HOURS, hours).apply()"))
+        assertFalse(engine.substringAfter("internal object SleepTimerSettings")
+            .substringBefore("/** Process-wide countdown").contains("SleepTimer.start("))
+    }
+
     @Test fun countdownIsMonotonicAndFormatsCorrectly() {
         assertEquals(900_000L, SleepTimerPolicy.remainingMillis(901_000L, 1_000L))
         assertEquals(0L, SleepTimerPolicy.remainingMillis(901_000L, 902_000L))
