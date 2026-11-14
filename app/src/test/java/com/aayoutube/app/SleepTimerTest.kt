@@ -90,21 +90,25 @@ class SleepTimerTest {
         assertEquals(1440L, SleepTimerPolicy.notificationMinutes(86_400_000L))
     }
 
-    @Test fun notificationUsesOneMediaCardAndKeepsCompactControls() {
+    @Test fun phoneOnlyTimerChipReplacesNotificationTimerUi() {
         fun src(path: String) = listOf(File(path), File("../$path")).first { it.isFile }.readText()
+        val chip = src("app/src/main/java/com/aayoutube/app/SleepTimerChip.kt")
+        val screens = src("app/src/main/java/com/aayoutube/app/Screens.kt")
         val notification = src("app/src/main/java/com/aayoutube/app/CarMediaNotificationManager.kt")
         val service = src("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         val timer = src("app/src/main/java/com/aayoutube/app/SleepTimer.kt")
-        assertTrue(notification.contains("Sleep timer: \$sleepMinutes min"))
-        assertTrue(notification.contains("Cancel sleep timer"))
-        assertTrue(notification.contains("PlaybackService.ACTION_CANCEL_SLEEP_TIMER"))
+        assertTrue(chip.contains("SleepTimer.chipMinutes.collectAsState()"))
+        assertTrue(chip.contains("Sleep in:"))
+        assertTrue(chip.contains("detectDragGestures"))
+        assertTrue(chip.contains(".clickable(onClick = onClick)"))
+        assertTrue(screens.contains("if (phoneDisplay && !inPip && fullscreen == null)"))
+        assertTrue(screens.contains("SleepTimerChip(onClick = { tab = Tab.SleepTimer.ordinal })"))
+        assertFalse(notification.contains("Sleep timer:"))
+        assertFalse(notification.contains("Cancel sleep timer"))
+        assertFalse(service.contains("ACTION_CANCEL_SLEEP_TIMER"))
         assertTrue(notification.contains("setShowActionsInCompactView(*compact.toIntArray())"))
-        assertTrue(service.contains("if (intent?.action == ACTION_CANCEL_SLEEP_TIMER)"))
-        assertTrue(service.contains("SleepTimer.cancel()"))
-        assertTrue(service.contains("SleepTimer.onNotificationMinuteChanged = {"))
-        assertTrue(service.contains("val sleepMinutes = SleepTimerPolicy.notificationMinutes(SleepTimer.remaining.value)"))
-        assertTrue(timer.contains("notifyIfMinuteChanged()"))
-        assertFalse(notification.contains("NOTIFICATION_ID = 102"))
+        assertTrue(timer.contains("private val _chipMinutes = MutableStateFlow<Long?>(null)"))
+        assertTrue(timer.contains("updateChipMinutes()"))
     }
 
     @Test fun timerIntegratedIntoExistingSettingsWithoutNewService() {
