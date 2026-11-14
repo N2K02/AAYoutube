@@ -329,6 +329,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         savedController.performRestore(bundle)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         AppLog.add("CAR", "Legacy AABrowser projection activity created")
+        // As AABrowser: keep a foreground service for as long as the car screen exists.
+        PlaybackService.carAttached(this, true)
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
         // The newest car activity instance is the one Android Auto shows.
@@ -875,6 +877,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onDestroy() {
         AppLog.add("CAR", "Video projection onDestroy")
+        // Only when no newer car window has taken over.
+        if (!WebHost.carShown || WebHost.isActiveCarHost(carToken)) PlaybackService.carAttached(this, false)
         CarWindowPixelProbe.unregister(carToken)
         CarVideoPatternProbe.unregister(carToken)
         CarDirectSurfaceProbe.unregister(carToken)

@@ -100,17 +100,6 @@ object WebHost {
         transit()
     }
 
-    /** Android Auto: watch page with playlist instead of the video filling the screen. */
-    val carPage = MutableStateFlow(false)
-    private var fullscreenInterceptedAt = -10_000L
-
-    fun setCarPage(on: Boolean) {
-        if (carPage.value == on) return
-        carPage.value = on
-        transit()
-        js("window.__aay&&window.__aay.carPage&&window.__aay.carPage($on)")
-    }
-
     /** Layout transition ahead: arm page-side pause protection for a moment so the
      * sound does not stop while YouTube resizes or re-parents the video. */
     fun transit() {
@@ -305,13 +294,21 @@ object WebHost {
         s.mediaPlaybackRequiresUserGesture = false
         s.javaScriptCanOpenWindowsAutomatically = false
         s.setSupportMultipleWindows(false)
-        s.allowFileAccess = false
-        s.allowContentAccess = false
-        s.setSupportZoom(false)
-        s.builtInZoomControls = false
+        // Same WebView settings as AABrowser's browser page.
+        @Suppress("DEPRECATION")
+        s.databaseEnabled = true
+        s.allowFileAccess = true
+        s.allowContentAccess = true
+        s.setSupportZoom(true)
+        s.builtInZoomControls = true
+        s.displayZoomControls = false
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        w.isFocusable = true
+        w.isFocusableInTouchMode = true
+        w.isClickable = true
+        w.isLongClickable = true
         s.userAgentString = userAgent(Features.current.desktopSite)
 
         // Google refuses to sign in inside an "app WebView": a plain Chrome user agent (no "wv")
@@ -692,7 +689,6 @@ object WebHost {
         val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
-        if (!carShown) setCarPage(false)
         if (alreadyProjected && !carShown) {
             playingWhenCarLeft = snapshot.value.playing
             carLeftAt = SystemClock.elapsedRealtime()
@@ -822,7 +818,6 @@ object WebHost {
 
     fun enterMini() {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
-        setCarPage(false)
         AppLog.add("VIEW", "Mini player on (playing=${snapshot.value.playing})")
         // Arm page-side pause protection *before* changing the WebView viewport. YouTube can
         // pause during the resize, before Compose finishes drawing the mini player.
@@ -1641,19 +1636,6 @@ object WebHost {
         }
 
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-            // Sideways phone / Android Auto: our own layout already fills the screen, so
-            // YouTube's fullscreen button switches between that and the watch page with
-            // its playlist. Chromium's second fullscreen screen is never shown.
-            val landscape = app.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            if (FullscreenTogglePolicy.intercept(carShown, landscape, mode.value == PlayerMode.FULL)) {
-                transit()
-                fullscreenInterceptedAt = SystemClock.elapsedRealtime()
-                callback.onCustomViewHidden()
-                js("try{(document.exitFullscreen||document.webkitExitFullscreen).call(document)}catch(e){}")
-                if (carShown) setCarPage(!carPage.value)
-                else landscapeDismissed.value = !landscapeDismissed.value
-                return
-            }
             customCallback?.onCustomViewHidden()
             customCallback = callback
             transit()
@@ -1662,8 +1644,6 @@ object WebHost {
         }
 
         override fun onHideCustomView() {
-            // Echo of our own intercepted request: the toggle already happened.
-            if (FullscreenTogglePolicy.isEcho(SystemClock.elapsedRealtime() - fullscreenInterceptedAt)) return
             customCallback = null
             transit()
             fullscreenView.value = null

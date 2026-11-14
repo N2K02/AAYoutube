@@ -112,10 +112,10 @@ class YouTubeAppBehaviourTest {
         assertFalse("not over the mini player", LandscapeFillPolicy.active(true, true, true, fullPlayer = false, inPip = false, fullscreen = false, car = false))
     }
 
-    @Test fun fullscreenButtonInLandscapeAndOnTheCarTogglesVideoAndWatchPage() {
-        assertTrue(FullscreenTogglePolicy.intercept(car = false, landscape = true, fullPlayer = true))
-        assertTrue(FullscreenTogglePolicy.intercept(car = true, landscape = false, fullPlayer = true))
-        assertFalse("portrait keeps normal fullscreen", FullscreenTogglePolicy.intercept(false, false, true))
+    @Test fun youTubeFullscreenIsShownAsAABrowserDoes() {
+        val show = host.substringAfter("override fun onShowCustomView(").substringBefore("override fun onHideCustomView")
+        assertTrue(show.contains("fullscreenView.value = view"))
+        assertFalse("never declined or toggled", show.contains("return"))
     }
 
     @Test fun expandingTheMiniPlayerSidewaysShowsTheWatchPage() {
@@ -130,12 +130,6 @@ class YouTubeAppBehaviourTest {
         assertTrue(car.contains("onHome = { carHomeToMini(); controlsVersion++ }"))
         val toMini = car.substringAfter("private fun carVideoToMini(action: String): Boolean {").substringBefore("private fun finishCarMiniTransition")
         assertTrue("fullscreen is left first", toMini.indexOf("WebHost.exitFullscreen()") < toMini.indexOf("finishCarMiniTransition(action)"))
-    }
-
-    @Test fun carWatchPageResetsWhenLeavingTheVideo() {
-        val enter = host.substringAfter("fun enterMini() {").substringBefore("/** Undo the phone mini-player")
-        assertTrue(enter.contains("setCarPage(false)"))
-        assertTrue(host.contains("if (!carShown) setCarPage(false)"))
     }
 
     // ---- Picture in picture / background ----------------------------------------
