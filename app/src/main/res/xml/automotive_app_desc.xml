@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<automotiveApp xmlns:tools="http://schemas.android.com/tools">
-    <!-- One true video projection and one distinct native music media player. -->
-    <uses name="service" tools:ignore="InvalidUsesTagAttribute" />
-    <uses name="projection" tools:ignore="InvalidUsesTagAttribute" />
+<automotiveApp>
+    <!-- Same descriptor shape as AABrowser; the native music service stays separate. -->
     <uses name="media" />
 </automotiveApp>
