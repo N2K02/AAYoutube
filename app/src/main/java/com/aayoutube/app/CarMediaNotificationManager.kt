@@ -52,24 +52,11 @@ internal class CarMediaNotificationManager(
     private fun action(action: Long): PendingIntent =
         MediaButtonReceiver.buildMediaButtonPendingIntent(service, action)
 
-    private fun cancelTimerIntent(): PendingIntent = PendingIntent.getService(
-        service, 1012,
-        Intent(service, PlaybackService::class.java).setAction(PlaybackService.ACTION_CANCEL_SLEEP_TIMER),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-
-    fun playback(snapshot: Snap, token: MediaSessionCompat.Token, artwork: Bitmap? = null,
-                 sleepMinutes: Long? = null): Notification {
+    fun playback(snapshot: Snap, token: MediaSessionCompat.Token, artwork: Bitmap? = null): Notification {
         val builder = NotificationCompat.Builder(service, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(snapshot.title.ifBlank { "AAYoutube" })
-            .setContentText(
-                if (sleepMinutes != null) snapshot.artist.takeIf { it.isNotBlank() }
-                    ?.let { "$it · Sleep timer: $sleepMinutes min" }
-                    ?: "Sleep timer: $sleepMinutes min"
-                else snapshot.artist
-            )
-            .setSubText(sleepMinutes?.let { "Sleep timer: $it min left" })
+            .setContentText(snapshot.artist)
             .setLargeIcon(artwork)
             .setContentIntent(launchIntent())
             .setOnlyAlertOnce(true)
@@ -95,11 +82,6 @@ internal class CarMediaNotificationManager(
             builder.addAction(android.R.drawable.ic_media_next, "Next",
                 action(PlaybackStateCompat.ACTION_SKIP_TO_NEXT))
             compact.add(actionIndex)
-        }
-        if (sleepMinutes != null) {
-            // Keep previous / pause / next in compact view. Cancel is expanded-only.
-            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel,
-                "Cancel sleep timer", cancelTimerIntent())
         }
         return builder.setStyle(
             androidx.media.app.NotificationCompat.MediaStyle()
