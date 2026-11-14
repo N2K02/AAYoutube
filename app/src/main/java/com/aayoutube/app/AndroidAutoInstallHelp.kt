@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 internal data class AndroidAutoInstaller(val name: String, val description: String, val url: String)
 
 internal object AndroidAutoInstallHelp {
+    const val RELEASES_URL = "https://github.com/N2K02/AAYoutube/releases"
     val installers = listOf(
         AndroidAutoInstaller("KingInstaller", "Android Auto-focused APK installation methods; may require Shizuku or root on some phones.",
             "https://github.com/fcaronte/KingInstaller/releases"),
@@ -90,7 +91,7 @@ internal object AndroidAutoInstallHelp {
     }
 
     fun openLink(context: Context, url: String) {
-        if (installers.none { it.url == url }) return
+        if (url != RELEASES_URL && installers.none { it.url == url }) return
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))
                 .addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
