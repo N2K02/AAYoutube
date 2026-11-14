@@ -66,7 +66,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
     clearTimeout: id => { if (timers[id - 1]) timers[id - 1].f = null; },
   };
   vm.runInNewContext(source, sandbox);
-  const fire = (name) => (listeners[name] || []).forEach(f => f({ target: video }));
+  const fire = (name, target = video) => (listeners[name] || []).forEach(f => f({ target }));
   const runTimers = (maxMs) => {
     for (const t of timers.splice(0)) if (t.f && t.at <= maxMs) t.f();
   };
@@ -83,7 +83,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
   return { eq: c => window.__aay.eq(c), video, statuses, calls, fire, runTimers, render,
     stateChange: () => onState && onState(),
     pending: () => timers.filter(t => t.f).map(t => t.at),
-    setState: s => { state = s; }, offline: off };
+    setState: s => { state = s; }, document, offline: off };
 }
 
 const db = (a, b) => 20 * Math.log10(a / b);
@@ -316,4 +316,41 @@ test('native filter response calibrates preset headroom at each context sample r
       assert.ok(r.L.rms > 0.005, `${name} not muted at ${rate}`);
     }
   }
+});
+
+
+test('unrelated media never wakes the suspended equalizer', () => {
+  const p = page();
+  p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.video.paused = true; p.fire('pause'); p.runTimers(2000);
+  assert.equal(p.calls.suspend, 1);
+  const unrelated = Object.assign(Object.create(Object.getPrototypeOf(p.video)),
+    { paused: false, ended: false, currentSrc: 'https://example.com/unrouted.mp4' });
+  p.fire('play', unrelated); p.fire('playing', unrelated);
+  assert.equal(p.calls.resume, 0);
+  p.video.paused = false; p.fire('play');
+  assert.equal(p.calls.resume, 1, 'routed music resumes immediately');
+});
+
+test('hidden paused audio suspends without waiting for a throttled timer', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.document.hidden = true;
+  p.video.paused = true; p.fire('pause');
+  assert.equal(p.calls.suspend, 1);
+  p.stateChange(); assert.equal(p.calls.resume, 0);
+  p.video.paused = false; p.fire('playing');
+  assert.equal(p.calls.resume, 1);
+});
+
+test('detached videos cannot keep a hidden audio context running', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.video.isConnected = false;
+  p.document.hidden = true; p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 1);
+});
+
+test('background playback continues while routed music is actually playing', () => {
+  const p = page(); p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.document.hidden = true; p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 0);
 });

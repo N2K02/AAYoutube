@@ -375,7 +375,7 @@
   }
 
   function anyPlaying() {
-    for (var i = 0; i < EQ.els.length; i++) if (!EQ.els[i].paused && !EQ.els[i].ended) return true;
+    for (var i = 0; i < EQ.els.length; i++) if (EQ.els[i].isConnected !== false && !EQ.els[i].paused && !EQ.els[i].ended) return true;
     return false;
   }
   // A routed element is silent while the context is suspended: resume at once,
@@ -388,17 +388,23 @@
   }
   // Paused or ended: stop rendering after a grace period so the device's audio
   // output closes (battery, and Android no longer sees an active player).
+  function suspendIfIdle() {
+    if (!EQ.ctx || !EQ.count || anyPlaying() || EQ.ctx.state !== 'running') return;
+    EQ.idle = true;
+    try { EQ.ctx.suspend(); } catch (e) {}
+  }
   function idleCheck() {
     clearTimeout(EQ.idleTimer);
-    EQ.idleTimer = setTimeout(function () {
-      if (!EQ.ctx || !EQ.count || anyPlaying() || EQ.ctx.state !== 'running') return;
-      EQ.idle = true;
-      try { EQ.ctx.suspend(); } catch (e) {}
-    }, 2000);
+    // Hidden-page timers can be throttled: release idle audio immediately.
+    if (document.hidden) { suspendIfIdle(); return; }
+    EQ.idleTimer = setTimeout(suspendIfIdle, 2000);
   }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) idleCheck();
+  });
   function wake(e) {
     var t = e.target;
-    if (!(t instanceof HTMLMediaElement)) return;
+    if (!(t instanceof HTMLMediaElement) || !EQ.hooked.has(t)) return;
     clearTimeout(EQ.idleTimer);
     EQ.idle = false;
     keepRunning();
@@ -418,10 +424,9 @@
   document.addEventListener('playing', function (e) {
     var t = e.target;
     if (!(t instanceof HTMLMediaElement)) return;
-    clearTimeout(EQ.idleTimer);
-    EQ.idle = false;
-    keepRunning();
     attach(t);
+    if (EQ.hooked.has(t)) wake(e);
+    else if (EQ.count && !anyPlaying()) idleCheck();
   }, true);
 
   var A = window.__aay || (window.__aay = {});

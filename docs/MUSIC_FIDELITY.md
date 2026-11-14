@@ -30,3 +30,17 @@ The live browser context now calibrates headroom using unconnected native respon
 at its actual sample rate, cached until the EQ curve changes. Bands outside 45% of
 the sample rate are skipped consistently with mRadio. Tests include 8/32/44.1/48/96 kHz,
 actual Concert tail decay, and full-headroom tonal/spatial levels.
+
+## Detailed fidelity and idle-power audit
+
+- No periodic equalizer polling. Unused graph stages remain disconnected; response probes
+  are unconnected and cached. Flat/Off before routing keeps Chromium's native path.
+- Only routed media can wake a suspended equalizer. Hidden paused playback suspends
+  immediately rather than relying on throttled page timers; detached media cannot
+  keep it alive. Playing background audio remains enabled.
+- Regression coverage includes 26 Web Audio behaviours plus 20 Kotlin policy checks.
+  The pause/resume tests assert real suspend/resume requests, not just source strings.
+- Physical Chromium/WebView, Bluetooth and Android Auto validation is still required.
+  A sample ceiling is not oversampled true-peak limiting or proof of perceptual transparency.
+
+Reference: https://www.w3.org/TR/webaudio/#dom-audiocontext-suspend
