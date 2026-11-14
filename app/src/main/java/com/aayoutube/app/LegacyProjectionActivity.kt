@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
@@ -667,6 +668,11 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
                 ) {
+                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Car,
+                        onClick = {
+                            Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
+                            controlsVersion++
+                        })
                     BarIcon(
                         Icons.Rounded.PowerSettingsNew,
                         "Quit AAYoutube", BarSize.Car,

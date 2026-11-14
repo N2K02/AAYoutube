@@ -372,6 +372,36 @@
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
   }
 
+  /* ---------- 1f. Keep the video in view when a playlist moves on (as AABrowser) ----------
+   * On the mobile page the playlist sits under the video. When the next song starts,
+   * YouTube scrolls or focuses its row and the video slides off the top. While a
+   * playlist plays and the page is at the top, those playlist scrolls are dropped.
+   * Everything else on YouTube scrolls normally. */
+  if (!BROWSE) (function () {
+    var PANEL = 'ytm-playlist-panel-renderer,ytm-playlist-panel-video-renderer,' +
+      'ytm-playlist-engagement-panel,[class*="playlist-panel"]';
+    function guarding(el) {
+      try {
+        return /^\/watch/.test(location.pathname) && /[?&]list=/.test(location.search) &&
+          (window.scrollY || 0) < 80 && !!el && typeof el.closest === 'function' && !!el.closest(PANEL);
+      } catch (e) { return false; }
+    }
+    var proto = window.Element && Element.prototype;
+    if (!proto || proto.__aayPlaylistGuard) return;
+    proto.__aayPlaylistGuard = true;
+    var scrollIntoView = proto.scrollIntoView;
+    if (typeof scrollIntoView === 'function') proto.scrollIntoView = function () {
+      if (guarding(this)) return;
+      return scrollIntoView.apply(this, arguments);
+    };
+    var hproto = window.HTMLElement && HTMLElement.prototype;
+    var focus = hproto && hproto.focus;
+    if (typeof focus === 'function') hproto.focus = function (opts) {
+      if (guarding(this)) return focus.call(this, { preventScroll: true });
+      return focus.apply(this, arguments);
+    };
+  })();
+
   /* ---------- 1g. AABrowser-style tap-to-seek for Android Auto ---------- */
   // The Car App Library surface exposes taps, not horizontal scrubbing gestures.
   // A tap within a visible YouTube progress bar seeks without altering other controls.
@@ -689,8 +719,26 @@
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
   var styleEl = null;
+  // Fit / Fill / Stretch (AABrowser's video-fit) for a video that fills the screen:
+  // our car / landscape layout and YouTube's own fullscreen. Fit is the page default.
+  var VFIT_BOX = 'html.aay-car video.html5-main-video,:fullscreen video.html5-main-video,' +
+    ':-webkit-full-screen video.html5-main-video';
+  function vfitCss(cls, fit) {
+    return VFIT_BOX.split(',').map(function (sel) {
+      return sel.indexOf('html.') === 0 ? sel.replace('html.', 'html.' + cls + '.') : 'html.' + cls + ' ' + sel;
+    }).join(',') + '{left:0!important;top:0!important;width:100%!important;height:100%!important;' +
+      'object-fit:' + fit + '!important}';
+  }
+  var CSS_VFIT = vfitCss('aay-vfill', 'cover') + vfitCss('aay-vstretch', 'fill');
+  function applyVideoFit() {
+    var root = document.documentElement;
+    if (!root) return;
+    root.classList.toggle('aay-vfill', CFG.videoFit === 'fill');
+    root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
+  }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;
+    applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;

@@ -434,6 +434,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     publish(snapshot)
                 }
                 override fun onSkipToNext() {
+                    if (Features.current.skipSeeks) {
+                        onSeekTo(VideoFitPolicy.seekTarget(snapshot.posMs, snapshot.durMs, forward = true)); return
+                    }
                     // Native queue is authoritative when it contains the active
                     // video; otherwise the WebView handles the fallback.
                     val target = transportSkips.next(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
@@ -446,6 +449,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onSkipToPrevious() {
+                    if (Features.current.skipSeeks) {
+                        onSeekTo(VideoFitPolicy.seekTarget(snapshot.posMs, snapshot.durMs, forward = false)); return
+                    }
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (transportSkips.shouldRestartPrevious(snapshot.id, snapshot.posMs, now)) {
                         AppLog.add("MEDIA", "Previous: restarting current video after 5s")

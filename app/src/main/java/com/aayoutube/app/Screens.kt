@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Close
@@ -543,6 +544,12 @@ fun AppRoot(activity: MainActivity) {
                         enabled = canLyrics,
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
+                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Phone,
+                        onClick = {
+                            Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
+                            topMenuEpoch++
+                        },
+                        tint = if (VideoFitPolicy.normalize(flags.videoFit) != "fit") MaterialTheme.colorScheme.primary else null)
                     Box {
                         BarIcon(Icons.Filled.Settings, "Settings", BarSize.Phone,
                             onClick = { tab = Tab.Settings.ordinal })
@@ -975,6 +982,7 @@ fun FeaturesPage() {
             }
             CodecPicker(f.videoCodec) { v -> Features.update { it.copy(videoCodec = v) } }
             Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
+            Toggle("Skip buttons seek 10 seconds", "Next and Previous on Android Auto's player, the notification and headsets jump 10 seconds inside the video instead of changing video.", f.skipSeeks) { s, v -> s.copy(skipSeeks = v) }
             Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
             Toggle("Hide end-screen cards", "Removes suggested-video cards over the end of a video.", f.hideEndCards) { s, v -> s.copy(hideEndCards = v) }
         }

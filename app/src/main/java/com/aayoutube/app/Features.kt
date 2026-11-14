@@ -46,6 +46,10 @@ data class FeatureFlags(
     val playbackSpeed: Float = 1f,
     val rememberSpeed: Boolean = true,
     val loopVideo: Boolean = false,
+    /** Filled video (car, landscape, fullscreen): fit, fill (cropped) or stretch. */
+    val videoFit: String = "fit",
+    /** Android Auto / headset skip buttons seek 10 s instead of changing video. */
+    val skipSeeks: Boolean = false,
     /** "default" leaves YouTube's own caption choice alone. */
     val captions: String = "default",
     /** Double-tap seek length; 10 is YouTube's own gesture. */
@@ -69,6 +73,7 @@ data class FeatureFlags(
         .put("speed", playbackSpeed.toDouble())
         .put("rememberSpeed", rememberSpeed)
         .put("loop", loopVideo)
+        .put("videoFit", VideoFitPolicy.normalize(videoFit))
         .put("captions", captions)
         .put("seekSeconds", seekSeconds)
         .put("hideComments", hideComments)
@@ -124,6 +129,8 @@ object Features {
             playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
             rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
             loopVideo = prefs.getBoolean("loopVideo", d.loopVideo),
+            videoFit = VideoFitPolicy.normalize(prefs.getString("videoFit", d.videoFit)),
+            skipSeeks = prefs.getBoolean("skipSeeks", d.skipSeeks),
             captions = PlayerPrefsPolicy.normalizeCaptions(prefs.getString("captions", d.captions)),
             seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
@@ -169,6 +176,8 @@ object Features {
             .putFloat("playbackSpeed", n.playbackSpeed)
             .putBoolean("rememberSpeed", n.rememberSpeed)
             .putBoolean("loopVideo", n.loopVideo)
+            .putString("videoFit", VideoFitPolicy.normalize(n.videoFit))
+            .putBoolean("skipSeeks", n.skipSeeks)
             .putString("captions", n.captions)
             .putInt("seekSeconds", n.seekSeconds)
             .putBoolean("hideComments", n.hideComments)
