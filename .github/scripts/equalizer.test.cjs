@@ -19,8 +19,8 @@ const BASE = {
 };
 
 /** Loads the page script against a real offline context with a controllable page. */
-function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.youtube.com/x' } = {}) {
-  const off = new OfflineAudioContext(2, RATE * 2, RATE);
+function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.youtube.com/x', rate = RATE, duration = 2 } = {}) {
+  const off = new OfflineAudioContext(2, rate * 2, rate);
   const timers = [];
   const listeners = {};
   const statuses = [];
@@ -37,7 +37,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
       if (p === 'createMediaElementSource') return () => {
         calls.routed++;
         const o = t.createOscillator(); o.frequency.value = hz;
-        const g = t.createGain(); g.gain.value = amp; o.connect(g); o.start();
+        const g = t.createGain(); g.gain.value = amp; g.gain.setValueAtTime(0, duration); o.connect(g); o.start();
         if (stereo === 'mono') return g;
         const m = t.createChannelMerger(2);
         const inv = t.createGain(); inv.gain.value = stereo === 'side' ? -1 : stereo === 'left' ? 0 : 1;
@@ -73,7 +73,7 @@ function page({ hz = 1000, amp = 0.5, stereo = 'mono', src = 'blob:https://m.you
   const render = async () => {
     const buf = await off.startRendering();
     const m = ch => {
-      const d = buf.getChannelData(ch).subarray(RATE);
+      const d = buf.getChannelData(ch).subarray(rate);
       let s = 0, pk = 0;
       for (const x of d) { s += x * x; pk = Math.max(pk, Math.abs(x)); }
       return { rms: Math.sqrt(s / d.length), peak: pk };
@@ -124,30 +124,29 @@ test('mono streams reach both ears', async () => {
   assert.ok(r.R.rms > 0.1);
 });
 
-test('bass boost preset matches mRadio levels with preamp headroom', async () => {
-  const cfg = { ...BASE, bands: [6, 4, 0, 0, 0], preamp: Math.pow(10, -6 * 0.5 / 20), limiter: true };
+test('bass boost preserves its tonal curve with full headroom', async () => {
+  const cfg = fixtures.find(f => f.name === 'Bass boost:0.0').params;
   const low = page({ hz: 60, amp: 0.3 }); low.eq(cfg);
   const high = page({ hz: 3600, amp: 0.3 }); high.eq(cfg);
-  near(db((await low.render()).L.rms, 0.3 / Math.SQRT2), 3.4, 0.4, '60 Hz');
-  near(db((await high.render()).L.rms, 0.3 / Math.SQRT2), -3, 0.2, '3.6 kHz');
+  const lr = await low.render(), hr = await high.render();
+  near(db(lr.L.rms, hr.L.rms), 6.4, 0.4, 'bass-to-mid tonal difference');
+  near(db(hr.L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(cfg.preamp), 0.15, 'full headroom');
 });
 
-test('wide scales the side signal exactly like mRadio', async () => {
+test('wide preserves the side signal level after reserving spatial headroom', async () => {
   const p = page({ amp: 0.3, stereo: 'side' });
   p.eq({ ...BASE, sideGain: 2.2 });
-  near(db((await p.render()).L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(2.2), 0.05, 'side gain');
+  near(db((await p.render()).L.rms, 0.3 / Math.SQRT2), 0, 0.05, 'normalised side level');
 });
 
-test('headphone 3D and hall stay balanced and near unity', async () => {
-  const hp = page({ hz: 300, amp: 0.3 });
-  hp.eq({ ...BASE, sideGain: 1.25, crossGain: 0.425, crossNorm: 1 / (1 + 0.425 * 0.6),
-    crossDelay: 0.00027, wet: 0.09, feedback: 0.8, damp: 0.5, pre: 0.01, limiter: true });
-  const r = await hp.render();
-  near(db(r.L.rms, r.R.rms), 0, 1, 'HP3D balance');
-  near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 2, 'HP3D level');
-  const hall = page({ hz: 500, amp: 0.3 });
-  hall.eq({ ...BASE, sideGain: 1.1, wet: 0.26, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true });
-  near(db((await hall.render()).L.rms, 0.3 / Math.SQRT2), 0, 2, 'hall level');
+test('headphone 3D and Concert keep stereo balanced with their spatial reserve', async () => {
+  for (const name of ['HEADPHONE_3D:1', 'HALL:1']) {
+    const cfg = fixtures.find(f => f.name === name).params;
+    const p = page({ hz: 300, amp: 0.3 }); p.eq(cfg);
+    const r = await p.render();
+    near(db(r.L.rms, r.R.rms), 0, 1, `${name} balance`);
+    near(db(r.L.rms, 0.3 / Math.SQRT2), 20 * Math.log10(cfg.preamp), 1, `${name} headroom`);
+  }
 });
 
 test('8D orbit pans with mRadio equal-power law', async () => {
@@ -206,12 +205,17 @@ test('reverb time changes fade and replace the tail instead of pitching existing
   assert.ok(p.pending().includes(50));
 });
 
-test('reverb tail decays (stable feedback) and stays near unity loudness', async () => {
-  const p = page({ hz: 500, amp: 0.3 });
-  p.eq({ ...BASE, wet: 0.4, feedback: 0.88, damp: 0.3, pre: 0.018, limiter: true });
+test('Concert tail decays after playback stops', async () => {
+  const p = page({ hz: 500, amp: 0.3, duration: 0.25 });
+  p.eq(fixtures.find(f => f.name === 'HALL:1').params);
   const r = await p.render();
-  assert.ok(Number.isFinite(r.L.rms) && r.L.peak <= 1.0001);
-  near(db(r.L.rms, 0.3 / Math.SQRT2), 0, 3, 'reverb level');
+  function rms(start, end) {
+    const data = r.left.subarray(start * RATE, end * RATE);
+    return Math.sqrt(data.reduce((sum, x) => sum + x * x, 0) / data.length);
+  }
+  assert.ok(rms(0.3, 0.4) > 1e-5, 'room has an audible tail');
+  assert.ok(rms(1, 1.2) < rms(0.3, 0.4) * 0.01, 'tail retires cleanly');
+  assert.ok(r.left.every(x => Number.isFinite(x) && Math.abs(x) < 1));
 });
 
 
@@ -298,3 +302,18 @@ for (const hz of [60, 1000, 14000]) {
     assert.ok(peak <= 0.981, `peak=${peak} without limiter repair`);
   });
 }
+
+
+test('native filter response calibrates preset headroom at each context sample rate', async () => {
+  for (const rate of [8000, 32000, 44100, 48000, 96000]) {
+    for (const name of ['Bass boost:1.0', 'Treble boost:0.0']) {
+      const cfg = { ...fixtures.find(f => f.name === name).params, limiter: false };
+      const hz = Math.min(14000, rate * 0.4);
+      const p = page({ hz, amp: 0.95, rate }); p.eq(cfg);
+      const r = await p.render();
+      assert.ok(r.L.peak < 0.981, `${name} at ${rate}: peak=${r.L.peak}`);
+      assert.ok(r.left.every(Number.isFinite), `${name} finite at ${rate}`);
+      assert.ok(r.L.rms > 0.005, `${name} not muted at ${rate}`);
+    }
+  }
+});

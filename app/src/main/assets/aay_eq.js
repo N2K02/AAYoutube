@@ -93,9 +93,25 @@
     keep(g.input);
     g.pre = gain(1);
     g.bands = (EQ.cfg && EQ.cfg.bandHz || [60, 230, 910, 3600, 14000]).map(function (hz) {
-      var f = keep(ctx.createBiquadFilter()); f.type = 'peaking'; f.frequency.value = hz; f.Q.value = 0.9; f.gain.value = 0; return f;
+      var f = keep(ctx.createBiquadFilter()); f.type = 'peaking'; f.frequency.value = Math.min(hz, ctx.sampleRate * 0.45); f.Q.value = 0.9; f.gain.value = 0; return f;
     });
     g.shelf = keep(ctx.createBiquadFilter()); g.shelf.type = 'lowshelf'; g.shelf.frequency.value = 120; g.shelf.gain.value = 0;
+    // Unconnected response probes use the browser's exact filter maths/rate.
+    // They are never rendered and are reused for every settings change.
+    g.responseFilters = g.bands.map(function (f) {
+      var probe = ctx.createBiquadFilter(); probe.type = 'peaking';
+      probe.frequency.value = f.frequency.value; return probe;
+    });
+    var shelfProbe = ctx.createBiquadFilter(); shelfProbe.type = 'lowshelf';
+    g.responseFilters.push(shelfProbe);
+    var points = [];
+    for (var k = 0; k <= 512; k++) points.push(10 * Math.pow(ctx.sampleRate * 0.049, k / 512));
+    points.push(0, ctx.sampleRate * 0.5);
+    g.bands.forEach(function (f) { points.push(f.frequency.value); });
+    g.responseHz = new Float32Array(points);
+    g.responseMagnitude = new Float32Array(points.length);
+    g.responsePhase = new Float32Array(points.length);
+    g.responseDb = new Float64Array(points.length);
 
     g.split = keep(ctx.createChannelSplitter(2));
     g.mid = gain(1); g.sideRaw = gain(1);
@@ -223,7 +239,7 @@
     if (!changed) return undefined;
     var now = EQ.ctx.currentTime, p = g.pre.gain;
     var boost = Math.max(0, g.shelf.gain.value, c.bassDb);
-    g.bands.forEach(function (f, i) { boost += Math.max(0, f.gain.value, c.bands[i] || 0); });
+    g.bands.forEach(function (f, i) { boost += Math.max(0, f.gain.value, effectiveBand(c, i)); });
     function spatial(x) {
       return Math.max(1, x.sideGain || 1, x.orbit > 0 ? 1 + 1.1 * x.orbit : 1) * (1 + 2 * (x.wet || 0));
     }
@@ -242,12 +258,41 @@
     return now + 0.01;
   }
 
+  function actualRateHeadroom(c) {
+    var g = EQ.g, key = [c.bands.join(','), c.bassDb, c.bassHz, c.q].join(':');
+    if (g.responseKey !== key) {
+      g.responseDb.fill(0);
+      g.responseFilters.forEach(function (f, i) {
+        var shelf = i === g.bands.length;
+        f.Q.value = c.q || 0.9;
+        if (shelf) f.frequency.value = c.bassHz || 120;
+        f.gain.value = shelf ? c.bassDb : effectiveBand(c, i);
+        f.getFrequencyResponse(g.responseHz, g.responseMagnitude, g.responsePhase);
+        for (var k = 0; k < g.responseHz.length; k++) {
+          g.responseDb[k] += 20 * Math.log10(Math.max(1e-20, g.responseMagnitude[k]));
+        }
+      });
+      var peak = 0;
+      for (var k = 0; k < g.responseDb.length; k++) peak = Math.max(peak, g.responseDb[k]);
+      g.responseGain = peak < 0.01 ? 1 : Math.pow(10, -(peak + 0.5) / 20);
+      g.responseKey = key;
+    }
+    var spatial = (c.orbit > 0 ? 1 + 1.1 * c.orbit : c.sideGain) * (1 + 2 * c.wet);
+    return g.responseGain / spatial;
+  }
+
+  function effectiveBand(c, i) {
+    return (c.bandHz || [60, 230, 910, 3600, 14000])[i] < EQ.ctx.sampleRate * 0.45 ? (c.bands[i] || 0) : 0;
+  }
+
   function values(c) {
     var g = EQ.g;
+    // Kotlin supplies the requested curve; the live context supplies its rate.
+    c = Object.assign({}, c, { preamp: actualRateHeadroom(c) });
     var eqStart = reserveTransitionHeadroom(c);
     g.bands.forEach(function (f, i) {
       setIf(f.Q, c.q || 0.9, slot('q' + i), eqStart);
-      setIf(f.gain, c.bands[i] || 0, slot('b' + i), eqStart);
+      setIf(f.gain, effectiveBand(c, i), slot('b' + i), eqStart);
     });
     setIf(g.shelf.frequency, c.bassHz || 120, slot('sf'), eqStart);
     setIf(g.shelf.gain, c.bassDb, slot('sg'), eqStart);

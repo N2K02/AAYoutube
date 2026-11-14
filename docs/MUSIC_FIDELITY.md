@@ -25,3 +25,8 @@ The preamp falls over 10 ms; filter ramps then start, and measured steady-state 
 returns after 300 ms of settling. Scheduling uses AudioParam automation, including when
 the page is hidden. Rapid-retarget and all-preset transitions are tested with the limiter
 disabled so overload cannot be hidden by compression.
+
+The live browser context now calibrates headroom using unconnected native response probes
+at its actual sample rate, cached until the EQ curve changes. Bands outside 45% of
+the sample rate are skipped consistently with mRadio. Tests include 8/32/44.1/48/96 kHz,
+actual Concert tail decay, and full-headroom tonal/spatial levels.
