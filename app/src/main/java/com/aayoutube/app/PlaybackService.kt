@@ -51,7 +51,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
         val canNext: Boolean, val canPrev: Boolean,
-        val artwork: String, val bitmapReady: Boolean
+        val artwork: String, val bitmapReady: Boolean,
+        val sleepMinutes: Long?
     )
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
@@ -395,6 +396,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
         super.onCreate()
         notifications.createChannel()
         Library.init(this)
+        SleepTimer.onNotificationMinuteChanged = {
+            if (!shuttingDown && !quitRequested) updateNotification(snapshot)
+        }
         session = MediaSessionCompat(this, "AAYoutube").apply {
             // Android Auto can redirect media-card taps to the app's video
             // projection when the same package exports both entry points.
@@ -574,6 +578,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
             }
         }
+        if (intent?.action == ACTION_CANCEL_SLEEP_TIMER) {
+            SleepTimer.cancel()
+            AppLog.add("TIMER", "Sleep timer cancelled from playback notification")
+        }
         if (intent?.action == ACTION_QUIT) requestQuit()
         // Publish the initial playing state even when the WebView Messenger has
         // not registered yet; future IPC reports will update position and metadata.
@@ -641,6 +649,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         shuttingDown = true
+        SleepTimer.onNotificationMinuteChanged = null
         handler.removeCallbacksAndMessages(null)
         val activeConnection = connection
         connection = null
@@ -669,12 +678,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
             return
         }
         val cover = MediaArtworkLoader.urlFor(s.art, s.id)
+        val sleepMinutes = SleepTimerPolicy.notificationMinutes(SleepTimer.remaining.value)
         val key = NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev,
-            cover, artworkLoader.bitmapFor(cover) != null)
+            cover, artworkLoader.bitmapFor(cover) != null, sleepMinutes)
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
-                notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover)))
+                notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover), sleepMinutes))
             foreground = true
             lastNotification = key
             AppLog.add("MEDIA", "Playback notification foreground=true id=${s.id} " +
@@ -707,6 +717,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         const val ACTION_PLAYBACK = "com.aayoutube.app.action.PLAYBACK"
         const val EXTRA_PLAYBACK = "com.aayoutube.app.extra.PLAYBACK"
         const val ACTION_QUIT = "com.aayoutube.app.action.QUIT"
+        const val ACTION_CANCEL_SLEEP_TIMER = "com.aayoutube.app.action.CANCEL_SLEEP_TIMER"
         const val ACTION_CAR_ATTACHED = "com.aayoutube.app.action.CAR_ATTACHED"
         const val ACTION_CAR_DETACHED = "com.aayoutube.app.action.CAR_DETACHED"
 
