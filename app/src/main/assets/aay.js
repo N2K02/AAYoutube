@@ -157,6 +157,7 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
+  var userResumeEligibleUntil = 0;
   // Layout transitions (YouTube fullscreen, landscape fill, mini/expand) re-parent or
   // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
   // A short transit window drops those involuntary pauses; a real tap on Pause
@@ -174,18 +175,30 @@
     var v = getVideo();
     if (!v) return;
     var t = e.target;
-    if (t && t.closest && t.closest(
+    var playerControl = !!(t && t.closest && t.closest(
       'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
       'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
       '#movie_player, .html5-video-player, .html5-video-container,' +
       'button[aria-label*="pause" i], button[title*="pause" i],' +
-      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]')) {
-      if (v.paused) {
-        PAUSED = false;
-        bgWatch.explicitPause = false;
-        bgWatch.wanted = true;
-        userPauseEligibleUntil = 0;
-      } else userPauseEligibleUntil = Date.now() + 2000;
+      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]'));
+    // On some mobile YouTube versions the center control is an anonymous div,
+    // so also accept a trusted touch inside the actual video rectangle.
+    var insideVideo = false;
+    if (v.paused && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+      var rect = v.getBoundingClientRect();
+      insideVideo = rect.width > 0 && rect.height > 0 &&
+        e.clientX >= rect.left && e.clientX <= rect.left + rect.width &&
+        e.clientY >= rect.top && e.clientY <= rect.top + rect.height;
+    }
+    if (v.paused && (playerControl || insideVideo)) {
+      userResumeEligibleUntil = Date.now() + 1500;
+      PAUSED = false;
+      bgWatch.explicitPause = false;
+      bgWatch.wanted = true;
+      userPauseEligibleUntil = 0;
+      console.log('[aay] user resume gesture accepted');
+    } else if (!v.paused && playerControl) {
+      userPauseEligibleUntil = Date.now() + 2000;
     }
   }
   document.addEventListener('pointerdown', manualPauseGesture, true);
@@ -200,6 +213,7 @@
         PAUSED = false;
         bgWatch.explicitPause = false;
         bgWatch.wanted = true;
+        userResumeEligibleUntil = Date.now() + 1500;
         userPauseEligibleUntil = 0;
       } else userPauseEligibleUntil = Date.now() + 2000;
     }
@@ -1377,8 +1391,9 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (PAUSED && !AUTO) enforceExplicitPause(v);
+          if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
           else {
+            PAUSED = false;
             bgWatch.wanted = true; bgWatch.explicitPause = false;
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
