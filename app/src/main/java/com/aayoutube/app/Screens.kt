@@ -157,6 +157,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Settings("Settings", Icons.Filled.Settings),
     // Append to preserve previously saved tab ordinals when updating the app.
     ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
+    InstallationHelp("Android Auto installation", Icons.Filled.InstallMobile),
 }
 
 /** One host-owned header, matching the mRadio icon/title + app icon/name layout. */
@@ -240,6 +241,24 @@ fun AppRoot(activity: MainActivity) {
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
     var equalizerOpen by rememberSaveable { mutableStateOf(false) }
+    val phoneDisplay = (activity.display?.displayId ?: android.view.Display.DEFAULT_DISPLAY) ==
+        android.view.Display.DEFAULT_DISPLAY
+    var showInstallHelp by remember {
+        mutableStateOf(phoneDisplay && AndroidAutoInstallHelp.shouldPrompt(context, BuildConfig.VERSION_CODE))
+    }
+    if (showInstallHelp) {
+        AndroidAutoFirstLaunchHelp(
+            onDismiss = { hide ->
+                AndroidAutoInstallHelp.acknowledge(context, BuildConfig.VERSION_CODE, hide)
+                showInstallHelp = false
+            },
+            onOpenGuide = { hide ->
+                AndroidAutoInstallHelp.acknowledge(context, BuildConfig.VERSION_CODE, hide)
+                showInstallHelp = false
+                tab = Tab.InstallationHelp.ordinal
+            },
+        )
+    }
     LaunchedEffect(tab) { if (tab != Tab.Watch.ordinal) lastPanel = Tab.entries[tab] }
     val lyricsEnabled by LyricsPrefs.enabledState.collectAsState()
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
@@ -471,6 +490,7 @@ fun AppRoot(activity: MainActivity) {
                                 Tab.Watch -> Unit
                                 Tab.Features -> FeaturesPage()
                                 Tab.ExperimentalVideo -> ExperimentalVideoPage()
+                                Tab.InstallationHelp -> AndroidAutoInstallationPage()
                                 Tab.Lyrics -> LyricsSettingsPage()
                                 Tab.Update -> UpdatePage()
                                 Tab.Info -> InfoPage()
@@ -845,7 +865,7 @@ private fun AAYoutubeSettingsMenu(
                 leadingContent = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth().clickable(onClick = onEqualizer),
             )
-            listOf(Tab.Features, Tab.ExperimentalVideo, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+            listOf(Tab.Features, Tab.ExperimentalVideo, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
@@ -855,6 +875,7 @@ private fun AAYoutubeSettingsMenu(
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
                             Tab.ExperimentalVideo -> "Optional Android Auto video recovery tests"
+                            Tab.InstallationHelp -> "Video not showing? Installation methods and updates"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
                             Tab.Info -> "App information"
                             Tab.Update -> "Version, experimental releases and update checks"
@@ -1400,14 +1421,26 @@ fun ExperimentalVideoPage() {
 @Composable
 fun UpdatePage() {
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
-    // The single shared app header is owned by AppRoot; the library renders only page content.
-    dev.n2k02.updater.N2K02UpdatePage(
-        controller = LiveUpdater.controller,
-        installGuard = LiveUpdater.installGuard,
-        modifier = Modifier.fillMaxSize(),
-        experimentalEnabled = experimental,
-        onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
-    )
+    val context = LocalContext.current
+    // Keep the shared updater unchanged; a separate, explicit download route
+    // lets users obtain the signed APK for an alternative Android Auto installer.
+    Column(Modifier.fillMaxSize()) {
+        dev.n2k02.updater.N2K02UpdatePage(
+            controller = LiveUpdater.controller,
+            installGuard = LiveUpdater.installGuard,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            experimentalEnabled = experimental,
+            onExperimentalEnabledChange = LiveUpdater::setExperimentalEnabled,
+        )
+        OutlinedButton(
+            onClick = { AndroidAutoInstallHelp.openLink(context, AndroidAutoInstallHelp.RELEASES_URL) },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Icon(Icons.Filled.Download, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Download APK for alternative installer")
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------- info
