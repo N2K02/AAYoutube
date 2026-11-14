@@ -177,6 +177,7 @@
     if (t && t.closest && t.closest(
       'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
       'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
+      '#movie_player, .html5-video-player, .html5-video-container,' +
       'button[aria-label*="pause" i], button[title*="pause" i],' +
       '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]')) {
       if (v.paused) {
@@ -1116,22 +1117,17 @@
    * then shows Play and, in the mini player or PiP, it may stop painting the
    * picture. Tell YouTube to play when the media is actually playing. */
   var stateFixAt = 0;
-  // HTMLVideoElement is the actual decoder state. YouTube's UI may retain a
-  // paused/cued state after the video's own play() resumes background playback.
-  // Ask YouTube to reconcile its button, never synthesise a user gesture.
   function syncPlayerState() {
-    if (BROWSE || PAUSED || bgWatch.explicitPause || isAd()) return;
+    if (BROWSE) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
-    if (v.paused || v.ended || v.readyState < 3) return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || isAd()) return;
     var st;
     try { st = p.getPlayerState(); } catch (e) { return; }
-    // 1=playing, 2=paused, 5=video cued. Do not interrupt buffering/transition states.
-    if (st !== 2 && st !== 5) return;
+    if (st !== 2) return; // 2 = paused
     var now = Date.now();
-    if (now - stateFixAt < 3500) return;
+    if (now - stateFixAt < 2500) return;
     stateFixAt = now;
-    console.log('[aay] reconciling YouTube play control with active video');
     try { p.playVideo(); } catch (e) {}
   }
   // Repaint the video layer: after a WebView resize Chromium can keep showing
@@ -1387,7 +1383,6 @@
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
         }
-        if (ev === 'playing') later(syncPlayerState, 500);
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
@@ -1476,10 +1471,7 @@
     // current; a hidden phone does not need periodic UI position reports.
     if (BROWSE || (A.isBg && !A.inPip && !A.isCar)) return;
     var v = getVideo();
-    if (v && !v.paused) {
-      schedReport(0);
-      syncPlayerState();
-    }
+    if (v && !v.paused) schedReport(0);
   }, 10000);
   // Route changes can replace the video without raising loadedmetadata.
   window.addEventListener('yt-navigate-finish', function () { schedReport(0); });
