@@ -51,7 +51,9 @@ class AndroidAutoInstallHelpContractTest {
         assertFalse(help.contains("Download the signed APK from the existing updater/release"))
         assertTrue(help.contains("Card(colors = CardDefaults.cardColors("))
         assertTrue(help.contains("installer.description"))
-        assertTrue(help.contains("Video visibility"))
+        assertFalse(help.contains("Text(\"Video visibility\""))
+        assertFalse(help.contains("\"Mark Video as showing\""))
+        assertFalse(help.contains("\"Video still missing\""))
         assertTrue(screens.contains("Download APK for alternative installer"))
         assertTrue(screens.contains("dev.n2k02.updater.N2K02UpdatePage("))
     }
