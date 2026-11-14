@@ -22,6 +22,31 @@ class SleepTimerTest {
         assertNull(SleepTimerPolicy.durationMillis(Long.MAX_VALUE, false))
     }
 
+    @Test fun plusMinusRespectUnitLimitsAndDefault() {
+        assertEquals(16L, SleepTimerPolicy.adjustAmount(15L, 1, false))
+        assertEquals(14L, SleepTimerPolicy.adjustAmount(15L, -1, false))
+        assertEquals(15L, SleepTimerPolicy.adjustAmount(null, 0, false))
+        assertEquals(1L, SleepTimerPolicy.adjustAmount(null, 0, true))
+        assertEquals(1L, SleepTimerPolicy.adjustAmount(1L, -1, false))
+        assertEquals(1440L, SleepTimerPolicy.adjustAmount(1440L, 1, false))
+        assertEquals(24L, SleepTimerPolicy.adjustAmount(24L, 1, true))
+        assertEquals(1L, SleepTimerPolicy.adjustAmount(1L, -1, true))
+        assertEquals(24L, SleepTimerPolicy.adjustAmount(Long.MAX_VALUE, 1, true))
+        assertEquals(1L, SleepTimerPolicy.adjustAmount(Long.MIN_VALUE, -1, true))
+    }
+
+    @Test fun durationInputIsCenteredRoundedAndHasAccessibleButtons() {
+        val page = listOf(File("app/src/main/java/com/aayoutube/app/SleepTimerPage.kt"),
+            File("../app/src/main/java/com/aayoutube/app/SleepTimerPage.kt"))
+            .first { it.isFile }.readText()
+        assertTrue(page.contains("RoundedCornerShape(20.dp)"))
+        assertTrue(page.contains("TextAlign.Center"))
+        assertTrue(page.contains("contentDescription = \"Decrease duration\""))
+        assertTrue(page.contains("contentDescription = \"Increase duration\""))
+        assertTrue(page.contains("SleepTimerPolicy.adjustAmount(current, -1, hours)"))
+        assertTrue(page.contains("SleepTimerPolicy.adjustAmount(current, 1, hours)"))
+    }
+
     @Test fun countdownIsMonotonicAndFormatsCorrectly() {
         assertEquals(900_000L, SleepTimerPolicy.remainingMillis(901_000L, 1_000L))
         assertEquals(0L, SleepTimerPolicy.remainingMillis(901_000L, 902_000L))
