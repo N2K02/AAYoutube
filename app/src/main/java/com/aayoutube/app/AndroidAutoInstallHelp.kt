@@ -49,6 +49,8 @@ internal object AndroidAutoInstallHelp {
             "https://github.com/malebuffy/AAEnabler", "com.aaenabler.app"),
         AndroidAutoInstaller("LocalADB", "Advanced local ADB tools and diagnostics; normal ADB installation alone may not fix Android Auto visibility.",
             "https://github.com/N2K02/LocalAdb", "dev.n2k02.localadb"),
+        AndroidAutoInstaller("UnknownAuto", "Open-source Android Auto APK installer using Shizuku; requires setup and cannot guarantee compatibility.",
+            "https://github.com/GitMag/UnknownAuto/releases/latest", "com.mag.unknownauto"),
     )
 
     // Re-read package state when the phone returns from a browser/installer.
