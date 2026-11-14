@@ -68,7 +68,7 @@ class AndroidAutoInstallHelpContractTest {
         assertFalse(help.contains("Text(\"Video visibility\""))
         assertFalse(help.contains("\"Mark Video as showing\""))
         assertFalse(help.contains("\"Video still missing\""))
-        assertTrue(screens.contains("Download APK for alternative installer"))
+        assertTrue(screens.contains("Tab.InstallationHelp -> \"Video not showing? Installation methods and updates\""))
         assertTrue(screens.contains("dev.n2k02.updater.N2K02UpdatePage("))
     }
 }
