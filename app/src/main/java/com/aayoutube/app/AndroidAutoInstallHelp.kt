@@ -15,18 +15,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -133,7 +129,6 @@ fun AndroidAutoFirstLaunchHelp(onDismiss: (Boolean) -> Unit, onOpenGuide: (Boole
 @Composable
 fun AndroidAutoInstallationPage() {
     val context = LocalContext.current
-    var missing by remember { mutableStateOf(AndroidAutoInstallHelp.isMissing(context)) }
     val declared = remember { AndroidAutoInstallHelp.videoServiceDeclaredAndEnabled(context) }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -203,30 +198,5 @@ fun AndroidAutoInstallationPage() {
             }
         }
 
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-            Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Video visibility", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "These tools cannot make an incompatible app compatible with Android Auto. Video is intended for parked use.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedButton(onClick = {
-                    missing = !missing
-                    AndroidAutoInstallHelp.reportMissing(context, missing)
-                }) {
-                    Text(if (missing) "Mark Video as showing" else "Video still missing")
-                }
-                Text(
-                    if (missing) "Issue reported. Help can be shown after an update."
-                    else "No visibility issue reported.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
     }
 }
