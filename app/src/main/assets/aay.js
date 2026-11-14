@@ -1775,7 +1775,7 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
-    var on = !!(A.isCar || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
@@ -1833,6 +1833,51 @@
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
   };
+  // Android Auto: the watch page (player + playlist) instead of the filled video.
+  A.carPage = function (on) {
+    A.isCarPage = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
+  };
+
+  /* YouTube's fullscreen / minimise button while sideways or on Android Auto.
+   * There the app itself fills the screen (it is not Chromium fullscreen), so
+   * YouTube's minimise has nothing to leave and opens its "more videos" panel.
+   * Like AABrowser's fullscreen and back, the button instead switches between
+   * the filled video and the watch page with its playlist. Portrait phone and
+   * Chromium's real fullscreen keep YouTube's own behaviour. */
+  if (!BROWSE) (function () {
+    var FS_BUTTON = '.fullscreen-icon,.ytp-fullscreen-button,[class*="fullscreen-button" i],' +
+      '[class*="FullscreenButton"],button[aria-label*="full screen" i],button[aria-label*="fullscreen" i]';
+    function fsButton(e) {
+      var t = e.target;
+      if (!t || typeof t.closest !== 'function') return null;
+      return t.closest(FS_BUTTON);
+    }
+    function owned() {
+      if (A.isMini || A.inPip || !/^\/(watch|live\/)/.test(location.pathname)) return false;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return false;
+      return !!A.isCar || window.innerWidth > window.innerHeight;
+    }
+    // YouTube must not see the press at all, or its own fullscreen handler runs.
+    ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(function (type) {
+      window.addEventListener(type, function (e) {
+        if (fsButton(e) && owned()) e.stopImmediatePropagation();
+      }, { capture: true, passive: true });
+    });
+    window.addEventListener('click', function (e) {
+      if (!fsButton(e) || !owned()) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (N && typeof N.fsToggle === 'function') N.fsToggle();
+    }, true);
+  })();
+
   // Phone held sideways on a watch page: the video and YouTube's controls fill the screen.
   A.land = function (on) {
     A.isLand = !!on;

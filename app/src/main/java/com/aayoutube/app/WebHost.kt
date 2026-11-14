@@ -100,6 +100,37 @@ object WebHost {
         transit()
     }
 
+    /** Android Auto: watch page with playlist instead of the video filling the screen. */
+    val carPage = MutableStateFlow(false)
+
+    fun setCarPage(on: Boolean) {
+        if (carPage.value == on) return
+        carPage.value = on
+        transit()
+        js("window.__aay&&window.__aay.carPage&&window.__aay.carPage($on)")
+    }
+
+    /**
+     * YouTube's fullscreen / minimise button while the app fills the screen itself
+     * (phone sideways, Android Auto): switch between the filled video and the watch
+     * page with its playlist, never YouTube's "more videos" panel.
+     */
+    fun toggleFilledVideo() {
+        if (mode.value != PlayerMode.FULL || fullscreenView.value != null) return
+        when (FilledVideoToggle.target(
+            car = carShown,
+            landscape = app.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE,
+            carPage = carPage.value,
+            landscapeFill = landscapeFill.value,
+        )) {
+            FilledVideoToggle.Target.CarWatchPage -> setCarPage(true)
+            FilledVideoToggle.Target.CarFilled -> setCarPage(false)
+            FilledVideoToggle.Target.PhoneWatchPage -> dismissLandscapeFill()
+            FilledVideoToggle.Target.PhoneFilled -> { landscapeDismissed.value = false; transit() }
+            FilledVideoToggle.Target.None -> Unit
+        }
+    }
+
     /** Layout transition ahead: arm page-side pause protection for a moment so the
      * sound does not stop while YouTube resizes or re-parents the video. */
     fun transit() {
@@ -689,6 +720,7 @@ object WebHost {
         val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
+        if (!carShown) setCarPage(false)
         if (alreadyProjected && !carShown) {
             playingWhenCarLeft = snapshot.value.playing
             carLeftAt = SystemClock.elapsedRealtime()
@@ -818,6 +850,7 @@ object WebHost {
 
     fun enterMini() {
         if (fullscreenView.value != null || !isOnWatchPage() || mode.value == PlayerMode.MINI) return
+        setCarPage(false)
         AppLog.add("VIEW", "Mini player on (playing=${snapshot.value.playing})")
         // Arm page-side pause protection *before* changing the WebView viewport. YouTube can
         // pause during the resize, before Compose finishes drawing the mini player.
@@ -976,6 +1009,11 @@ object WebHost {
 
     /** A deliberate pause from YouTube's native page controls is authoritative,
      * including while in PiP/mini/car. Bridge calls arrive off the main thread. */
+    fun onJsFullscreenButton(generation: Int) {
+        if (generation != webGeneration) return
+        main.post { if (generation == webGeneration) toggleFilledVideo() }
+    }
+
     fun onJsUserPause(generation: Int) {
         if (generation != webGeneration) return
         main.post {
@@ -1676,6 +1714,12 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun state(json: String) {
         WebHost.onJsState(json, generation)
+    }
+
+    /** YouTube's fullscreen / minimise button where the app fills the screen itself. */
+    @JavascriptInterface
+    fun fsToggle() {
+        WebHost.onJsFullscreenButton(generation)
     }
 
     @JavascriptInterface

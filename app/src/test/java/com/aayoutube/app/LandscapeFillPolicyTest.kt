@@ -56,6 +56,6 @@ class LandscapeFillPolicyTest {
         assertTrue(host.contains("window.__aay.land(\$on)"))
         assertTrue(host.contains("if (landscapeFill.value) view.evaluateJavascript("))
         assertTrue(js.contains("A.land = function (on)"))
-        assertTrue(js.contains("!!(A.isCar || A.isLand)"))
+        assertTrue(js.contains("!!((A.isCar && !A.isCarPage) || A.isLand)"))
     }
 }
