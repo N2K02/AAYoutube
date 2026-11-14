@@ -24,6 +24,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Row
@@ -93,6 +98,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     private var playerContainer: CarFrameLayout? = null
     private val handler = Handler(Looper.getMainLooper())
     private var carStarted = false
+    /** Snapshotted at activity creation; never change renderer behavior mid-playback. */
+    private var experimentalVideoEnabled = false
+    private var experimentalChecks = 0
+    private var experimentalRepairs = 0
+    /** One retry budget per CarActivity instance, never reset by onResume/rebind. */
+    private var experimentalRecoveryStarted = false
     private var carInput: LegacyCarInput? = null
     private var lastWidth = 0
     private var lastHeight = 0
@@ -116,6 +127,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         // the view: otherwise music/media callbacks remain attached to a
         // stopped instance until another lifecycle event happens.
         WebHost.showOnCar(true, carToken)
+        ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
+        if (experimentalVideoEnabled) {
+            CarWindowPixelProbe.register(carToken) {
+                CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+            }
+            CarVideoPatternProbe.register(carToken)
+            CarDirectSurfaceProbe.register(carToken)
+        }
         WebHost.onCarQuit = carQuitCallback
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
         else BrowseHost.resume()
@@ -132,6 +151,100 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
     private val renderProbe = Runnable {
         if (carStarted && WebHost.isActiveCarHost(carToken)) WebHost.logCarRenderProbe()
+    }
+
+    /**
+     * AnyAuto-inspired surface resilience, not an AnyAuto/Shizuku renderer.
+     * A bounded watchdog checks only the native View hierarchy and display ID.
+     * The existing WebHost attachment remains the sole video/decoder owner.
+     */
+    private val experimentalRecovery = object : Runnable {
+        override fun run() {
+            if (!experimentalVideoEnabled || !carStarted ||
+                !WebHost.isActiveCarHost(carToken) || WebHost.fullscreenView.value != null) return
+            val frame = playerContainer
+            val player = frame?.getChildAt(0) as? WebView
+            val repair = frame != null && ExperimentalCarVideoPolicy.needsRebind(
+                enabled = experimentalVideoEnabled,
+                activeCarHost = WebHost.isActiveCarHost(carToken),
+                frameAttached = frame.isAttachedToWindow,
+                frameWidth = frame.width,
+                frameHeight = frame.height,
+                frameDisplayId = frame.display?.displayId ?: -1,
+                playerAttached = player?.isAttachedToWindow == true,
+                playerWidth = player?.width ?: 0,
+                playerHeight = player?.height ?: 0,
+                playerDisplayId = player?.display?.displayId ?: -1,
+            )
+            experimentalChecks++
+            var status = when {
+                frame == null || !frame.isAttachedToWindow -> "Waiting for car surface"
+                frame.width <= 0 || frame.height <= 0 -> "Waiting for usable viewport"
+                !repair -> "Healthy WebView geometry"
+                else -> "WebView rebind requested"
+            }
+            if (repair && frame != null) {
+                if (experimentalRepairs >= ExperimentalCarVideoPolicy.MAX_REBINDS) {
+                    status = "Fallback: rebind budget exhausted"
+                    experimentalVideoEnabled = false
+                    CarWindowPixelProbe.unregister(carToken)
+                    CarVideoPatternProbe.unregister(carToken)
+                    CarDirectSurfaceProbe.unregister(carToken)
+                    ExperimentalCarVideoMonitor.fallback(carToken, "rebind budget exhausted")
+                } else {
+                    experimentalRepairs++
+                    runCatching {
+                        // Reuses the existing WebHost/window, never makes a second player.
+                        bindVideoToCarFrame(frame)
+                        WebHost.refitCarViewport()
+                    }.onFailure {
+                        status = "Fallback: rebind failed"
+                        experimentalVideoEnabled = false
+                        CarWindowPixelProbe.unregister(carToken)
+                        CarVideoPatternProbe.unregister(carToken)
+                        CarDirectSurfaceProbe.unregister(carToken)
+                        ExperimentalCarVideoMonitor.fallback(carToken,
+                            "rebind failed (" + it.javaClass.simpleName + ")")
+                    }
+                }
+            }
+            val visible = android.graphics.Rect()
+            // Host insets may clip the projected View. Local coordinates let
+            // the 16:9 diagnostic fit use the same origin as frame.width/height.
+            if (frame != null && !frame.getLocalVisibleRect(visible)) visible.setEmpty()
+            ExperimentalCarVideoMonitor.check(
+                owner = carToken,
+                state = status,
+                checks = experimentalChecks,
+                repairs = experimentalRepairs,
+                displayId = frame?.display?.displayId ?: -1,
+                frameWidth = frame?.width ?: 0,
+                frameHeight = frame?.height ?: 0,
+                playerWidth = player?.width ?: 0,
+                playerHeight = player?.height ?: 0,
+                visibleArea = CarVideoBounds(
+                    visible.left, visible.top, visible.width(), visible.height()
+                ),
+            )
+            if (experimentalVideoEnabled &&
+                experimentalChecks < ExperimentalCarVideoPolicy.MAX_CHECKS) {
+                handler.postDelayed(this, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
+            } else {
+                AppLog.add("CAR", "Experimental video: checks finished; legacy projection intact")
+            }
+        }
+    }
+
+    private fun scheduleExperimentalRecovery() {
+        if (!experimentalVideoEnabled || !carStarted ||
+            !WebHost.isActiveCarHost(carToken) || experimentalRecoveryStarted) return
+        val frame = playerContainer
+        if (frame?.isAttachedToWindow != true || frame.display == null) return
+        // Only a newly created car activity can start a fresh retry budget.
+        // Repeated onResume, WebView rebinding and surface callbacks cannot.
+        experimentalRecoveryStarted = true
+        handler.removeCallbacks(experimentalRecovery)
+        handler.postDelayed(experimentalRecovery, ExperimentalCarVideoPolicy.CHECK_DELAY_MS)
     }
 
     /** Frames decoded vs. painted, over the first seconds of a car bind. */
@@ -182,6 +295,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                 WebHost.showCarControls()
             }
         }
+        frame.onObservedGesture = if (experimentalVideoEnabled)
+            ({ gesture: CarVideoGesture ->
+                AppLog.add("CAR", "Experimental passive car gesture=" + gesture.name)
+            }) else null
         val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
@@ -208,15 +325,23 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video CarActivity launching")
         setTheme(R.style.Theme_AAYoutube)
         super.onCreate(bundle)
+        // The new car connection wins: stop any phone-only test display before
+        // Android Auto claims the live video host.
+        CarVirtualDisplayProbe.cancel()
+        experimentalVideoEnabled = Features.current.experimentalVideo
+        AppLog.add("CAR", "Experimental video at connection=" + experimentalVideoEnabled)
         CarMode.resetToCarScreen(this)
         savedController.performRestore(bundle)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         AppLog.add("CAR", "Legacy AABrowser projection activity created")
+        // As AABrowser: keep a foreground service for as long as the car screen exists.
+        PlaybackService.carAttached(this, true)
         // Projection must own the page before Compose creates/loads its WebView.
         // Otherwise ensureWeb() can briefly initialize in phone/background mode.
         // The newest car activity instance is the one Android Auto shows.
         val wasAlreadyProjected = WebHost.carShown
         WebHost.claimCarHost(carToken, onBecameActive)
+        ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
         WebHost.onCarQuit = carQuitCallback
         WebHost.showOnCar(true, carToken)
         // Preserve a car mini-player across host window replacement.
@@ -319,11 +444,38 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         val browsing by BrowseHost.created.collectAsState()
         val browseRevision by BrowseHost.revision.collectAsState()
         val mini = mode == WebHost.PlayerMode.MINI
+        val carWatchPage by WebHost.carPage.collectAsState()
         val full by WebHost.fullscreenView.collectAsState()
         val activeHost by WebHost.activeCarHost.collectAsState()
+        val carTestPattern by CarVideoPatternProbe.state.collectAsState()
+        val directSurface by CarDirectSurfaceProbe.state.collectAsState()
         val playing by WebHost.snapshot.collectAsState()
         val selectedWatchVideoId by WebHost.selectedWatchVideoId.collectAsState()
         val flags by Features.state.collectAsState()
+        LaunchedEffect(carTestPattern.visible, playing.playing, activeHost) {
+            if (carTestPattern.visible && playing.playing && activeHost == carToken) {
+                CarVideoPatternProbe.stopForPlayback(carToken)
+            }
+        }
+        LaunchedEffect(directSurface.visible, playing.playing, activeHost) {
+            if (directSurface.visible && playing.playing && activeHost == carToken) {
+                CarDirectSurfaceProbe.stopForPlayback(carToken)
+            }
+        }
+        // The static bars must be drawn before PixelCopy reads the same window.
+        // This samples ONLY the synthetic test, and never runs while playing.
+        LaunchedEffect(carTestPattern.visible, carTestPattern.testId, activeHost) {
+            if (carTestPattern.visible && activeHost == carToken &&
+                experimentalVideoEnabled) {
+                delay(450L)
+                if (CarVideoPatternProbe.state.value.visible &&
+                    CarVideoPatternProbe.state.value.testId == carTestPattern.testId &&
+                    WebHost.isActiveCarHost(carToken) && !WebHost.snapshot.value.playing) {
+                    CarVideoPatternReadback.capture(
+                        carToken, carTestPattern.testId, carWindow())
+                }
+            }
+        }
         var controlsVisible by remember { mutableStateOf(true) }
         var controlsVersion by remember { mutableIntStateOf(0) }
         LaunchedEffect(controlsVisible, controlsVersion, flags.topMenuTimeoutSeconds) {
@@ -343,6 +495,13 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             val miniPrefs = remember { getSharedPreferences("car_mini", android.content.Context.MODE_PRIVATE) }
             var miniX by remember { mutableStateOf(miniPrefs.getFloat("x", 1f).coerceIn(0f, 1f)) }
             var miniY by remember { mutableStateOf(miniPrefs.getFloat("y", 1f).coerceIn(0f, 1f)) }
+            // Landscape car screens (the usual Android Auto shape) get the top-centre pill.
+            val carLandscape = ControlsSidePolicy.isLandscape(maxWidth.value, maxHeight.value)
+            val (railAlign, railDrag) = rememberEdgeDrag(
+                left = flags.controlsOnLeft, landscape = carLandscape,
+                containerPx = with(LocalDensity.current) { (if (carLandscape) maxWidth else maxHeight).toPx() },
+                onActivity = { controlsVisible = true; controlsVersion++ },
+            )
             val miniWidth = minOf(240.dp, (maxWidth - 24.dp) * 0.8f)
             val miniHeight = miniWidth * (9f / 16f)
             // Only the actual controls rail intercepts touches. The video can be
@@ -387,7 +546,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                                 override fun onViewAttachedToWindow(v: View) {
                                     AppLog.add("CAR", "Car frame attached display=" +
                                         (frame.display?.displayId ?: -1))
-                                    if (playerContainer === frame) bindVideoToCarFrame(frame)
+                                    if (playerContainer === frame) {
+                                        bindVideoToCarFrame(frame)
+                                        scheduleExperimentalRecovery()
+                                    }
                                 }
                                 override fun onViewDetachedFromWindow(v: View) {
                                     AppLog.add("CAR", "Car frame detached")
@@ -418,25 +580,44 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onRelease = { frame ->
                         frame.onSwipeDown = null
                         frame.onVideoTap = null
+                        frame.onObservedGesture = null
                         WebHost.detach(frame)
                         if (playerContainer === frame) playerContainer = null
                     },
                 )
             }
+            // Same mini player as the phone: play/pause top left, close top right,
+            // red progress line at the bottom; tap to expand, drag to move.
             if (mini) {
-                Text(
-                    "Expand video",
-                    Modifier.offset {
-                        val labelY = if (playerY > with(density) { 48.dp.toPx() })
-                            playerY - with(density) { 42.dp.toPx() }
-                        else playerY + with(density) { miniHeight.toPx() } + with(density) { 4.dp.toPx() }
-                        IntOffset(playerX.roundToInt(), labelY.roundToInt())
-                    }.clickable { WebHost.expandPlayer(); BrowseHost.pause() }
-                        .background(Color(0xCC111111), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                val fraction = if (playing.durMs > 0)
+                    (playing.posMs.toFloat() / playing.durMs).coerceIn(0f, 1f) else 0f
+                Box(
+                    miniVideoModifier.pointerInput(Unit) {
+                        detectTapGestures(onTap = { WebHost.expandPlayer(); BrowseHost.pause() })
+                    },
+                ) {
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.cmd(if (playing.playing) "pause" else "play") },
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(40.dp),
+                    ) {
+                        androidx.compose.material3.Icon(
+                            if (playing.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (playing.playing) "Pause" else "Play",
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                    androidx.compose.material3.FilledTonalIconButton(
+                        onClick = { WebHost.closePlayer() },
+                        modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(40.dp),
+                    ) {
+                        androidx.compose.material3.Icon(Icons.Filled.Close, contentDescription = "Close",
+                            modifier = Modifier.size(22.dp))
+                    }
+                    Box(
+                        Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
+                            .background(Color(0xFFFF0033)),
+                    )
+                }
             }
             val fullscreenView = full
             // An inactive (being replaced) car window must not take the
@@ -456,12 +637,42 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             // Same small floating rail as the phone, on the configured side.
             // Android Auto is landscape: a side rail never covers YouTube's
             // own top or bottom menus. Any touch shows it again.
+            // A paused-only, explicit diagnostic: the temporary bars are
+            // drawn by the same Compose car window. Chromium is never moved.
+            if (carTestPattern.visible && carTestPattern.owner == carToken &&
+                activeHost == carToken && experimentalVideoEnabled) {
+                Box(Modifier.fillMaxSize().zIndex(40f)) {
+                    CarVideoPatternView()
+                }
+            }
+            // A distinct, short-lived SurfaceView draws synthetic motion, not
+            // duplicated Chromium video. onRelease reliably retires its thread.
+            if (directSurface.visible && directSurface.owner == carToken &&
+                activeHost == carToken && experimentalVideoEnabled &&
+                !playing.playing) {
+                key(directSurface.runId) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize().zIndex(45f),
+                        factory = { ctx ->
+                            CarDirectSurfaceView(
+                                projectionContext(ctx, playerContainer),
+                                carToken,
+                                directSurface.runId,
+                            )
+                        },
+                        onRelease = { it.stopRendering() },
+                    )
+                }
+            }
             AnimatedVisibility(
                 visible = controlsVisible,
                 enter = fadeIn(),
                 exit = fadeOut(),
-                modifier = Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))
-                    .padding(horizontal = 12.dp).zIndex(20f),
+                modifier = Modifier.align(railAlign)
+                    .padding(
+                        horizontal = if (carLandscape) 0.dp else 12.dp,
+                        vertical = if (carLandscape) 12.dp else 0.dp,
+                    ).then(railDrag).zIndex(20f),
             ) {
                 FloatingVideoBar(
                     playing = playing.playing,
@@ -470,6 +681,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         playing.id, selectedWatchVideoId, playing.buffering, playing.ended
                     ) && mode == WebHost.PlayerMode.FULL,
                     car = true,
+                    vertical = ControlsSidePolicy.vertical(carLandscape),
                     onBack = { carBackToMini(); controlsVersion++ },
                     onHome = { carHomeToMini(); controlsVersion++ },
                     onPlayPause = {
@@ -479,6 +691,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
                 ) {
+                    if (VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing))
+                        BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Car,
+                            onClick = {
+                                Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
+                                controlsVersion++
+                            })
                     BarIcon(
                         Icons.Rounded.PowerSettingsNew,
                         "Quit AAYoutube", BarSize.Car,
@@ -564,6 +782,14 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         configureLegacyCarInput()
         val registered = WebHost.resumeCarHost(carToken, onBecameActive)
         if (!registered || !WebHost.isActiveCarHost(carToken)) return
+        ExperimentalCarVideoMonitor.begin(carToken, experimentalVideoEnabled)
+        if (experimentalVideoEnabled) {
+            CarWindowPixelProbe.register(carToken) {
+                CarWindowPixelProbe.capture(carToken, carWindow(), playerContainer)
+            }
+            CarVideoPatternProbe.register(carToken)
+            CarDirectSurfaceProbe.register(carToken)
+        }
         WebHost.showOnCar(true, carToken)
         if (WebHost.mode.value != WebHost.PlayerMode.MINI) WebHost.prepareForCarProjection()
         else BrowseHost.resume()
@@ -571,6 +797,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         WebHost.requestLink = relink
         connectMedia()
         attachIfNeeded()
+        scheduleExperimentalRecovery()
     }
 
     override fun onResume() {
@@ -583,6 +810,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         handler.removeCallbacks(refit)
         handler.postDelayed(refit, 180L)
         scheduleRenderProbes()
+        scheduleExperimentalRecovery()
     }
 
     private fun attachIfNeeded() {
@@ -651,6 +879,10 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         carStarted = false
         handler.removeCallbacksAndMessages(null)
+        CarWindowPixelProbe.unregister(carToken)
+        CarVideoPatternProbe.unregister(carToken)
+        CarDirectSurfaceProbe.unregister(carToken)
+        ExperimentalCarVideoMonitor.end(carToken)
         lastWidth = 0
         lastHeight = 0
         carInput?.stop()
@@ -675,6 +907,12 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
 
     override fun onDestroy() {
         AppLog.add("CAR", "Video projection onDestroy")
+        // Only when no newer car window has taken over.
+        if (!WebHost.carShown || WebHost.isActiveCarHost(carToken)) PlaybackService.carAttached(this, false)
+        CarWindowPixelProbe.unregister(carToken)
+        CarVideoPatternProbe.unregister(carToken)
+        CarDirectSurfaceProbe.unregister(carToken)
+        ExperimentalCarVideoMonitor.end(carToken)
         carStarted = false
         if (WebHost.requestLink === relink) {
             WebHost.requestLink = null

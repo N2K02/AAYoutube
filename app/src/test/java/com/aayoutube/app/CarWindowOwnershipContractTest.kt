@@ -126,7 +126,7 @@ class CarWindowOwnershipContractTest {
      */
     @Test fun carVideoPageIsNotCoveredByWrapperBoxes() {
         val js = source("app/src/main/assets/aay.js")
-        assertTrue(js.contains("var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;"))
+        assertTrue(js.contains("var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;"))
         assertTrue(js.contains("'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;'"))
         assertTrue(js.contains("mark(w, 'aay-car-off', !hasVideo && !hasControls);"))
         assertTrue(js.contains("mark(w, 'aay-car-clear', !hasVideo && hasControls);"))

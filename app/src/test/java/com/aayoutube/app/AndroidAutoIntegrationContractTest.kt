@@ -20,23 +20,34 @@ class AndroidAutoIntegrationContractTest {
         val service = src("app/src/main/java/com/aayoutube/app/LegacyProjectionService.kt")
         assertTrue(service.contains("Android Auto requested legacy projection service"))
         assertTrue(service.contains("Android Auto resolving projected video activity"))
-        assertTrue(video.contains("android:process=\":web\""))
+        assertFalse("one process, as in AABrowser", manifest.contains("android:process="))
         // Android Auto has independent video/music entries; their labels
         // must not change the phone launcher name.
         assertTrue(video.contains("android:label=\"AAYT Video\""))
         assertTrue(music.contains("android:label=\"AAYT Music\""))
         val phone = manifest.substringAfter("android:name=\".MainActivity\"").substringBefore("</activity>")
-        val videoLauncher = manifest.substringAfter("android:name=\".AutoVideoLauncher\"").substringBefore("</activity-alias>")
-        assertTrue(videoLauncher.contains("android:targetActivity=\".MainActivity\""))
-        assertTrue(videoLauncher.contains("android:label=\"AAYT Video\""))
-        assertTrue(videoLauncher.contains("android.intent.category.CAR_LAUNCHER"))
-        assertTrue(videoLauncher.contains("android.intent.action.MAIN"))
-        assertTrue(videoLauncher.contains("android:exported=\"true\""))
-        assertFalse("Phone launcher must not be listed directly as a car launcher",
-            phone.contains("android.intent.category.CAR_LAUNCHER"))
+        // Same as AABrowser (fcaronte/AABrowser browser/src/main/AndroidManifest.xml):
+        // MainActivity is a plain phone activity. Android Auto discovers the video
+        // through the projection service, never through activity categories.
         assertTrue(phone.contains("android.intent.category.LAUNCHER"))
-        assertTrue(src("app/src/main/java/com/aayoutube/app/CarMode.kt")
-            .contains("Video car-launcher alias discoverable="))
+        assertTrue(phone.contains("android.media.action.MEDIA_PLAY_FROM_SEARCH"))
+        for (category in listOf("android.intent.category.CAR_LAUNCHER",
+            "androidx.car.app.category.NAVIGATION", "android.intent.category.APP_MAPS"))
+            assertFalse(category, manifest.contains(category))
+        assertFalse("no AndroidX car service, so no car API level", manifest.contains("minCarApiLevel"))
+        val carWebLink = phone.substringAfter("<!-- Opens YouTube links in this app -->")
+            .substringBefore("</intent-filter>")
+        assertTrue(carWebLink.contains("android.intent.action.VIEW"))
+        assertTrue(carWebLink.contains("android.intent.category.BROWSABLE"))
+        assertTrue(carWebLink.contains("android:host=\"youtube.com\""))
+        assertFalse(carWebLink.contains("android:scheme=\"http\""))
+        val mainActivity = src("app/src/main/java/com/aayoutube/app/MainActivity.kt")
+        assertTrue(mainActivity.contains("logCarActivityEntry(\"create\", intent)"))
+        assertTrue(mainActivity.contains("logCarActivityEntry(\"newIntent\", intent)"))
+        assertTrue(mainActivity.contains("carDisplay=\$carDisplay"))
+        assertFalse(mainActivity.contains("AppLog.add(\"CAR\", launch?.dataString"))
+
+        assertFalse(manifest.contains("android:name=\".AutoVideoLauncher\""))
         assertTrue(manifest.contains("android:label=\"AAYoutube\""))
         assertFalse(manifest.contains("android:label=\"AaYT Video\""))
         assertFalse(manifest.contains("android:label=\"AAYouTube Music\""))
@@ -49,6 +60,8 @@ class AndroidAutoIntegrationContractTest {
         assertFalse(src("app/build.gradle.kts").contains("androidx.car.app:app:"))
         for (resource in listOf("xml", "xml-v35")) {
             val descriptor = src("app/src/main/res/$resource/automotive_app_desc.xml")
+            // AABrowser's descriptor: service + projection + media.
+            assertTrue(descriptor.contains("name=\"service\""))
             assertTrue(descriptor.contains("name=\"projection\""))
             assertTrue(descriptor.contains("name=\"media\""))
             assertFalse(descriptor.contains("name=\"template\""))

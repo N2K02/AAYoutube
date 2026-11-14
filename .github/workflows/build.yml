@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [ main ]
     types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
   workflow_dispatch:
     inputs:
       version:
@@ -18,7 +20,7 @@ permissions:
 
 # Builds run one at a time, so two quick pushes never get the same version number.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' && github.event.pull_request.number) || 'main' }}
   cancel-in-progress: true
 
 env:
@@ -26,11 +28,12 @@ env:
 
 jobs:
   build:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request_target' || (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && !contains(github.event.pull_request.title, '[skip ci]')))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0   # full history + tags, for the version number and release notes
 
       - uses: actions/setup-java@v6
@@ -95,6 +98,7 @@ jobs:
           [ -n "$changes" ] || changes="- Rebuild, no code changes"
           {
             echo "## $APP $ver"
+            echo "Version code: $((100000 + GITHUB_RUN_NUMBER))"
             echo
             echo "### What's new"
             echo "$changes"
@@ -110,6 +114,10 @@ jobs:
         run: |
           node --check app/src/main/assets/aay.js
           node --test .github/scripts/miniplayer.test.cjs
+          node --check app/src/main/assets/aay_eq.js
+          # Real Web Audio checks of the in-player equalizer (levels, routing, idle suspend).
+          npm install --no-save --no-package-lock --prefix "$RUNNER_TEMP/eq" node-web-audio-api@1.0.9
+          NODE_PATH="$RUNNER_TEMP/eq/node_modules" node --test .github/scripts/equalizer.test.cjs
 
       - name: Build APK
         env:
@@ -177,22 +185,3 @@ jobs:
               --title "$APP experimental · PR #$PR_NUMBER · build $GITHUB_RUN_NUMBER" \
               --notes-file release-notes.md --prerelease --latest=false
           fi
-
-      - name: Check public distribution configuration
-        id: distribution
-        env:
-          DIST_TOKEN: ${{ secrets.ANDROID_DISTRIBUTION_TOKEN }}
-        run: |
-          if [ -n "$DIST_TOKEN" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ANDROID_DISTRIBUTION_TOKEN is unavailable to this repository's workflow. Signed APK artifacts remain available, but public stable/experimental manifests cannot be published."
-          fi
-
-      - name: Publish stable or experimental APK to public distribution
-        if: steps.distribution.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.ANDROID_DISTRIBUTION_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: bash .github/scripts/publish-distribution.sh

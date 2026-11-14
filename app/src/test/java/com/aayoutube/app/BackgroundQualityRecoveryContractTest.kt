@@ -106,7 +106,8 @@ class BackgroundQualityRecoveryContractTest {
 
     @Test fun staleBridgeStateCannotReviveVideoAfterDocumentOrSpaNavigation() {
         val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(host.contains("expectedWatchVideoId != null && expectedWatchVideoId != s.id"))
+        assertTrue(host.contains("PlaybackReportPolicy.stale(s.id, expectedWatchVideoId, staleReportId)"))
+        assertTrue(host.contains("staleReportId = previous.id.takeIf"))
         assertTrue(host.contains("expectedWatchVideoId = incomingId?.takeIf"))
         assertTrue(host.contains("PlaybackRoutePolicy.shouldClearPrevious("))
         assertTrue(host.contains("publish(Snap())"))

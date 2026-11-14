@@ -10,6 +10,57 @@
   if (window.__aay) return;
   if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
 
+  /* Video format preference (Features > Video format): av1, vp9 or h264.
+   * YouTube picks a format from what the browser says it can play, so hide the
+   * formats the user does not want. AV1 is asked for via YouTube's own AV1
+   * preference and blocks nothing: videos without AV1 still play as VP9/H.264.
+   * Read live, so a change applies from the next video. */
+  (function () {
+    var C0 = window.__AAY_CFG || {};
+    function blocked(type) {
+      var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
+      var t = String(type || '').toLowerCase();
+      if (t.indexOf('video/') < 0 && t.indexOf('codecs') < 0) return false;
+      if (c === 'h264') return /vp0?9|vp8|av01/.test(t);
+      if (c === 'vp9') return /av01/.test(t);
+      return false;
+    }
+    try {
+      localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
+    } catch (e) {}
+    function wrapStatic(Ctor) {
+      if (!Ctor || typeof Ctor.isTypeSupported !== 'function' || Ctor.isTypeSupported.__aay) return;
+      var orig = Ctor.isTypeSupported.bind(Ctor);
+      var f = function (type) { return blocked(type) ? false : orig(type); };
+      f.__aay = true;
+      Ctor.isTypeSupported = f;
+    }
+    try { wrapStatic(window.MediaSource); } catch (e) {}
+    try { wrapStatic(window.ManagedMediaSource); } catch (e) {}
+    try {
+      var proto = window.HTMLMediaElement && HTMLMediaElement.prototype;
+      if (proto && typeof proto.canPlayType === 'function' && !proto.canPlayType.__aay) {
+        var origCan = proto.canPlayType;
+        var can = function (type) { return blocked(type) ? '' : origCan.call(this, type); };
+        can.__aay = true;
+        proto.canPlayType = can;
+      }
+    } catch (e) {}
+    try {
+      var mc = navigator.mediaCapabilities;
+      if (mc && typeof mc.decodingInfo === 'function' && !mc.decodingInfo.__aay) {
+        var origInfo = mc.decodingInfo.bind(mc);
+        var info = function (cfg) {
+          var t = cfg && cfg.video && cfg.video.contentType;
+          if (blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
+          return origInfo(cfg);
+        };
+        info.__aay = true;
+        mc.decodingInfo = info;
+      }
+    } catch (e) {}
+  })();
+
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
   var BROWSE = !!window.__AAY_BROWSE;
@@ -42,7 +93,7 @@
       }, true);
     } catch (e) {}
   }
-  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR };
+  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, isLand: false };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
   // cookies and avatar placeholders are not proof that YouTube is signed in.
@@ -106,7 +157,15 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
-  function holding() { return CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini); }
+  var userResumeEligibleUntil = 0;
+  // Layout transitions (YouTube fullscreen, landscape fill, mini/expand) re-parent or
+  // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
+  // A short transit window drops those involuntary pauses; a real tap on Pause
+  // still wins through userPauseEligibleUntil.
+  var transitUntil = 0;
+  A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
+  function inTransit() { return Date.now() < transitUntil; }
+  function holding() { return inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini)); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
@@ -116,17 +175,30 @@
     var v = getVideo();
     if (!v) return;
     var t = e.target;
-    if (t && t.closest && t.closest(
+    var playerControl = !!(t && t.closest && t.closest(
       'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
       'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
+      '#movie_player, .html5-video-player, .html5-video-container,' +
       'button[aria-label*="pause" i], button[title*="pause" i],' +
-      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]')) {
-      if (v.paused) {
-        PAUSED = false;
-        bgWatch.explicitPause = false;
-        bgWatch.wanted = true;
-        userPauseEligibleUntil = 0;
-      } else userPauseEligibleUntil = Date.now() + 2000;
+      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]'));
+    // On some mobile YouTube versions the center control is an anonymous div,
+    // so also accept a trusted touch inside the actual video rectangle.
+    var insideVideo = false;
+    if (v.paused && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+      var rect = v.getBoundingClientRect();
+      insideVideo = rect.width > 0 && rect.height > 0 &&
+        e.clientX >= rect.left && e.clientX <= rect.left + rect.width &&
+        e.clientY >= rect.top && e.clientY <= rect.top + rect.height;
+    }
+    if (v.paused && (playerControl || insideVideo)) {
+      userResumeEligibleUntil = Date.now() + 1500;
+      PAUSED = false;
+      bgWatch.explicitPause = false;
+      bgWatch.wanted = true;
+      userPauseEligibleUntil = 0;
+      console.log('[aay] user resume gesture accepted');
+    } else if (!v.paused && playerControl) {
+      userPauseEligibleUntil = Date.now() + 2000;
     }
   }
   document.addEventListener('pointerdown', manualPauseGesture, true);
@@ -141,6 +213,7 @@
         PAUSED = false;
         bgWatch.explicitPause = false;
         bgWatch.wanted = true;
+        userResumeEligibleUntil = Date.now() + 1500;
         userPauseEligibleUntil = 0;
       } else userPauseEligibleUntil = Date.now() + 2000;
     }
@@ -161,6 +234,8 @@
       var manual = !allowPause && Date.now() <= userPauseEligibleUntil;
       if (!allowPause && !manual && holding() && !this.ended) {
         ignored++;
+        // YouTube already marked itself paused: resync its UI once the pause is dropped.
+        later(syncPlayerState, 400);
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
         if (ignored <= 2 || ignored % 250 === 0) {
@@ -185,7 +260,20 @@
     window.addEventListener('play', function (e) {
       if (e.target && e.target.tagName === 'VIDEO') console.log('[aay] video play event');
     }, true);
+    window.addEventListener('playing', function (e) {
+      if (e.target && e.target.tagName === 'VIDEO') later(syncPlayerState, 300);
+    }, true);
   } catch (e) {}
+
+  // Diagnostic log URLs must not reveal video IDs, search queries, tokens or fragments.
+  // Keep only the origin and first route segment; navigation still uses the original URL.
+  function logRoute(url) {
+    if (url == null) return '[none]';
+    try {
+      var parsed = new URL(String(url), location.href);
+      return parsed.origin + '/' + (parsed.pathname.split('/').filter(Boolean)[0] || '');
+    } catch (e) { return '[invalid-url]'; }
+  }
 
   /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
   try {
@@ -194,7 +282,7 @@
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
-      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + a.getAttribute('href') : ' (no link)'));
+      console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + logRoute(a.getAttribute('href')) : ' (no link)'));
       if (!a) return;
       var href = a.href, before = location.href;
       // Browse page (under the mini player): a video opens in the player, not here.
@@ -207,7 +295,7 @@
       if (/\/watch\?|[?&]list=|\/playlist\?/.test(href) && href !== before) {
         later(function () {
           if (location.href === before) {
-            console.log('[aay] link did nothing after 1.5 s, opening it: ' + href);
+            console.log('[aay] link did nothing after 1.5 s, opening route: ' + logRoute(href));
             location.href = href;
           }
         }, 1500);
@@ -215,7 +303,7 @@
     }, true);
     var origPush = history.pushState;
     history.pushState = function (st, title, url) {
-      console.log('[aay] page change ' + url);
+      console.log('[aay] page change ' + logRoute(url));
       return origPush.apply(this, arguments);
     };
     ['waiting', 'stalled', 'error', 'emptied', 'loadstart', 'loadedmetadata', 'resize', 'seeking', 'ended'].forEach(function (type) {
@@ -279,13 +367,14 @@
     var swipeStart = null;
     document.addEventListener('touchstart', function(e) {
       swipeStart = null;
-      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar ||
-          document.fullscreenElement || document.webkitFullscreenElement) return;
+      if (e.touches.length !== 1 || A.inPip || A.isMini || A.isCar) return;
       if (!/^\/(watch|live\/)/.test(location.pathname)) return;
       var target = e.target;
       if (!target || !target.closest) return;
-      var player = target.closest('.html5-video-player,#player-container-id,#player,' +
-        'ytm-player,ytm-watch-player,ytm-player-component,video');
+      // Full screen (YouTube's own, or the landscape fill): the whole screen is the player.
+      var full = !!(document.fullscreenElement || document.webkitFullscreenElement || A.isLand);
+      var player = full || target.closest('.html5-video-player,#player-container-id,#player,' +
+        'ytm-player,ytm-watch-player,ytm-player-component,#player-control-container,video');
       if (!player) return;
       swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
     }, { capture: true, passive: true });
@@ -296,12 +385,47 @@
       var dx = e.changedTouches[0].clientX - start.x;
       var dy = e.changedTouches[0].clientY - start.y;
       if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+      // Like the YouTube app: swipe down from full screen shows the watch page first.
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (err) {}
+        return;
+      }
       console.log('[aay] player swipe down -> mini');
       try { if (window.AAYNative) window.AAYNative.mini(); }
       catch (err) { console.warn('[aay] mini bridge failed', err); }
     }, { capture: true, passive: true });
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
   }
+
+  /* ---------- 1f. Keep the video in view when a playlist moves on (as AABrowser) ----------
+   * On the mobile page the playlist sits under the video. When the next song starts,
+   * YouTube scrolls or focuses its row and the video slides off the top. While a
+   * playlist plays and the page is at the top, those playlist scrolls are dropped.
+   * Everything else on YouTube scrolls normally. */
+  if (!BROWSE) (function () {
+    var PANEL = 'ytm-playlist-panel-renderer,ytm-playlist-panel-video-renderer,' +
+      'ytm-playlist-engagement-panel,[class*="playlist-panel"]';
+    function guarding(el) {
+      try {
+        return /^\/watch/.test(location.pathname) && /[?&]list=/.test(location.search) &&
+          (window.scrollY || 0) < 80 && !!el && typeof el.closest === 'function' && !!el.closest(PANEL);
+      } catch (e) { return false; }
+    }
+    var proto = window.Element && Element.prototype;
+    if (!proto || proto.__aayPlaylistGuard) return;
+    proto.__aayPlaylistGuard = true;
+    var scrollIntoView = proto.scrollIntoView;
+    if (typeof scrollIntoView === 'function') proto.scrollIntoView = function () {
+      if (guarding(this)) return;
+      return scrollIntoView.apply(this, arguments);
+    };
+    var hproto = window.HTMLElement && HTMLElement.prototype;
+    var focus = hproto && hproto.focus;
+    if (typeof focus === 'function') hproto.focus = function (opts) {
+      if (guarding(this)) return focus.call(this, { preventScroll: true });
+      return focus.apply(this, arguments);
+    };
+  })();
 
   /* ---------- 1g. AABrowser-style tap-to-seek for Android Auto ---------- */
   // The Car App Library surface exposes taps, not horizontal scrubbing gestures.
@@ -522,6 +646,13 @@
     'display:none!important}' +
     'html.aay-fit:not(.aay-video-only) video.html5-main-video{left:0!important;top:0!important;' +
     'width:100%!important;height:100%!important;object-fit:contain!important}';
+  var CSS_COMMENTS =
+    'ytm-comments-entry-point-header-renderer,ytm-comment-section-renderer,' +
+    'ytm-item-section-renderer[section-identifier="comments-entry-point"],' +
+    'ytm-engagement-panel[panel-identifier*="comment" i]{display:none!important}';
+  var CSS_END_CARDS =
+    '.ytp-ce-element,.ytp-endscreen-content,.ytp-cards-teaser,.ytp-cards-button,' +
+    '.ytp-suggested-action,.ytp-paid-content-overlay,.iv-branding{display:none!important}';
   // Suppress only the muted-autoplay prompt, not normal player volume controls.
   var CSS_UNMUTE =
     '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
@@ -613,13 +744,33 @@
     'html.aay-car video.html5-main-video:not(#aay-x){visibility:visible!important}';
 
   var styleEl = null;
+  // Fit / Fill / Stretch (AABrowser's video-fit) for a video that fills the screen:
+  // our car / landscape layout and YouTube's own fullscreen. Fit is the page default.
+  var VFIT_BOX = 'html.aay-car video.html5-main-video,:fullscreen video.html5-main-video,' +
+    ':-webkit-full-screen video.html5-main-video';
+  function vfitCss(cls, fit) {
+    return VFIT_BOX.split(',').map(function (sel) {
+      return sel.indexOf('html.') === 0 ? sel.replace('html.', 'html.' + cls + '.') : 'html.' + cls + ' ' + sel;
+    }).join(',') + '{left:0!important;top:0!important;width:100%!important;height:100%!important;' +
+      'object-fit:' + fit + '!important}';
+  }
+  var CSS_VFIT = vfitCss('aay-vfill', 'cover') + vfitCss('aay-vstretch', 'fill');
+  function applyVideoFit() {
+    var root = document.documentElement;
+    if (!root) return;
+    root.classList.toggle('aay-vfill', CFG.videoFit === 'fill');
+    root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
+  }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;
+    applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
     if (CFG.blockAds) css += CSS_ADS;
     if (CFG.hideShorts) css += CSS_SHORTS;
     if (CFG.hidePromos) css += CSS_PROMO;
+    if (CFG.hideComments) css += CSS_COMMENTS;
+    if (CFG.hideEndCards) css += CSS_END_CARDS;
     if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = 'aay-style'; }
     styleEl.textContent = css;
     var root = document.head || document.documentElement;
@@ -966,6 +1117,133 @@
       later(function () { A.applyQuality(); }, 900);
     }
     if (AUTO) tryPlay(v);
+    if (!BROWSE) {
+      applyPlayerPrefs();
+      later(applyPlayerPrefs, 1200); // YouTube resets speed/captions while its player attaches
+    }
+  }
+
+  /* Player preferences from the Features page: speed, loop, captions. */
+  var ownRateAt = 0, userTouchAt = 0, loadAt = 0;
+  /* YouTube's player can think it is paused while the video plays: background
+   * play drops pauses YouTube asks for (resize, mini, PiP, hiding), and a resume
+   * done on the <video> directly skips YouTube's own state. Its centre button
+   * then shows Play and, in the mini player or PiP, it may stop painting the
+   * picture. Tell YouTube to play when the media is actually playing. */
+  var stateFixAt = 0;
+  function syncPlayerState() {
+    if (BROWSE) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || isAd()) return;
+    var st;
+    try { st = p.getPlayerState(); } catch (e) { return; }
+    if (st !== 2) return; // 2 = paused
+    var now = Date.now();
+    if (now - stateFixAt < 2500) return;
+    stateFixAt = now;
+    try { p.playVideo(); } catch (e) {}
+  }
+  // Repaint the video layer: after a WebView resize Chromium can keep showing
+  // a black layer although new frames are decoded.
+  function repaintVideo(v) {
+    if (!v || !v.style || typeof v.style.setProperty !== 'function') return;
+    v.style.setProperty('opacity', '0.999', 'important');
+    var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
+    raf(function () { raf(function () { v.style.removeProperty('opacity'); }); });
+  }
+  function ytPlayer() {
+    return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+  }
+  function applyPlayerPrefs() {
+    if (BROWSE) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v) return;
+    try { if (v.loop !== !!CFG.loop) v.loop = !!CFG.loop; } catch (e) {}
+    var speed = Number(CFG.speed) || 1;
+    if (!isAd() && v.duration !== Infinity && Math.abs(v.playbackRate - speed) > 0.01) {
+      ownRateAt = Date.now();
+      try {
+        if (p && typeof p.setPlaybackRate === 'function') p.setPlaybackRate(speed);
+        if (Math.abs(v.playbackRate - speed) > 0.01) v.playbackRate = speed;
+      } catch (e) {}
+    }
+    if (CFG.captions === 'on' || CFG.captions === 'off') {
+      try {
+        if (CFG.captions === 'off') {
+          if (p && p.setOption) p.setOption('captions', 'track', {});
+          if (p && p.unloadModule) p.unloadModule('captions');
+        } else if (p && p.getOption) {
+          if (p.loadModule) p.loadModule('captions');
+          var cur = p.getOption('captions', 'track');
+          var list = p.getOption('captions', 'tracklist') || [];
+          if (!(cur && cur.languageCode) && list.length) p.setOption('captions', 'track', list[0]);
+        }
+      } catch (e) {}
+    }
+  }
+  if (!BROWSE) {
+    document.addEventListener('pointerdown', function (e) {
+      if (e.isTrusted !== false) userTouchAt = Date.now();
+    }, true);
+    // Tapping a thumbnail loads a new video and YouTube resets its speed: never
+    // mistake that reset for a speed the user picked.
+    ['loadstart', 'emptied', 'loadedmetadata', 'durationchange'].forEach(function (n) {
+      document.addEventListener(n, function (e) {
+        if (e.target && e.target.tagName === 'VIDEO') loadAt = Date.now();
+      }, true);
+    });
+    // Remember only a speed the user just picked in YouTube's menu, never
+    // YouTube's own resets or the speed this script applied.
+    document.addEventListener('ratechange', function (e) {
+      var v = e.target;
+      if (!v || v.tagName !== 'VIDEO' || !CFG.rememberSpeed || isAd()) return;
+      var now = Date.now();
+      if (now - ownRateAt < 800 || now - userTouchAt > 2500 || now - loadAt < 3000) return;
+      var rate = v.playbackRate;
+      if (!isFinite(rate) || Math.abs(rate - (Number(CFG.speed) || 1)) < 0.01) return;
+      CFG.speed = rate;
+      try { if (N && typeof N.speed === 'function') N.speed(rate); } catch (err) {}
+    }, true);
+
+    // Double-tap seek with a custom length. At YouTube's own 10 s nothing is intercepted.
+    var lastTap = null, seekHold = null;
+    document.addEventListener('seeking', function (e) {
+      var h = seekHold;
+      if (!h || e.target !== h.v) return;
+      if (Date.now() > h.until) { seekHold = null; return; }
+      if (Math.abs(h.v.currentTime - h.target) > 1.5) {
+        seekHold = null;
+        h.v.currentTime = h.target;
+      }
+    }, true);
+    document.addEventListener('touchend', function (e) {
+      var secs = Number(CFG.seekSeconds) || 10;
+      if (secs === 10 || A.isMini || A.inPip || A.isCar || e.changedTouches.length !== 1 ||
+          !/^\/(watch|live\/)/.test(location.pathname)) { lastTap = null; return; }
+      var t = e.target, c = e.changedTouches[0];
+      var full = !!(document.fullscreenElement || document.webkitFullscreenElement || A.isLand);
+      if (!t || !t.closest || t.closest('button,a,[role="button"],[role="slider"],' +
+          '.ytp-progress-bar-container,.ytPlayerProgressBarDragContainer') ||
+          !(full || t.closest('.html5-video-player,#player-container-id,#player,ytm-player,' +
+          '#player-control-container,video'))) { lastTap = null; return; }
+      var now = Date.now(), prev = lastTap;
+      lastTap = { x: c.clientX, y: c.clientY, at: now };
+      if (!prev || now - prev.at > 320 || Math.hypot(c.clientX - prev.x, c.clientY - prev.y) > 48) return;
+      lastTap = null;
+      var v = getVideo();
+      if (!v || isAd() || !isFinite(v.duration)) return;
+      var box = v.getBoundingClientRect();
+      var third = box.width / 3;
+      var dir = c.clientX < box.left + third ? -1 : (c.clientX > box.right - third ? 1 : 0);
+      if (!dir) return;
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+      var target = Math.max(0, Math.min(v.duration - 0.5, v.currentTime + dir * secs));
+      v.currentTime = target;
+      seekHold = { v: v, target: target, until: now + 700 };
+      schedReport(250);
+    }, { capture: true, passive: false });
   }
 
   /* Preserve playback across a YouTube quality/source replacement.
@@ -1053,6 +1331,7 @@
    */
   var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
   function backgroundWatchdog() {
+    bgSaverCheck();
     // Only a watch/live page owns an active media session. A stale video
     // element/URL parameter can survive SPA navigation back to YouTube Home.
     if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1112,8 +1391,9 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (PAUSED && !AUTO) enforceExplicitPause(v);
+          if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
           else {
+            PAUSED = false;
             bgWatch.wanted = true; bgWatch.explicitPause = false;
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
@@ -1178,10 +1458,12 @@
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
       if (A.isBg && !A.inPip && !A.isCar) return;
       skipAd();
+      syncPlayerState();
       dialogs();
       rydApply();
       openFirstResult();
       carLayout();
+      landPlaylist();
       reportAccount();
     } catch (e) {}
   }
@@ -1333,10 +1615,13 @@
     schedReport(200);
   };
 
+  A.__cfg = function () { return CFG; };
   A.config = function (c) {
     var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
+    applyPlayerPrefs();
+    try { localStorage.setItem('yt-player-av1-pref', CFG.videoCodec === 'av1' ? '8192' : '-1'); } catch (e) {}
     if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
       sb.request++;
       sb.id = ''; sb.segs = [];
@@ -1360,6 +1645,31 @@
   // Set by the app as soon as the screen starts to leave (before PiP or the background kick in).
   A.setHold = function (on) { A.hold = !!on; };
 
+  /* Landscape watch page (not the filled video): after the next video in a Mix or
+   * playlist, YouTube collapses the queue into a small "Next:" bar and leaves the
+   * right column empty. Expand it once per video, only when it is that collapsed bar. */
+  var landPlaylistFor = '', landPlaylistTries = 0;
+  function landPlaylist() {
+    if (BROWSE || A.isLand || A.isMini || A.inPip || A.isCar) return;
+    if (!/^\/watch/.test(location.pathname) || innerWidth <= innerHeight) return;
+    var m = location.search.match(/[?&]v=([^&]+)/), vid = m ? m[1] : '';
+    if (!vid || !/[?&]list=/.test(location.search)) return;
+    if (landPlaylistFor !== vid) { landPlaylistFor = vid; landPlaylistTries = 0; }
+    if (landPlaylistTries >= 4) return;
+    var panel = document.querySelector('ytm-playlist-panel-renderer') ||
+      document.querySelector('ytm-playlist-panel-entry-point') ||
+      document.querySelector('[class*="playlist-panel"]');
+    if (!panel) return;
+    var r = panel.getBoundingClientRect();
+    var text = (panel.textContent || '').trim();
+    var collapsed = r.height > 0 && r.height < innerHeight * 0.3 && /^\s*Next\s*:/i.test(text) ||
+      !!panel.querySelector('[aria-expanded="false"]');
+    if (!collapsed) { landPlaylistTries = 4; return; }
+    landPlaylistTries++;
+    var target = panel.querySelector('[aria-expanded="false"]') || panel;
+    try { target.click(); } catch (e) {}
+  }
+
   // While in picture in picture, check every 2 s that video frames still arrive. If the sound
   // plays but the picture is stuck (black), seek to the current position: that restarts the
   // video decoder without stopping the sound for more than a moment.
@@ -1379,9 +1689,36 @@
         ' win=' + innerWidth + 'x' + innerHeight
     };
   }
+  // Mini player and PiP share one watchdog: re-fit the video to the small window if
+  // YouTube re-rendered its player (autoplay, Mix, navigation), and restart the
+  // picture when sound plays but no new frames arrive (black/frozen window).
+  function smallFits(v) {
+    var r = v.getBoundingClientRect();
+    return r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9 &&
+      Math.abs(r.left) <= innerWidth * 0.1 && Math.abs(r.top) <= innerHeight * 0.1;
+  }
+  var refitAt = 0;
+  function refitSmall(v) {
+    var now = Date.now();
+    if (now - refitAt < 3000) return;
+    refitAt = now;
+    liftAncestors(v, true);
+    document.documentElement.classList.add('aay-video-only');
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+    window.dispatchEvent(new Event('resize'));
+  }
   function pipCheck() {
     var v = getVideo();
     if (!v) return;
+    // Hidden (Home, screen off): Chromium stops decoding frames on purpose. Restarting
+    // the picture there would only interrupt background audio every few seconds.
+    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) {
+      pipLast = null;
+      return;
+    }
+    if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
+    syncPlayerState();
     var i = videoInfo(v);
     if (pipLast && !v.paused && i.t > pipLast.t + 0.5 && i.frames >= 0 && i.frames === pipLast.frames) {
       var now = Date.now();
@@ -1390,6 +1727,7 @@
         pipFixAt = now;
         console.log('[aay] pip: restarting the picture');
         try { v.currentTime = v.currentTime; } catch (e) {}
+        repaintVideo(v);
       }
     }
     pipLast = i;
@@ -1462,7 +1800,8 @@
     return off;
   }
   function carLayout() {
-    var on = !!A.isCar && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
@@ -1520,6 +1859,62 @@
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
   };
+  // Android Auto: the watch page (player + playlist) instead of the filled video.
+  A.carPage = function (on) {
+    A.isCarPage = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
+  };
+
+  /* YouTube's fullscreen / minimise button while sideways or on Android Auto.
+   * There the app itself fills the screen (it is not Chromium fullscreen), so
+   * YouTube's minimise has nothing to leave and opens its "more videos" panel.
+   * Like AABrowser's fullscreen and back, the button instead switches between
+   * the filled video and the watch page with its playlist. Portrait phone and
+   * Chromium's real fullscreen keep YouTube's own behaviour. */
+  if (!BROWSE) (function () {
+    var FS_BUTTON = '.fullscreen-icon,.ytp-fullscreen-button,[class*="fullscreen-button" i],' +
+      '[class*="FullscreenButton"],button[aria-label*="full screen" i],button[aria-label*="fullscreen" i]';
+    function fsButton(e) {
+      var t = e.target;
+      if (!t || typeof t.closest !== 'function') return null;
+      return t.closest(FS_BUTTON);
+    }
+    function owned() {
+      if (A.isMini || A.inPip || !/^\/(watch|live\/)/.test(location.pathname)) return false;
+      if (document.fullscreenElement || document.webkitFullscreenElement) return false;
+      return !!A.isCar || window.innerWidth > window.innerHeight;
+    }
+    // YouTube must not see the press at all, or its own fullscreen handler runs.
+    ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend'].forEach(function (type) {
+      window.addEventListener(type, function (e) {
+        if (fsButton(e) && owned()) e.stopImmediatePropagation();
+      }, { capture: true, passive: true });
+    });
+    window.addEventListener('click', function (e) {
+      if (!fsButton(e) || !owned()) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (N && typeof N.fsToggle === 'function') N.fsToggle();
+    }, true);
+  })();
+
+  // Phone held sideways on a watch page: the video and YouTube's controls fill the screen.
+  A.land = function (on) {
+    A.isLand = !!on;
+    carLayout();
+    window.dispatchEvent(new Event('resize'));
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    [0, 300].forEach(function (ms) { later(function () {
+      try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }, ms); });
+  };
   // Reflow against measured car dimensions after transferring a mini WebView.
   A.refitCar = function () {
     if (!A.isCar || BROWSE || A.isMini) return;
@@ -1571,6 +1966,8 @@
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
     // Clear YouTube's cached video dimensions when Android resizes into PiP.
+    if (on && !pipTimer) { pipLast = null; pipTimer = setInterval(pipCheck, 2000); }
+    if (!on && pipTimer) { clearInterval(pipTimer); pipTimer = 0; pipLast = null; }
     if (on) {
       document.documentElement.classList.remove('aay-fit');
       // Recalculate YouTube's internal player size after native WebView resizes.
@@ -1579,9 +1976,23 @@
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         try { if (p && p.setInternalSize) p.setInternalSize(); } catch (e) {}
         window.dispatchEvent(new Event('resize'));
+        var v = getVideo();
+        if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
+        if (ms === 450 && v) { repaintVideo(v); syncPlayerState(); }
       }, ms); });
     } else fixLayout();
   }
+
+  // Returning from a hidden state (screen, app switch) can leave the small window
+  // black while audio plays: re-sample frames so the watchdog can restart it.
+  document.addEventListener('visibilitychange', function () {
+    if (!(A.isMini || A.inPip)) return;
+    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
+    pipLast = null;
+    later(function () { repaintVideo(getVideo()); }, 300);
+    later(pipCheck, 1200);
+    later(pipCheck, 2600);
+  });
 
   A.mini = function (on) {
     A.isMini = !!on;
@@ -1595,11 +2006,9 @@
     A.inPip = !!on;
     smallLayout();
     carLayout();
-    clearInterval(pipTimer); pipTimer = 0; pipLast = null;
     var v = getVideo();
     if (v) console.log('[aay] pip=' + !!on + ' video ' + videoInfo(v).text);
     if (on) {
-      pipTimer = setInterval(pipCheck, 2000);
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
     A.setBg(A.isBg);
@@ -1621,11 +2030,52 @@
     var q = CFG.preferredQuality || 'hd720';
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
   }
+  /* Battery saver with the screen off / app hidden: nothing can show the video,
+   * so drop it to 144p (lowest tier: least decoding while audio plays), enough for
+   * the few seconds YouTube may play from that buffer after you return. Safeguards:
+   *  - only after 60 s hidden (checking a message never touches quality);
+   *  - only when the app reports it is not on screen (A.isBg: no visible activity,
+   *    not PiP). Chromium's own hidden flag is NOT required: the WebView stays
+   *    attached for background play, so Chromium can still report it visible and
+   *    keep decoding 720p at full frame rate behind other apps (~100% CPU measured);
+   *  - never in PiP, the mini player, on the car screen, during an ad or on a live stream;
+   *  - the saved quality comes back the moment the app is visible again;
+   *  - circuit breaker: if audio stalls after the switch, go back to the saved
+   *    quality and do not try again in this session. */
+  var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'tiny';
+  var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
+  function realHidden() {
+    try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
+    catch (e) { return false; }
+  }
+  function bgSaverActive() {
+    if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
+    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
+    if (isAd()) return false;
+    var v = getVideo();
+    if (!v || !isFinite(v.duration)) return false; // never on live streams
+    if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }
+    return true;
+  }
   function desiredQuality() {
-    // Audio-only background may use 144p only when the user enables the setting.
-    // PiP, draggable mini and car video always retain the selected picture quality.
-    return A.isBg && !A.isCar && !A.inPip && !A.isMini &&
-      CFG.lowQuality && CFG.backgroundPlay !== false ? 'tiny' : savedQuality();
+    return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();
+  }
+  // Circuit breaker: audio must keep moving after a switch to 144p.
+  function bgSaverCheck() {
+    if (!bgSaver.switchedAt) return;
+    var v = getVideo();
+    if (!v || v.paused || v.ended) { bgSaver.pos = -1; return; }
+    var now = Date.now();
+    if (bgSaver.pos >= 0 && v.currentTime <= bgSaver.pos + 0.2 && now - bgSaver.at >= 8000) {
+      console.log('[aay] background saver: audio stalled after lowering quality, restoring it');
+      bgSaver.broken = true;
+      bgSaver.switchedAt = 0;
+      qualityApply.key = '';
+      applyPreferredQuality();
+      return;
+    }
+    if (bgSaver.pos < 0 || v.currentTime > bgSaver.pos + 0.2) { bgSaver.pos = v.currentTime; bgSaver.at = now; }
+    if (now - bgSaver.switchedAt > 60000) bgSaver.switchedAt = 0; // proven stable
   }
   function applyPreferredQuality() {
     if (BROWSE) return;
@@ -1691,6 +2141,18 @@
   A.setBg = function (on) {
     var wasBg = A.isBg;
     A.isBg = !!on;
+    clearTimeout(bgSaver.timer);
+    if (A.isBg && !wasBg) {
+      bgSaver.since = Date.now();
+      bgSaver.timer = setTimeout(function () {
+        if (!bgSaverActive()) return;
+        qualityApply.key = '';
+        applyPreferredQuality();
+      }, BG_SAVER_DELAY + 500);
+    } else if (!A.isBg) {
+      bgSaver.since = 0; bgSaver.switchedAt = 0; bgSaver.pos = -1; bgSaver.armed = false;
+      if (wasBg) qualityApply.key = ''; // visible again: saved quality right away
+    }
     applyPreferredQuality();
     // Catch up with the DOM once when returning to the foreground.
     if (wasBg && !A.isBg) schedTick();

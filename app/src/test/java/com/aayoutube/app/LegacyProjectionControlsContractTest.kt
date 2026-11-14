@@ -14,7 +14,7 @@ class LegacyProjectionControlsContractTest {
         // Floating, centred, icons-only pill shared with the phone.
         assertTrue(code.contains("FloatingVideoBar("))
         assertTrue(code.contains("car = true,"))
-        assertTrue(code.contains("Modifier.align(ControlsSidePolicy.alignment(flags.controlsOnLeft))"))
+        assertTrue(code.contains("Modifier.align(railAlign)") && code.contains("left = flags.controlsOnLeft, landscape = carLandscape,"))
         assertFalse("no text labels on the car controls", code.contains("CarControl("))
         assertTrue(code.contains("Modifier.fillMaxSize().background(Color.Black)"))
         assertTrue(code.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
@@ -28,7 +28,7 @@ class LegacyProjectionControlsContractTest {
         assertTrue(code.contains("WebHost.enterMini()"))
         assertTrue(code.contains("BrowseHost.goBack()"))
         assertTrue(code.contains("if (mini && browsing) key(browseRevision)"))
-        assertTrue(code.contains(".padding(horizontal = 12.dp).zIndex(20f)"))
+        assertTrue(code.contains("horizontal = if (carLandscape) 0.dp else 12.dp,"))
         assertTrue(code.contains("detectDragGestures(onDragEnd"))
         assertTrue(code.contains("val miniVideoModifier = Modifier.offset {"))
         assertTrue(code.contains("override fun onBackPressed()"))
@@ -79,7 +79,7 @@ class LegacyProjectionControlsContractTest {
         assertTrue(watch.contains("N2K02UpdateBadge("))
         assertTrue(watch.contains("onHome = { goYouTubeHome(); topMenuEpoch++ }"))
         assertTrue(watch.contains("onPrevious = { WebHost.cmd(\"prev\"); topMenuEpoch++ }"))
-        assertTrue(phone.contains(".padding(horizontal = 8.dp).zIndex(20f)"))
+        assertTrue(phone.contains("else Modifier.padding(horizontal = 8.dp)"))
         // Settings keeps its one standard header inside an overlay. The
         // playing WebView must not move when switching from Watch to Settings.
         val root = phone.substringAfter("fun AppRoot(").substringBefore("// ---------------------------------------------------------------------------- web")

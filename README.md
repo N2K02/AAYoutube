@@ -4,7 +4,7 @@ A personal Android app that plays YouTube in a WebView, with Android Auto suppor
 
 ## Features
 - Ad blocking, SponsorBlock, Return YouTube Dislike, hide Shorts, background play, picture in picture (best-effort; they depend on YouTube's website).
-- Android Auto: audio only, with Recently played, Favourites, voice and text search.
+- Android Auto: independent native Music player (Recently played, Favourites, voice/text search), plus experimental parked Video car-launcher discovery using the existing WebView.
 - Update tab: checks GitHub releases and installs the new APK.
 
 ## Design
@@ -15,7 +15,11 @@ Two processes keep the car safe from WebView trouble:
 Battery: wake lock only while playing, lowest video quality when the screen is hidden, page frozen when idle, everything released after 15 minutes paused.
 
 ## Android Auto
-Enable developer mode in Android Auto, then turn on "Unknown sources".
+Experimental PR #47 follows AABrowser's Android Auto registration: the video is found through the legacy projection service (`CATEGORY_PROJECTION`, pinned `aauto.aar`) with the `service` + `projection` + `media` automotive descriptor. `MainActivity` is a plain phone activity with no car categories, and there is no AndroidX car service.
+
+For diagnosis, check the Logs screen for `Video projection manifest discoverable=`.
+
+
 
 ## Releases
 Every push to `main` builds a signed APK and publishes `v1.0`, `v1.1`, ... Needs the `SIGNING_PASSPHRASE` secret.

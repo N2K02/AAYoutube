@@ -31,7 +31,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // A transient WebView pause must not immediately drop foreground-media priority.
     // Android may throttle/kill the :web process before JS gets a chance to resume.
     private val demoteForeground = Runnable {
-        if (foreground && !snapshot.playing && !recoveringPlayback) {
+        if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached) {
             AppLog.add("MEDIA", "Foreground grace period expired; playback still paused")
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
@@ -51,7 +51,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private data class NotificationKey(
         val id: String, val title: String, val artist: String,
         val canNext: Boolean, val canPrev: Boolean,
-        val artwork: String, val bitmapReady: Boolean
+        val artwork: String, val bitmapReady: Boolean,
+        val playing: Boolean
     )
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
@@ -82,7 +83,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
     private val retry = Runnable { if (!shuttingDown && !quitRequested && !bound) ensureWeb() }
     private val freeze = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && outgoing != null) send(Msg.FREEZE) }
-    private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested) stopSelf() }
+    private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && !carAttached) stopSelf() }
+    /** As AABrowser's ForegroundService: foreground for as long as the car screen exists. */
+    private var carAttached = false
     private var snapshot = Snap()
     private val incoming = Messenger(Handler(Looper.getMainLooper()) { message ->
         if (message.what == Msg.QUIT_ACK && quitRequested) {
@@ -432,6 +435,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     publish(snapshot)
                 }
                 override fun onSkipToNext() {
+                    if (Features.current.skipSeeks) {
+                        onSeekTo(VideoFitPolicy.seekTarget(snapshot.posMs, snapshot.durMs, forward = true)); return
+                    }
                     // Native queue is authoritative when it contains the active
                     // video; otherwise the WebView handles the fallback.
                     val target = transportSkips.next(snapshot.id, queueGate.items(), android.os.SystemClock.elapsedRealtime())
@@ -444,6 +450,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onSkipToPrevious() {
+                    if (Features.current.skipSeeks) {
+                        onSeekTo(VideoFitPolicy.seekTarget(snapshot.posMs, snapshot.durMs, forward = false)); return
+                    }
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (transportSkips.shouldRestartPrevious(snapshot.id, snapshot.posMs, now)) {
                         AppLog.add("MEDIA", "Previous: restarting current video after 5s")
@@ -551,6 +560,21 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}: ${it.message}")
             }
         }
+        when (intent?.action) {
+            ACTION_CAR_ATTACHED -> {
+                carAttached = true
+                handler.removeCallbacks(demoteForeground)
+                handler.removeCallbacks(idleStop)
+            }
+            ACTION_CAR_DETACHED -> {
+                carAttached = false
+                // Back to the normal rules: paused playback gives up the foreground.
+                if (!snapshot.playing && !recoveringPlayback) {
+                    handler.postDelayed(demoteForeground, 8_000L)
+                    handler.postDelayed(idleStop, 900_000L)
+                }
+            }
+        }
         if (intent?.action == ACTION_QUIT) requestQuit()
         // Publish the initial playing state even when the WebView Messenger has
         // not registered yet; future IPC reports will update position and metadata.
@@ -636,18 +660,28 @@ class PlaybackService : MediaBrowserServiceCompat() {
 
     private fun updateNotification(s: Snap) {
         handler.removeCallbacks(demoteForeground)
-        if (!s.playing) {
-            lastNotification = null
-            if (foreground && !recoveringPlayback) {
-                // Explicit pause is still reflected immediately in MediaSession state.
-                // Hold the foreground briefly for an unexpected background pause.
-                handler.postDelayed(demoteForeground, 8_000L)
-            }
-            return
-        }
         val cover = MediaArtworkLoader.urlFor(s.art, s.id)
         val key = NotificationKey(s.id, s.title, s.artist, s.canNext, s.canPrev,
-            cover, artworkLoader.bitmapFor(cover) != null)
+            cover, artworkLoader.bitmapFor(cover) != null, s.playing)
+        if (!s.playing) {
+            // Android 17's system media player uses the session state, but the
+            // existing Notification action can retain an old icon until refreshed.
+            // Reflect Pause immediately while foreground grace is still active.
+            if (foreground && lastNotification != key) {
+                runCatching {
+                    getSystemService(android.app.NotificationManager::class.java).notify(
+                        CarMediaNotificationManager.NOTIFICATION_ID,
+                        notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover))
+                    )
+                    lastNotification = key
+                }.onFailure {
+                    AppLog.add("MEDIA", "Paused notification refresh failed: " + it.javaClass.simpleName)
+                }
+            }
+            if (foreground && !recoveringPlayback)
+                handler.postDelayed(demoteForeground, 8_000L)
+            return
+        }
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
@@ -684,6 +718,17 @@ class PlaybackService : MediaBrowserServiceCompat() {
         const val ACTION_PLAYBACK = "com.aayoutube.app.action.PLAYBACK"
         const val EXTRA_PLAYBACK = "com.aayoutube.app.extra.PLAYBACK"
         const val ACTION_QUIT = "com.aayoutube.app.action.QUIT"
+        const val ACTION_CAR_ATTACHED = "com.aayoutube.app.action.CAR_ATTACHED"
+        const val ACTION_CAR_DETACHED = "com.aayoutube.app.action.CAR_DETACHED"
+
+        /** Called by the car screen when it is created / destroyed. */
+        fun carAttached(context: android.content.Context, attached: Boolean) {
+            runCatching {
+                androidx.core.content.ContextCompat.startForegroundService(
+                    context, Intent(context, PlaybackService::class.java)
+                        .setAction(if (attached) ACTION_CAR_ATTACHED else ACTION_CAR_DETACHED))
+            }.onFailure { AppLog.add("MEDIA", "Car foreground request failed: " + it.javaClass.simpleName) }
+        }
         private const val ROOT = "root"
         const val ACTIONS = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or

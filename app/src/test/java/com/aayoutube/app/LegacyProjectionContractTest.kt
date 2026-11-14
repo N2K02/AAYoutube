@@ -16,7 +16,7 @@ class LegacyProjectionContractTest {
         assertTrue(build.contains("678f4afb0434ceb97b23c2237ce4489bc52b4394"))
         val manifest = source("app/src/main/AndroidManifest.xml")
         val service = manifest.substringAfter("android:name=\".LegacyProjectionService\"").substringBefore("</service>")
-        assertTrue(service.contains("android:process=\":web\""))
+        assertFalse("one process, as in AABrowser", manifest.contains("android:process="))
         assertTrue(service.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION"))
         assertTrue(service.contains("com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM"))
         assertFalse(manifest.contains("android:name=\".CarVideoService\""))
