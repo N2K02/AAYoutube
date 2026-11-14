@@ -37,8 +37,12 @@ class SleepTimerTest {
         val manifest = src("app/src/main/AndroidManifest.xml")
         assertTrue(screens.contains("Tab.SleepTimer -> SleepTimerPage()"))
         assertTrue(screens.contains("Tab.Features, Tab.SleepTimer"))
-        assertTrue(timer.contains("WebHost.cmd(\"pause\")"))
+        assertTrue(timer.contains("PlaybackService.ACTION_QUIT"))
         assertTrue(timer.contains("handler.removeCallbacks(tick)"))
+        assertTrue(timer.contains("ContextCompat.startForegroundService("))
+        assertTrue(timer.contains("val close = WebHost.onQuit ?: WebHost.onCarQuit"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/AAYoutubeApp.kt").contains("SleepTimer.init(this)"))
+        assertTrue(src("app/src/main/java/com/aayoutube/app/SleepTimerPage.kt").contains("Automatically quit AAYouTube"))
         assertFalse(manifest.contains("SleepTimerService"))
     }
 }
