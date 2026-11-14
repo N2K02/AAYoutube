@@ -73,14 +73,11 @@ internal object SleepTimer {
     private val _remaining = MutableStateFlow<Long?>(null)
     val remaining: StateFlow<Long?> = _remaining
     private var deadline = 0L
-    private var notifiedMinutes: Long? = null
-    /** Only the active playback service subscribes; no extra notification or polling. */
-    var onNotificationMinuteChanged: (() -> Unit)? = null
-    private fun notifyIfMinuteChanged() {
-        val minute = SleepTimerPolicy.notificationMinutes(_remaining.value)
-        if (minute == notifiedMinutes) return
-        notifiedMinutes = minute
-        onNotificationMinuteChanged?.invoke()
+    // Rounded minute changes only; Compose chip does not recompose every second.
+    private val _chipMinutes = MutableStateFlow<Long?>(null)
+    val chipMinutes: StateFlow<Long?> = _chipMinutes
+    private fun updateChipMinutes() {
+        _chipMinutes.value = SleepTimerPolicy.notificationMinutes(_remaining.value)
     }
     private val tick = object : Runnable {
         override fun run() {
@@ -89,7 +86,7 @@ internal object SleepTimer {
             if (left == 0L) {
                 deadline = 0L
                 _remaining.value = null
-                notifyIfMinuteChanged()
+                updateChipMinutes()
                 AppLog.add("TIMER", "Sleep timer elapsed; requesting full app shutdown")
                 // Reuse Quit's media-service cleanup even when no phone Activity is visible.
                 val context = appContext
@@ -116,7 +113,7 @@ internal object SleepTimer {
                 }, 1_800L)
             } else {
                 _remaining.value = left
-                notifyIfMinuteChanged()
+                updateChipMinutes()
                 handler.postDelayed(this, minOf(left, 1000L))
             }
         }
@@ -128,7 +125,7 @@ internal object SleepTimer {
         handler.removeCallbacks(tick)
         deadline = SystemClock.elapsedRealtime() + duration
         _remaining.value = duration
-        notifyIfMinuteChanged()
+        updateChipMinutes()
         AppLog.add("TIMER", "Sleep timer started for ${duration / 60000} minutes")
         handler.postDelayed(tick, minOf(duration, 1000L))
         return true
@@ -138,6 +135,6 @@ internal object SleepTimer {
         handler.removeCallbacks(tick)
         deadline = 0L
         _remaining.value = null
-        notifyIfMinuteChanged()
+        updateChipMinutes()
     }
 }
