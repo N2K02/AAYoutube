@@ -29,7 +29,7 @@ class AndroidAutoInstallHelpContractTest {
         assertTrue(AndroidAutoInstallHelp.shouldPromptForVersion(-1, 100, false, false))
         assertFalse(AndroidAutoInstallHelp.shouldPromptForVersion(-1, 100, true, true))
         assertFalse(AndroidAutoInstallHelp.shouldPromptForVersion(100, 100, false, true))
-        assertFalse(AndroidAutoInstallHelp.shouldPromptForVersion(100, 101, false, false))
+        assertTrue(AndroidAutoInstallHelp.shouldPromptForVersion(100, 101, false, false))
         assertTrue(AndroidAutoInstallHelp.shouldPromptForVersion(100, 101, false, true))
         assertFalse(AndroidAutoInstallHelp.shouldPromptForVersion(100, 101, true, true))
         assertTrue(screens.contains("phoneDisplay && AndroidAutoInstallHelp.shouldPrompt"))
