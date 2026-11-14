@@ -54,11 +54,15 @@ internal object AndroidAutoInstallHelp {
     private const val OPT_OUT = "dont_show_again"
     private const val MISSING = "reported_missing_video"
 
+    fun shouldPromptForVersion(seen: Int, version: Int, optedOut: Boolean, missing: Boolean): Boolean =
+        !optedOut && (seen == -1 || (seen != version && missing))
+
     fun shouldPrompt(context: Context, version: Int): Boolean {
         val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        if (p.getBoolean(OPT_OUT, false)) return false
-        val seen = p.getInt(SEEN, -1)
-        return seen == -1 || (seen != version && p.getBoolean(MISSING, false))
+        return shouldPromptForVersion(
+            p.getInt(SEEN, -1), version, p.getBoolean(OPT_OUT, false),
+            p.getBoolean(MISSING, false),
+        )
     }
 
     fun acknowledge(context: Context, version: Int, dontShowAgain: Boolean) {
