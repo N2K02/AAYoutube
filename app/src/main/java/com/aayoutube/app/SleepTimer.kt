@@ -13,6 +13,12 @@ import kotlinx.coroutines.flow.StateFlow
 internal object SleepTimerPolicy {
     const val DEFAULT_MINUTES = 15L
     const val MAX_MINUTES = 24L * 60L
+    /** One tap adjusts the selected unit without going below 1 or above 24 hours. */
+    fun adjustAmount(current: Long?, delta: Int, hours: Boolean): Long {
+        val maximum = if (hours) 24L else MAX_MINUTES
+        val base = current?.coerceIn(1L, maximum) ?: if (hours) 1L else DEFAULT_MINUTES
+        return (base + delta.toLong()).coerceIn(1L, maximum)
+    }
     fun durationMillis(amount: Long, hours: Boolean): Long? {
         if (amount <= 0) return null
         if (hours && amount > 24L) return null
