@@ -87,6 +87,10 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <!-- Match AABrowser's car link/activity discovery while keeping YouTube hosts scoped. -->
+                <category android:name="android.intent.category.CAR_LAUNCHER" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+                <category android:name="android.intent.category.APP_MAPS" />
                 <data android:scheme="https" />
                 <data android:host="youtube.com" />
                 <data android:host="www.youtube.com" />
