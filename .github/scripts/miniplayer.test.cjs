@@ -1067,6 +1067,25 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
 });
 
 
+test('cued YouTube control resyncs while video is already playing', () => {
+  const p = playerPage();
+  let state = 5, plays = 0;
+  const player = p.document.getElementById('movie_player') || {};
+  player.getPlayerState = () => state;
+  player.playVideo = () => { plays++; state = 1; };
+  p.document.getElementById = (id) => (id === 'movie_player' ? player : null);
+  p.video.paused = false;
+  p.video.ended = false;
+  p.video.readyState = 4;
+  p.window.__aay.mini(true);
+  p.runIntervals();
+  assert.equal(plays, 1, 'cued control corrected');
+  p.video.paused = true;
+  state = 5;
+  p.runIntervals();
+  assert.equal(plays, 1, 'explicitly paused video is never resumed to fix UI');
+});
+
 test('video format preference hides unwanted formats from YouTube', () => {
   const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';
   const AV1 = 'video/mp4; codecs="av01.0.08M.08"', AVC = 'video/mp4; codecs="avc1.4d401f"';
