@@ -26,6 +26,11 @@ class ScreenOffPlaybackContractTest {
         val destruction = service.substringAfter("override fun onDestroy() {")
         assertTrue(destruction.contains("updatePlaybackWakeLock(false)"))
         assertTrue(service.contains("snapshot = snapshot.copy(playing = false, buffering = false, recovering = false, userPaused = true)"))
+        for (transport in listOf("onPause", "onStop")) {
+            val section = service.substringAfter("override fun $transport() {").substringBefore("override fun ")
+            assertTrue(section.contains("recovery.cancel()"))
+            assertTrue(section.contains("recoveringPlayback = false"))
+        }
     }
 
     @Test fun nativeProbeRunsOnlyForWantedPlaybackAndStopsOnRelease() {
