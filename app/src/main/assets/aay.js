@@ -1597,7 +1597,9 @@
   // Playback, source and route event listeners remain immediate.
   function schedTick() {
     if (tickTimer) return;
-    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 5000 : 900);
+    // Huawei/EMUI WebView pages can mutate constantly even while idle.
+    // Coalesce expensive full-page traversals without changing immediate media events.
+    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800);
   }
 
   whenRoot(function () {
