@@ -2280,12 +2280,35 @@
     later(pipCheck, 2600);
   });
 
+  // On mini -> full, Chromium/YouTube may pause when the video Surface is
+  // resized. Capture actual playback intent BEFORE the change. Recover only
+  // a dropped stream, never a user's explicit Pause or an audio-focus handoff.
+  var miniExpandSerial = 0;
   A.mini = function (on) {
     if (A.isMini === !!on) return; // duplicate native state is not a new Surface transition
+    var leavingMini = A.isMini && !on;
+    var v = leavingMini ? getVideo() : null;
+    var resume = !!(v && !v.paused && !v.ended && !PAUSED &&
+      !bgWatch.explicitPause && !bgWatch.held);
+    var serial = ++miniExpandSerial;
+    if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
+    if (leavingMini && resume) {
+      [500, 1400, 2900].forEach(function (ms) { later(function () {
+        if (serial !== miniExpandSerial || A.isMini || A.inPip || PAUSED ||
+            bgWatch.explicitPause || bgWatch.held) return;
+        var current = getVideo();
+        if (!current || current !== v || current.ended || !current.paused) return;
+        // Reset only an involuntary transition pause. No seeking or reloading.
+        console.log('[aay] mini expand: restoring interrupted playback');
+        bgWatch.wanted = true;
+        requestPlayerPlay(current);
+        schedReport(0);
+      }, ms); });
+    }
   };
 
   A.pip = function (on) {
