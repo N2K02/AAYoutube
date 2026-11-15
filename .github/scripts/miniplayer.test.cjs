@@ -370,6 +370,37 @@ test('a wrong play/pause state is reported again without waiting', () => {
   assert.equal(p.stateReports.at(-1).playing, false);
 });
 
+test('a tier above 1080p that stalls with data buffered is lowered and remembered', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
+  p.flush();
+  p.video.buffered = { length: 1, end: () => 80 };
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 });
+  p.runIntervals();               // first sample
+  p.advance(9000);                // decoder stuck: currentTime does not move
+  p.runIntervals();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'falls back one tier');
+  assert.equal(p.qualityStorage.get('aay-max-smooth-h'), '1440', 'limit remembered');
+});
+
+test('heavy frame dropping at 4K also lowers the tier; 1080p is never touched', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
+  p.flush();
+  let f = 0, d = 0;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
+  p.runIntervals();
+  f = 300; d = 240; p.video.currentTime += 9; p.advance(9000);
+  p.runIntervals();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  const q = playerPage({ quality: true, currentQuality: 'hd1080' });
+  q.flush();
+  const n = q.qualityCalls.length;
+  q.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: 300, droppedVideoFrames: 290 });
+  q.runIntervals(); q.advance(9000); q.runIntervals();
+  assert.equal(q.qualityCalls.length, n, '1080p and below are left alone');
+});
+
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
   const p = playerPage();
   p.window.__aay.mini(true);

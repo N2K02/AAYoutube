@@ -487,7 +487,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
-        updatePlaybackWakeLock(s.playing || recoveringPlayback)
+        updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))
         tracePlaybackPhase(s)
         if (quitRequested) {
             updateNotification(s)
@@ -510,8 +510,25 @@ class PlaybackService : MediaBrowserServiceCompat() {
         updateNotification(s)
     }
 
+    // Headphones / Bluetooth disconnected: pause like the YouTube app instead of
+    // suddenly playing from the phone speaker. Treated as a deliberate pause.
+    private val noisyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested)) return
+            AppLog.add("MEDIA", "Audio output disconnected (headphones/Bluetooth): pausing")
+            runCatching { session.controller.transportControls.pause() }
+        }
+    }
+    private var noisyRegistered = false
+
     override fun onCreate() {
         super.onCreate()
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(this, noisyReceiver,
+                android.content.IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+            noisyRegistered = true
+        }
         notifications.createChannel()
         Library.init(this)
         session = MediaSessionCompat(this, "AAYoutube").apply {
@@ -778,6 +795,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        if (noisyRegistered) runCatching { unregisterReceiver(noisyReceiver) }
+        noisyRegistered = false
         AppLog.add("LIFECYCLE", "service destroyed playing=${snapshot.playing} recovering=$recoveringPlayback quit=$quitRequested")
         shuttingDown = true
         handler.removeCallbacksAndMessages(null)

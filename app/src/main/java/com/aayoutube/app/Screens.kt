@@ -741,7 +741,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             var ghostToMini by remember { mutableStateOf(false) }
             val ghostMove = remember { Animatable(1f) }
             val ghostAlpha = remember { Animatable(0f) }
-            val fullRect = PxRect(0f, 0f, constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
+            // Only the video area travels (portrait watch page: the 16:9 band at the top),
+            // not the whole page: smaller capture, and it looks like the YouTube app.
+            val fullRect = PlayerTransitionPolicy.videoBand(
+                constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
             val miniRect = PxRect(px, py, wPx, hPx)
             LaunchedEffect(small) {
                 if (small == layoutSmall) return@LaunchedEffect

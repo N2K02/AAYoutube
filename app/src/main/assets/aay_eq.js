@@ -430,6 +430,9 @@
   }, true);
 
   var A = window.__aay || (window.__aay = {});
+  // Native asks before judging whether ANOTHER app is playing: close our own
+  // idle output now instead of after the 2 s grace (AudioManager cannot tell owners).
+  A.eqIdleNow = function () { clearTimeout(EQ.idleTimer); suspendIfIdle(); };
   A.eq = function (cfg) {
     if (!cfg || typeof cfg !== 'object') return;
     EQ.cfg = cfg;

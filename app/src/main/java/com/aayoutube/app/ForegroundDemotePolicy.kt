@@ -23,8 +23,12 @@ internal object ForegroundDemotePolicy {
         else -> (INTERRUPTED_GRACE_MS - (now - interruptedSince).coerceAtLeast(0L)).coerceAtLeast(0L)
     }
 
+    /** CPU wake lock only while playing or actively recovering, never while held for another app. */
+    fun wantsWakeLock(s: Snap, recovering: Boolean): Boolean = s.playing || (recovering && !s.held)
+
     fun phase(s: Snap, recovering: Boolean): String = when {
         s.userPaused -> "user-paused"
+        s.held -> "held-other-media"
         s.playing -> "playing"
         s.recovering || recovering -> "recovering"
         s.buffering -> "buffering"

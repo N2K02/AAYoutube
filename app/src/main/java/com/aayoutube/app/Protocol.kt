@@ -57,6 +57,8 @@ data class Snap(
     /** True only for a deliberate user Pause, never for a spontaneous playback loss. */
     val userPaused: Boolean = false,
     val recovering: Boolean = false,
+    /** Paused because another app plays media: keep foreground, but no CPU wake lock. */
+    val held: Boolean = false,
     val buffering: Boolean = false,
     val ended: Boolean = false,
     val live: Boolean = false,
@@ -77,6 +79,7 @@ data class Snap(
         putBoolean("playing", playing)
         putBoolean("userPaused", userPaused)
         putBoolean("recovering", recovering)
+        putBoolean("held", held)
         putBoolean("buffering", buffering)
         putBoolean("ended", ended)
         putBoolean("live", live)
@@ -107,6 +110,7 @@ data class Snap(
                 playing = playing,
                 userPaused = b.getBoolean("userPaused"),
                 recovering = b.getBoolean("recovering"),
+                held = b.getBoolean("held"),
                 buffering = b.getBoolean("buffering"),
                 ended = b.getBoolean("ended"),
                 live = b.getBoolean("live"),

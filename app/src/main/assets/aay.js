@@ -1378,12 +1378,14 @@
   var MEDIA_SETTLE_MS = 2500;
   A.mediaHold = function (on, giveUp) {
     bgWatch.held = !!on;
+    if (on && typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
     if (!on) { bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; }
     if (!on && giveUp) bgWatch.wanted = false;
   };
 
   function backgroundWatchdog() {
     bgSaverCheck();
+    try { overloadCheck(getVideo()); } catch (e) {}
     // Reconcile the app's play/pause icon with the real element (missed events).
     try {
       var rv = getVideo();
@@ -2137,9 +2139,54 @@
    * (720p rendered fine). Like the YouTube app, cap them at 720p; the saved
    * quality returns as soon as the full player is back. */
   var PIP_MAX_QUALITY = 'hd720';
+  /* Runtime overload fallback: the capability probe is only a prediction. If a tier
+   * above 1080p stalls with data buffered, or drops most frames, lower the device
+   * limit one tier and remember it (also hides that tier from the next page load). */
+  var qualityHeight = { tiny: 144, small: 240, medium: 360, large: 480, hd720: 720,
+    hd1080: 1080, hd1440: 1440, hd2160: 2160, highres: 4320 };
+  var deviceCapH = 0;
+  try { deviceCapH = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+  function capForDevice(q) {
+    if (!deviceCapH || q === 'auto' || (qualityHeight[q] || 0) <= deviceCapH) return q;
+    var best = 'hd1080';
+    qualityOrder.forEach(function (l) { if (qualityHeight[l] <= deviceCapH) best = l; });
+    return best;
+  }
+  var overload = { at: 0, t: 0, frames: 0, dropped: 0 };
+  function overloadCheck(v) {
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; return; }
+    var cur = '';
+    try { if (typeof p.getPlaybackQuality === 'function') cur = p.getPlaybackQuality(); } catch (e) {}
+    var h = qualityHeight[cur] || 0;
+    if (h <= 1080) { overload.at = 0; return; }
+    var now = Date.now(), q = null;
+    try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
+    var frames = q ? q.totalVideoFrames : 0, dropped = q ? q.droppedVideoFrames : 0;
+    if (!overload.at) { overload = { at: now, t: v.currentTime, frames: frames, dropped: dropped }; return; }
+    if (now - overload.at < 8000) return;
+    var ahead = 0;
+    try { if (v.buffered && v.buffered.length) ahead = v.buffered.end(v.buffered.length - 1) - v.currentTime; } catch (e) {}
+    var moved = v.currentTime - overload.t, df = frames - overload.frames, dd = dropped - overload.dropped;
+    // Stalled although data is buffered = the decoder, not the network.
+    var stalled = ahead > 3 && moved < (now - overload.at) / 1000 * 0.25;
+    var dropping = df > 60 && dd / df > 0.5;
+    overload = { at: now, t: v.currentTime, frames: frames, dropped: dropped };
+    if (!stalled && !dropping) return;
+    var lower = h >= 4320 ? 2160 : h >= 2160 ? 1440 : 1080;
+    if (deviceCapH && deviceCapH <= lower) return;
+    deviceCapH = lower;
+    try { localStorage.setItem('aay-max-smooth-h', String(lower)); } catch (e) {}
+    console.log('[aay] ' + cur + ' overloads this device (' + (stalled ? 'stalled' : 'dropping frames') +
+      '): limit now ' + lower + 'p');
+    overload.at = 0;
+    qualityApply.key = '';
+    applyPreferredQuality();
+  }
+  A.overloadCheck = overloadCheck;
   function desiredQuality() {
     if (bgSaverActive()) return BG_SAVER_QUALITY;
-    var q = savedQuality();
+    var q = capForDevice(savedQuality());
     if ((A.inPip || A.isMini) && (q === 'auto' || qualityOrder.indexOf(q) > qualityOrder.indexOf(PIP_MAX_QUALITY)))
       return PIP_MAX_QUALITY;
     return q;

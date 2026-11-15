@@ -1440,6 +1440,16 @@ object WebHost {
     private val droppedResume = Runnable {
         val s = snapshot.value
         if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        // isMusicActive cannot say WHOSE audio is active: first make sure our own
+        // Web Audio equalizer output is closed, then judge what is still playing.
+        js("window.__aay&&window.__aay.eqIdleNow&&window.__aay.eqIdleNow()")
+        main.removeCallbacks(droppedResumeJudge)
+        main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)
+    }
+
+    private val droppedResumeJudge = Runnable {
+        val s = snapshot.value
+        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         if (otherMediaActive()) startOtherMediaHold("native resume") else cmd("play")
     }
 
@@ -1457,10 +1467,56 @@ object WebHost {
         otherMediaHeldSince = SystemClock.elapsedRealtime()
         otherMediaQuietSince = 0L
         main.removeCallbacks(droppedResume)
+        main.removeCallbacks(droppedResumeJudge)
         AppLog.add("FOCUS", "Another app is playing media; paused until it stops ($reason)")
         js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(true)")
+        registerOtherMediaWatch()
         main.removeCallbacks(otherMediaPoll)
         main.postDelayed(otherMediaPoll, 1_000L)
+        publish(snapshot.value) // `held`: media service releases its CPU wake lock
+    }
+
+    // No CPU wake lock while held: Android wakes us when the other app's player
+    // or the call state changes; a short timed wake lock covers the quiet check.
+    private var playbackWatch: android.media.AudioManager.AudioPlaybackCallback? = null
+    private var modeWatch: Any? = null
+    private val holdWake by lazy {
+        app.getSystemService(android.os.PowerManager::class.java)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "AAYoutube:media-hold")
+            .apply { setReferenceCounted(false) }
+    }
+    private fun pokeOtherMediaPoll() {
+        if (otherMediaHeldSince == 0L) return
+        runCatching { holdWake.acquire(OtherMediaHoldPolicy.WAKE_CHECK_MS) }
+        main.removeCallbacks(otherMediaPoll)
+        main.post(otherMediaPoll)
+    }
+    private fun registerOtherMediaWatch() {
+        val am = runCatching { app.getSystemService(android.media.AudioManager::class.java) }.getOrNull() ?: return
+        if (playbackWatch == null) {
+            val cb = object : android.media.AudioManager.AudioPlaybackCallback() {
+                override fun onPlaybackConfigChanged(configs: MutableList<android.media.AudioPlaybackConfiguration>?) {
+                    pokeOtherMediaPoll()
+                }
+            }
+            runCatching { am.registerAudioPlaybackCallback(cb, main) }.onSuccess { playbackWatch = cb }
+        }
+        if (modeWatch == null && android.os.Build.VERSION.SDK_INT >= 31) {
+            val l = android.media.AudioManager.OnModeChangedListener { main.post { pokeOtherMediaPoll() } }
+            runCatching { am.addOnModeChangedListener(app.mainExecutor, l) }.onSuccess { modeWatch = l }
+        }
+    }
+    private fun unregisterOtherMediaWatch() {
+        val am = runCatching { app.getSystemService(android.media.AudioManager::class.java) }.getOrNull()
+        playbackWatch?.let { cb -> runCatching { am?.unregisterAudioPlaybackCallback(cb) } }
+        playbackWatch = null
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            (modeWatch as? android.media.AudioManager.OnModeChangedListener)?.let { l ->
+                runCatching { am?.removeOnModeChangedListener(l) }
+            }
+        }
+        modeWatch = null
+        runCatching { if (holdWake.isHeld) holdWake.release() }
     }
 
     private fun endOtherMediaHold(reason: String, giveUp: Boolean = false) {
@@ -1468,6 +1524,7 @@ object WebHost {
         otherMediaHeldSince = 0L
         otherMediaQuietSince = 0L
         main.removeCallbacks(otherMediaPoll)
+        unregisterOtherMediaWatch()
         js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(false,$giveUp)")
         AppLog.add("FOCUS", "Media hold ended: $reason")
     }
@@ -1482,6 +1539,8 @@ object WebHost {
             val active = otherMediaActive()
             otherMediaQuietSince = OtherMediaHoldPolicy.quietSince(otherMediaQuietSince, active, now)
             when (OtherMediaHoldPolicy.step(active, otherMediaHeldSince, otherMediaQuietSince, now)) {
+                // Screen off, this delay may stretch while the CPU sleeps; the
+                // playback/mode callbacks wake it on the change that matters.
                 OtherMediaHoldPolicy.Step.KEEP_HOLDING -> main.postDelayed(this, 1_000L)
                 OtherMediaHoldPolicy.Step.RESUME -> {
                     endOtherMediaHold("other media stopped")
@@ -1537,7 +1596,8 @@ object WebHost {
         // Keep foreground media priority while the active watchdog retries a
         // spontaneous pause. Never preserve this for explicit Pause or ending.
         val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
-            !incoming.ended && incoming.id.isNotBlank() && keepRecovering())
+            !incoming.ended && incoming.id.isNotBlank() && keepRecovering(),
+            held = otherMediaHeldSince != 0L && !incoming.playing)
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"

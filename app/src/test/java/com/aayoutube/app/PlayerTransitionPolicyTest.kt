@@ -37,4 +37,9 @@ class PlayerTransitionPolicyTest {
         assertEquals(224 to 126, PlayerTransitionPolicy.captureSize(224, 126))
         assertEquals(0 to 0, PlayerTransitionPolicy.captureSize(0, 100))
     }
+
+    @Test fun onlyTheVideoBandIsCaptured() {
+        assertEquals(PxRect(0f, 0f, 1080f, 607.5f), PlayerTransitionPolicy.videoBand(1080f, 2200f))
+        assertEquals(PxRect(0f, 0f, 2200f, 1080f), PlayerTransitionPolicy.videoBand(2200f, 1080f))
+    }
 }

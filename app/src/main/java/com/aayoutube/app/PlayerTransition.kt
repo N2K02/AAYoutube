@@ -41,6 +41,10 @@ internal object PlayerTransitionPolicy {
         return MINI_CORNER_DP * if (toMini) f else 1f - f
     }
 
+    /** Video area of the full player: top 16:9 band in portrait, everything in landscape. */
+    fun videoBand(width: Float, height: Float): PxRect =
+        PxRect(0f, 0f, width, if (width >= height) height else minOf(height, width * 9f / 16f))
+
     /** Capture at reduced size: it is shown for a fraction of a second. */
     fun captureSize(width: Int, height: Int, maxWidth: Int = 720): Pair<Int, Int> {
         if (width <= 0 || height <= 0) return 0 to 0
