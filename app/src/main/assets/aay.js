@@ -10,11 +10,9 @@
   if (window.__aay) return;
   if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
 
-  /* Video format preference (Features > Video format): av1, vp9 or h264.
-   * YouTube picks a format from what the browser says it can play, so hide the
-   * formats the user does not want. AV1 is asked for via YouTube's own AV1
-   * preference and blocks nothing: videos without AV1 still play as VP9/H.264.
-   * Read live, so a change applies from the next video. */
+  /* Automatic codec selection: Chromium and YouTube choose among supported
+   * formats. Block only combinations beyond device decoder limits, keeping
+   * unsupported software-intensive formats away from high resolutions. */
   (function () {
     var C0 = window.__AAY_CFG || {};
     /* Resolution gate, per codec. Android's codec list (native decodeCaps:
@@ -68,16 +66,17 @@
       return tooLargeFor(codecFamily(t), videoSize(t), typeFps(t), tenBit(t));
     }
     function blocked(type) {
-      var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
       var t = String(type || '').toLowerCase();
       if (t.indexOf('video/') < 0 && t.indexOf('codecs') < 0) return false;
-      if (tooLarge(t)) return true;
-      if (c === 'h264') return /vp0?9|vp8|av01/.test(t);
-      if (c === 'vp9') return /av01/.test(t);
-      return false;
+      return tooLarge(t);
     }
+    // Clear the former fixed AV1 preference once; leave future choices to
+    // Chromium and YouTube, with the hardware capability gate remaining.
     try {
-      localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
+      if (localStorage.getItem('aay-auto-codec-migrated') !== '1') {
+        localStorage.removeItem('yt-player-av1-pref');
+        localStorage.setItem('aay-auto-codec-migrated', '1');
+      }
     } catch (e) {}
     if (caps) try {
       console.log('[aay] decode limits (hardware, from Android) ' + JSON.stringify(caps));
@@ -1748,7 +1747,6 @@
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
     applyPlayerPrefs();
-    try { localStorage.setItem('yt-player-av1-pref', CFG.videoCodec === 'av1' ? '8192' : '-1'); } catch (e) {}
     if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
       sb.request++;
       sb.id = ''; sb.segs = [];
