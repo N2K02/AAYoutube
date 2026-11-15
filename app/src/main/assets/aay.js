@@ -202,6 +202,11 @@
     } catch (e) {}
   }
   var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, isLand: false };
+  // Bounded, aggregated counters only: no page content, URLs or video identifiers.
+  var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
+    layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
+    lastFrames: -1, lastDropped: -1 };
+  A.perf = function () { return perf; };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
   // cookies and avatar placeholders are not proof that YouTube is signed in.
@@ -1608,6 +1613,7 @@
   var tickTimer = 0;
   function tick() {
     tickTimer = 0;
+    var started = Date.now();
     try {
       var v = getVideo();
       if (v) bind(v);
@@ -1624,6 +1630,10 @@
       landPlaylist();
       reportAccount();
     } catch (e) {}
+    finally {
+      perf.ticks++;
+      perf.tickMs += Math.max(0, Date.now() - started);
+    }
   }
   // YouTube mutates the page continuously, even when the player is unchanged.
   // Coalesce those mutations to avoid repeated DOM traversal and layout work.
@@ -1636,10 +1646,55 @@
   }
 
   whenRoot(function () {
-    new MutationObserver(schedTick).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(function (records) {
+      perf.mutations += records ? records.length : 1;
+      schedTick();
+    }).observe(document.documentElement, { childList: true, subtree: true });
     schedTick();
   });
 
+  // Low-frequency WebView telemetry: avoids continuous inspection of the page.
+  // Chromium renderer CPU is a separate Android process and MUST be measured
+  // externally (ADB); JavaScript timing and dropped frames are not CPU percentages.
+  if (!BROWSE) {
+    try {
+      if (typeof PerformanceObserver === 'function') {
+        var po = new PerformanceObserver(function (list) {
+          perf.longTasks += list.getEntries().length;
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      }
+    } catch (e) {}
+    setInterval(function () {
+      var now = Date.now(), span = now - perf.lastAt;
+      if (span < 10000) return; // avoid short, misleading samples
+      var v = getVideo(), q = null, p = ytPlayer(), codec = '', tier = '';
+      try { if (v && v.getVideoPlaybackQuality) q = v.getVideoPlaybackQuality(); } catch (e) {}
+      try {
+        if (p && p.getPlaybackQuality) tier = String(p.getPlaybackQuality()).slice(0, 12);
+        var st = p && p.getStatsForNerds ? p.getStatsForNerds() : null;
+        if (st && st.codecs) codec = String(st.codecs).split('/')[0].trim().slice(0, 45);
+      } catch (e) {}
+      var frames = q && isFinite(q.totalVideoFrames) ? q.totalVideoFrames : -1;
+      var dropped = q && isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : -1;
+      var df = frames >= 0 && perf.lastFrames >= 0 ? Math.max(0, frames - perf.lastFrames) : 0;
+      var dd = dropped >= 0 && perf.lastDropped >= 0 ? Math.max(0, dropped - perf.lastDropped) : 0;
+      var droppedPct = df ? Math.round(Math.min(100, dd / df * 100)) : -1;
+      var playing = !!(v && !v.paused && !v.ended);
+      if (playing && N && typeof N.perf === 'function') try {
+        N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
+          tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
+          sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
+          refits: perf.refits, recoveries: perf.paintRecoveries,
+          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
+          width: v.videoWidth || 0, height: v.videoHeight || 0,
+          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }));
+      } catch (e) {}
+      perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
+      perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
+      perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
+    }, 30000);
+  }
   // Fresh position now and then while playing, in case an event was missed.
   setInterval(function () {
     // Media element events and the background watchdog keep audio state
@@ -1861,6 +1916,7 @@
     var now = Date.now();
     if (now - refitAt < 6000) return;
     refitAt = now;
+    perf.refits++;
     liftAncestors(v, true);
     document.documentElement.classList.add('aay-video-only');
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
@@ -1884,6 +1940,7 @@
       console.log('[aay] pip: sound plays but no new video frames (' + i.text + ')');
       if (now - pipFixAt > 6000) {
         pipFixAt = now;
+        perf.paintRecoveries++;
         console.log('[aay] pip: restarting the picture');
         try { v.currentTime = v.currentTime; } catch (e) {}
         repaintVideo(v);
@@ -2119,6 +2176,7 @@
   }
   function smallLayout() {
     var on = !!(A.inPip || A.isMini);
+    perf.layoutChanges++;
     var revision = ++layoutRevision;
     liftAncestors(getVideo(), on);
     document.documentElement.classList.toggle('aay-video-only', on);
@@ -2154,6 +2212,7 @@
   });
 
   A.mini = function (on) {
+    if (A.isMini === !!on) return; // duplicate native state is not a new Surface transition
     A.isMini = !!on;
     smallLayout();
     carLayout();
@@ -2162,6 +2221,7 @@
   };
 
   A.pip = function (on) {
+    if (A.inPip === !!on) return; // avoid redundant WebView/codec resize requests
     A.inPip = !!on;
     smallLayout();
     carLayout();
@@ -2503,6 +2563,7 @@
   ['emptied', 'loadstart'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       if (!e.target || e.target.tagName !== 'VIDEO') return;
+      if (type === 'loadstart') perf.sourceLoads++; // resource reset proxy, NOT codec instantiation
       // Our own range change also reloads the source: never re-apply in a loop.
       if (Date.now() - qualityApply.at < 3000) return;
       // A reload right after the user's own tap on the same video is THEIR quality
