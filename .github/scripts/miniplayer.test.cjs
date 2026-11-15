@@ -490,6 +490,38 @@ test('menu pick already applied by YouTube is not re-forced (smooth switch)', ()
   assert.equal(p.qualityCalls.length, n, 'already-applied pick stays without reload');
 });
 
+test('mobile YouTube quality labels and nested menu choices persist', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const option = (label, aria, childLabel) => {
+    const item = {
+      tagName: 'YTM-MENU-ITEM', textContent: label,
+      getAttribute(name) { return name === 'aria-label' ? aria || '' : ''; },
+    };
+    const child = {
+      tagName: 'SPAN', textContent: childLabel === undefined ? label : childLabel,
+      closest(selector) {
+        if (selector.includes('ytm-menu-item')) return item;
+        return null;
+      },
+    };
+    return child;
+  };
+  p.emit('click', { target: option('1080p60 HDR') });
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd1080');
+  p.emit('click', { target: option('1080p Premium') });
+  assert.deepEqual(p.selectedQualities, ['hd1080', 'hd1080']);
+  p.emit('click', { target: option('Quality', '720p') });
+  assert.deepEqual(p.selectedQualities.at(-1), 'hd720', 'aria label fallback saves resolution');
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd720');
+  p.emit('click', { target: option('Quality 144p') });
+  assert.equal(p.selectedQualities.length, 3, 'parent quality row must not be saved');
+  p.emit('click', { target: option('Auto (720p)') });
+  assert.equal(p.selectedQualities.at(-1), 'auto');
+  assert.equal(p.qualityStorage.has('yt-player-quality'), false);
+});
+
 test('explicit quality-menu selection is saved; adaptive changes are not', () => {
   const p = playerPage({ quality: true });
   p.flush();
