@@ -30,37 +30,52 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
-    // Low-overhead health snapshots; sampled only as playback states arrive.
+    // Phase transitions are logged as states arrive; health is sampled by its own
+    // timer so a WebView that stops reporting is still visible in logcat.
     private var lastHealthElapsed = 0L
     private var lastCpuMs = 0L
     private var lastPlaybackPhase = ""
-    private fun tracePlaybackHealth(s: Snap) {
-        val phase = when {
-            s.userPaused -> "user-paused"
-            s.playing -> "playing"
-            s.recovering || recoveringPlayback -> "recovering"
-            s.buffering -> "buffering"
-            s.id.isNotBlank() -> "interrupted"
-            else -> "idle"
-        }
+    private var interruptedSince = 0L
+    private fun tracePlaybackPhase(s: Snap) {
+        val phase = ForegroundDemotePolicy.phase(s, recoveringPlayback)
         if (phase != lastPlaybackPhase) {
             AppLog.add("PLAYBACK", "transition $lastPlaybackPhase -> $phase foreground=$foreground bound=$bound")
             lastPlaybackPhase = phase
         }
-        if (!s.playing && !recoveringPlayback) return
+    }
+    private fun logHealth() {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (lastHealthElapsed != 0L && now - lastHealthElapsed < 60_000L) return
         val cpu = android.os.Process.getElapsedCpuTime()
-        val delta = now - lastHealthElapsed
-        val cpuPercent = if (lastHealthElapsed > 0 && delta > 0)
-            ((cpu - lastCpuMs).coerceAtLeast(0L) * 100L / delta).coerceIn(0L, 1000L)
-            else -1L
+        // Main process only: the WebView renderer is a separate sandboxed UID.
+        val cpuPercent = ForegroundDemotePolicy.cpuPercent(lastHealthElapsed, lastCpuMs, now, cpu)
         lastHealthElapsed = now
         lastCpuMs = cpu
         val audio = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-        AppLog.add("HEALTH", "phase=$phase cpuPct=$cpuPercent musicActive=${audio.isMusicActive} " +
-            "screen=${(getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive} " +
-            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground")
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        AppLog.add("HEALTH", "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)} " +
+            "mainCpuPct=$cpuPercent musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
+            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground bound=$bound")
+    }
+    private val healthTick = object : Runnable {
+        override fun run() {
+            if (shuttingDown || !foreground) return
+            logHealth()
+            scheduleDemoteIfNeeded(snapshot) // re-check even if no new state arrived
+            handler.postDelayed(this, 60_000L)
+        }
+    }
+    private fun startHealthTicker() {
+        handler.removeCallbacks(healthTick)
+        handler.postDelayed(healthTick, 60_000L)
+    }
+    private fun scheduleDemoteIfNeeded(s: Snap) {
+        handler.removeCallbacks(demoteForeground)
+        if (!foreground || carAttached || quitRequested) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!ForegroundDemotePolicy.isInterrupted(s, recoveringPlayback)) interruptedSince = 0L
+        else if (interruptedSince == 0L) interruptedSince = now
+        val delay = ForegroundDemotePolicy.delayMs(s, recoveringPlayback, interruptedSince, now) ?: return
+        handler.postDelayed(demoteForeground, delay)
     }
     private val resumePrefs by lazy {
         getSharedPreferences("background_playback_restore", Context.MODE_PRIVATE)
@@ -128,11 +143,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // A transient WebView pause must not immediately drop foreground-media priority.
     // Android may throttle/kill the :web process before JS gets a chance to resume.
     private val demoteForeground = Runnable {
-        if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached &&
-            !resumePrefs.getBoolean("active", false)) {
-            AppLog.add("MEDIA", "Foreground grace period expired; playback still paused")
+        if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached) {
+            AppLog.add("MEDIA", "Foreground grace period expired; playback still paused " +
+                "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)}")
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
+            interruptedSince = 0L
+            handler.removeCallbacks(healthTick)
         }
     }
     private val notifications = CarMediaNotificationManager(this)
@@ -471,7 +488,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
         updatePlaybackWakeLock(s.playing || recoveringPlayback)
-        tracePlaybackHealth(s)
+        tracePlaybackPhase(s)
         if (quitRequested) {
             updateNotification(s)
             return
@@ -661,6 +678,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         artworkLoader.bitmapFor(MediaArtworkLoader.urlFor(snapshot.art, snapshot.id)))
                 } else notifications.placeholder()
                 startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notification)
+                if (!foreground) startHealthTicker()
                 foreground = true
                 lastNotification = null
                 AppLog.add("MEDIA", "Foreground media service started; playing=${snapshot.playing}")
@@ -799,15 +817,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     AppLog.add("MEDIA", "Paused notification refresh failed: " + it.javaClass.simpleName)
                 }
             }
-            if (foreground && !recoveringPlayback && (s.userPaused || s.ended || s.id.isBlank()))
-                handler.postDelayed(demoteForeground, 8_000L)
+            if (!recoveringPlayback) scheduleDemoteIfNeeded(s)
             return
         }
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
                 notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover)))
+            if (!foreground) startHealthTicker()
             foreground = true
+            interruptedSince = 0L
             lastNotification = key
             AppLog.add("MEDIA", "Playback notification foreground=true id=${s.id} " +
                 "channel=${notifications.channelStatus()}")

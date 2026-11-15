@@ -2026,7 +2026,7 @@
     '720': 'hd720', '1080': 'hd1080', '1440': 'hd1440',
     '2160': 'hd2160', '4320': 'highres'
   };
-  var qualityApply = { player: null, key: '', last: '' };
+  var qualityApply = { player: null, key: '', last: '', at: 0 };
   function savedQuality() {
     var q = CFG.preferredQuality || 'hd720';
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
@@ -2094,6 +2094,7 @@
       } else return; // YouTube's API is not ready; the next DOM tick will retry.
       qualityApply.player = p;
       qualityApply.key = key;
+      qualityApply.at = Date.now();
       // Record actual vs requested quality for diagnosis, without forcing more
       // source changes when the server/device cannot serve the requested tier.
       later(function () {
@@ -2131,13 +2132,32 @@
     if (!q) return;
     CFG.preferredQuality = q;
     writeYouTubeQuality(q);
-    qualityApply.key = ''; // release the old range after the user's new choice
     if (N && typeof N.quality === 'function') {
       try { N.quality(q); } catch (e) {}
     }
-    console.log('[aay] user selected video quality=' + q);
-    later(applyPreferredQuality, 500); // allow YouTube's menu handler to finish first
+    // Smooth switch: YouTube's own menu handler already performs the change and
+    // keeps playing from its buffer. Forcing setPlaybackQualityRange again here
+    // caused a second source switch (visible stall). Only mark it as applied.
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (p && !bgSaverActive()) {
+      qualityApply.player = p;
+      qualityApply.key = qualityVideoId() + ':' + q;
+      qualityApply.last = qualityApply.key;
+      qualityApply.at = Date.now();
+    } else qualityApply.key = '';
+    console.log('[aay] user selected video quality=' + q + ' (applied by YouTube, no re-force)');
   }, true);
+  // A reload of the same video (new source, same player and id) must get the saved
+  // quality again before it buffers; otherwise YouTube may pick 4K on its own.
+  ['emptied', 'loadstart'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (!e.target || e.target.tagName !== 'VIDEO') return;
+      // Our own range change also reloads the source: never re-apply in a loop.
+      if (Date.now() - qualityApply.at < 3000) return;
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, true);
+  });
 
   A.setBg = function (on) {
     var wasBg = A.isBg;
