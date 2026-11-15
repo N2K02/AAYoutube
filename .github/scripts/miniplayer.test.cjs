@@ -333,6 +333,49 @@ test('pause caused by another app playing media is not resumed until it stops', 
   assert.equal(p.video.paused, false, 'resumes where it was once other media stopped');
 });
 
+test('other app audio focus immediately pauses an actively playing video without user Pause', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.mediaHold(true);
+  assert.equal(p.video.paused, true, 'yield sound immediately, do not wait for Chromium');
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, true, 'native Play is deferred while another app owns sound');
+  p.video.paused = false; // YouTube emits a delayed Play after focus was taken
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'late page Play cannot steal audio focus');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdogs respect the hold');
+  p.window.__aay.mediaHold(false);
+  p.advance(3500);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'resume only when focus hold is released');
+});
+
+test('user Pause during external focus hold stays paused after the other app stops', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  p.window.__aay.cmd('pause');
+  p.window.__aay.mediaHold(false);
+  p.advance(60000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'user Pause overrides earlier auto-resume intent');
+});
+
+test('YouTube stale Play icon repair never restarts held audio', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2;
+  player.playVideo = () => { repairs++; };
+  p.window.__aay.mediaHold(true);
+  p.video.paused = false; // stale Chromium playback state before a pause event
+  p.runIntervals();
+  assert.equal(repairs, 0, 'UI state reconciliation must respect focus loss');
+});
+
 test('expired media hold gives up instead of resuming much later', () => {
   const p = playerPage({ otherMedia: { active: true } });
   p.flush();
