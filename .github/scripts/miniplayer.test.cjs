@@ -1152,6 +1152,20 @@ test('native Play before video exists starts it after the player becomes availab
   assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
 });
 
+test('mini and PiP recovery never changes accelerated video opacity', () => {
+  assert.equal(source.includes("v.style.setProperty('opacity'"), false,
+    'opacity changes break hardware video overlay composition');
+  assert.match(source, /function repaintVideo\(v\) \{/);
+  assert.match(source, /if \(now - refitAt < 6000\) return/);
+  const p = playerPage({ quality: true });
+  p.window.__aay.mini(true);
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.pip(true);
+  p.flush();
+  assert.equal(p.classNames.has('aay-video-only'), true);
+});
+
 test('mini player watchdog restarts a frozen picture while sound plays', () => {
   const p = playerPage();
   let frames = 100, seeks = 0, t = 10;
