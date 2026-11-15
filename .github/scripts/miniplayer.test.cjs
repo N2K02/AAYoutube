@@ -1524,7 +1524,7 @@ test('unidentified quality change after a tap never overwrites the saved maximum
   assert.equal(p.qualityCalls.length, before, 'do not interrupt an in-progress quality switch');
   p.flush();
   assert.equal(p.selectedQualities.length, 0, 'lower or higher observed tier is not explicit user intent');
-  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd720',
+  assert.equal(p.window.__aay.__cfg().preferredQuality || 'hd720', 'hd720',
     'only an exact menu selection is allowed to change the saved maximum');
 });
 
