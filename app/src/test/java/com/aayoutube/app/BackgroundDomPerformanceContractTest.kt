@@ -25,7 +25,8 @@ class BackgroundDomPerformanceContractTest {
     }
 
     @Test fun throttledDomTraversalDoesNotDisableImmediatePlaybackRecovery() {
-        assertTrue(script.contains("new MutationObserver(schedTick).observe"))
+        assertTrue(script.contains("new MutationObserver(function (records) {"))
+        assertTrue(script.contains("perf.mutations += records ? records.length : 1;"))
         assertTrue(script.contains("setInterval(backgroundWatchdog, 5000)"))
         assertTrue(script.contains("window.addEventListener('yt-navigate-finish'"))
     }
@@ -35,5 +36,6 @@ class BackgroundDomPerformanceContractTest {
         assertTrue(script.contains("setInterval(backgroundWatchdog, 5000)"))
         assertTrue(script.contains("setInterval(sendLyricClock, 250)"))
         assertTrue(script.contains("(A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800"))
+        assertTrue(script.contains("Date.now() - lastNonCriticalDomAt >= 8000"))
     }
 }
