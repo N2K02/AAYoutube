@@ -101,6 +101,9 @@ object Features {
                 .putBoolean("qualityPolicyV3", true).apply()
             true
         }
+        // One-time cleanup: manual codec selection was removed. The preference
+        // must not influence automatic hardware-aware codec negotiation.
+        if (prefs.contains("videoCodec")) prefs.edit().remove("videoCodec").apply()
         _state.value = FeatureFlags(
             blockAds = prefs.getBoolean("blockAds", d.blockAds),
             hideShorts = prefs.getBoolean("hideShorts", d.hideShorts),
