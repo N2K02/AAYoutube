@@ -30,6 +30,38 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    // Low-overhead health snapshots; sampled only as playback states arrive.
+    private var lastHealthElapsed = 0L
+    private var lastCpuMs = 0L
+    private var lastPlaybackPhase = ""
+    private fun tracePlaybackHealth(s: Snap) {
+        val phase = when {
+            s.userPaused -> "user-paused"
+            s.playing -> "playing"
+            s.recovering || recoveringPlayback -> "recovering"
+            s.buffering -> "buffering"
+            s.id.isNotBlank() -> "interrupted"
+            else -> "idle"
+        }
+        if (phase != lastPlaybackPhase) {
+            AppLog.add("PLAYBACK", "transition $lastPlaybackPhase -> $phase foreground=$foreground bound=$bound")
+            lastPlaybackPhase = phase
+        }
+        if (!s.playing && !recoveringPlayback) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastHealthElapsed != 0L && now - lastHealthElapsed < 60_000L) return
+        val cpu = android.os.Process.getElapsedCpuTime()
+        val delta = now - lastHealthElapsed
+        val cpuPercent = if (lastHealthElapsed > 0 && delta > 0)
+            ((cpu - lastCpuMs).coerceAtLeast(0L) * 100L / delta).coerceIn(0L, 1000L)
+            else -1L
+        lastHealthElapsed = now
+        lastCpuMs = cpu
+        val audio = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        AppLog.add("HEALTH", "phase=$phase cpuPct=$cpuPercent musicActive=${audio.isMusicActive} " +
+            "screen=${(getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive} " +
+            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground")
+    }
     private val resumePrefs by lazy {
         getSharedPreferences("background_playback_restore", Context.MODE_PRIVATE)
     }
@@ -96,7 +128,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // A transient WebView pause must not immediately drop foreground-media priority.
     // Android may throttle/kill the :web process before JS gets a chance to resume.
     private val demoteForeground = Runnable {
-        if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached) {
+        if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached &&
+            !resumePrefs.getBoolean("active", false)) {
             AppLog.add("MEDIA", "Foreground grace period expired; playback still paused")
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
@@ -438,6 +471,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
         updatePlaybackWakeLock(s.playing || recoveringPlayback)
+        tracePlaybackHealth(s)
         if (quitRequested) {
             updateNotification(s)
             return
@@ -650,7 +684,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
         if (intent?.action == ACTION_QUIT) requestQuit()
-        if (intent == null && !quitRequested) restoreSystemKilledPlayback()
+        if (intent == null && !quitRequested) {
+            AppLog.add("LIFECYCLE", "sticky service recreated after process/service stop")
+            restoreSystemKilledPlayback()
+        }
         // Publish the initial playing state even when the WebView Messenger has
         // not registered yet; future IPC reports will update position and metadata.
         if (initial != null && !quitRequested) publish(snapshot)
@@ -723,6 +760,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        AppLog.add("LIFECYCLE", "service destroyed playing=${snapshot.playing} recovering=$recoveringPlayback quit=$quitRequested")
         shuttingDown = true
         handler.removeCallbacksAndMessages(null)
         val activeConnection = connection
@@ -761,7 +799,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     AppLog.add("MEDIA", "Paused notification refresh failed: " + it.javaClass.simpleName)
                 }
             }
-            if (foreground && !recoveringPlayback)
+            if (foreground && !recoveringPlayback && (s.userPaused || s.ended || s.id.isBlank()))
                 handler.postDelayed(demoteForeground, 8_000L)
             return
         }
