@@ -1328,8 +1328,10 @@ test('software VP9 and AV1 are blocked when a hardware fallback exists at the sa
   assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1920, 1080)), true);
   assert.equal(older.MediaSource.isTypeSupported(sized(vp9, 1280, 720, 60)), false);
   assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1280, 720, 60)), true);
-  assert.equal(older.MediaSource.isTypeSupported(vp9), true, 'unqualified MIME has no known size');
+  assert.equal(older.MediaSource.isTypeSupported(vp9), false, 'MIME-only VP9 must not offer software when H.264 hardware exists');
+  assert.equal(older.MediaSource.isTypeSupported(av1), false, 'MIME-only AV1 must also avoid software');
   const softwareOnly = playerPage({ cfg: { decodeCaps: { vp9: 0, av1: 0, h264: 0 } } });
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(vp9), true, 'MIME-only software fallback remains when no hardware available');
   assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1280, 720)), true,
     'software fallback allowed when no hardware codec covers the size');
   assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1920, 1080)), true);
