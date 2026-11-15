@@ -1356,7 +1356,7 @@ test('Auto retains adaptive quality under thermal and mini or PiP ceilings', () 
 
 test('captured media loadstart binds a new video immediately without DOM ticks', () => {
   const p = playerPage({ noVideo: true });
-  const next = new p.window.HTMLMediaElement();
+  const next = new p.video.constructor();
   next.tagName = 'VIDEO';
   assert.equal(next.events.has('play'), false);
   p.emit('loadstart', { target: next });
