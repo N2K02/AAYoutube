@@ -453,6 +453,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onPause() {
                     transportSkips.clear()
+                    recovery.cancel()
+                    recoveringPlayback = false
                     send(Msg.PAUSE)
                     snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
@@ -498,6 +500,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 }
                 override fun onStop() {
                     transportSkips.clear()
+                    recovery.cancel()
+                    recoveringPlayback = false
                     send(Msg.STOP)
                     snapshot = snapshot.copy(playing = false, userPaused = true, buffering = false, recovering = false)
                     publish(snapshot)
