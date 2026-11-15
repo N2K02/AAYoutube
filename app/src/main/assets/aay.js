@@ -194,7 +194,11 @@
             A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 &&
             A.qualityTapVideo === ((location.search.match(/[?&]v=([^&]+)/) || [])[1] || '')) {
           var q = youTubeStoredQuality(v);
-          if (q && q !== CFG.preferredQuality) A.adoptUserQuality(q, 'YouTube saved pick');
+          // YouTube also writes its *current adaptive tier* here. It is not
+          // always an intentional change of the user's saved maximum.
+          // Persist only the exact quality option identified by the click.
+          if (q && q === A.qualityTapChoice && q !== CFG.preferredQuality)
+            A.adoptUserQuality(q, 'YouTube saved pick');
         }
       } catch (e) {}
       return r;
@@ -1298,7 +1302,7 @@
     try { st = p.getPlayerState(); } catch (e) { return; }
     if (st !== 2) return; // 2 = paused
     var now = Date.now();
-    if (now - stateFixAt < 2500) return;
+    if (now - stateFixAt < 12000) return; // avoid retrying playVideo every watchdog tick
     stateFixAt = now;
     try {
       p.playVideo();
@@ -2619,6 +2623,7 @@
       if (event.isTrusted !== false) {
         qualityMenuOpenedAt = Date.now();
         qualityMenuOpenedVideo = qualityVideoId();
+        A.qualityTapChoice = '';
       }
       return; // opening Settings is not itself a quality selection
     }
@@ -2629,6 +2634,7 @@
       A.qualityTapVideo = qualityVideoId();
     }
     if (q) {
+      A.qualityTapChoice = q; // only a specific choice can update saved max
       adoptUserQuality(q, 'menu');
       qualityMenuOpenedAt = 0; // do not treat later unrelated taps as quality picks
     }
