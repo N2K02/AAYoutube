@@ -15,7 +15,7 @@ class SmoothQualitySwitchContractTest {
     @Test fun userMenuPickIsNotReForcedAfterYouTubeApplies() {
         val adopt = js.substringAfter("function adoptUserQuality(q, source) {").substringBefore("A.adoptUserQuality = adoptUserQuality;")
         assertTrue(adopt.contains("current === q && !bgSaverActive()"))
-        assertTrue(adopt.contains("qualityApply.key = qualityVideoId() + ':tiny-' + q"))
+        assertTrue(adopt.contains("qualityApply.key = qualityVideoId() + ':' + q + '-' + q"))
         assertFalse(adopt.contains("later(applyPreferredQuality"))
     }
 
@@ -55,7 +55,7 @@ class SmoothQualitySwitchContractTest {
         assertFalse(js.contains("if (c === 'h264')"))
         assertFalse(js.contains("if (c === 'vp9')"))
         assertTrue(js.contains("var chosen = availableQuality(p, desiredQuality());"))
-        assertTrue(js.contains("var low = bgSaverActive() ? chosen : 'tiny';"))
+        assertTrue(js.contains("var adaptive = savedQuality() === 'auto' && !bgSaverActive();"))
     }
 
     @Test fun positionRestoreWaitsForYouTubeFirst() {
