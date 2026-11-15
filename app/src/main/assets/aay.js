@@ -1373,6 +1373,7 @@
     }); } catch (e) { console.log('[aay] playback recovery failed: ' + e); }
     schedReport(150);
   }
+  A.checkBackgroundPlayback = backgroundWatchdog;
   setInterval(backgroundWatchdog, 5000);
 
   function bind(v) {

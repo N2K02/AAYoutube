@@ -92,7 +92,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(protocol.contains("const val TRANSPORT_ACK = 106"))
         assertTrue(web.contains("send(Msg.TRANSPORT_ACK"))
         assertTrue(web.contains("what == Msg.TRANSPORT_ACK"))
-        assertTrue(media.contains("terminalIntent.pendingCommand == null) stopSelf()"))
+        assertTrue(media.contains("private val idleStop = Runnable { if (!snapshot.playing && !recoveringPlayback && !quitRequested && !carAttached) stopSelf() }"))
     }
 
     @Test fun fullDocumentNavigationClearsStaleMediaBeforeScriptIsReplaced() {

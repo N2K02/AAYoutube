@@ -1097,6 +1097,8 @@ object WebHost {
         AppLog.add("POWER", "WebView released")
         AAYSoundFx.shutdown() // immediately retire any shared output-mix effects
         main.removeCallbacks(freezeSoon)
+        main.removeCallbacks(backgroundPlaybackProbe)
+        playbackWanted = false
         exitFullscreen()
         val w = web
         web = null
@@ -1363,6 +1365,25 @@ object WebHost {
         }
     }
 
+    // JavaScript timers can be delayed after screen-off. Native probes keep
+    // recovery checks scheduled while playback is wanted; JS respects Pause.
+    private val backgroundPlaybackProbe = object : Runnable {
+        override fun run() {
+            if (!playbackWanted || (!shown && !carShown && !inPip.value &&
+                    !Features.current.backgroundPlay) || web == null) return
+            js("window.__aay&&window.__aay.checkBackgroundPlayback&&window.__aay.checkBackgroundPlayback()")
+            main.postDelayed(this, 15_000L)
+        }
+    }
+
+    private fun updateBackgroundPlaybackProbe() {
+        main.removeCallbacks(backgroundPlaybackProbe)
+        if (playbackWanted && web != null &&
+            (shown || carShown || inPip.value || Features.current.backgroundPlay)) {
+            main.postDelayed(backgroundPlaybackProbe, 15_000L)
+        }
+    }
+
     private var lastLogged = ""
     private var visibilityChangedAt = 0L
     private var userPausedAt = 0L
@@ -1454,6 +1475,7 @@ object WebHost {
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
         snapshot.value = s
+        updateBackgroundPlaybackProbe()
         AAYSoundFx.onPlaybackChanged(s.playing)
         if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
