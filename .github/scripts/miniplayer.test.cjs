@@ -1701,3 +1701,59 @@ test('ordinary player pause gesture is not swallowed when player state is consis
     stopImmediatePropagation() { swallowed = true; } });
   assert.equal(swallowed, false);
 });
+
+test('expanding a playing mini player resumes a pause caused by surface resize', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.mini(false); // intent recorded while still playing
+  p.video.paused = true;      // a Chromium resize interrupted playback
+  p.flush();
+  assert.equal(p.video.paused, false, 'video must continue after mini expands');
+  assert.equal(p.window.__aay.isMini, false);
+});
+
+test('expanding a user-paused mini player must not autoplay', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.cmd('pause');
+  assert.equal(p.video.paused, true);
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(p.video.paused, true, 'explicit Pause is authoritative');
+});
+
+test('user Pause after mini expansion cancels deferred recovery', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.cmd('pause');
+  p.flush();
+  assert.equal(p.video.paused, true);
+});
+
+test('mini expansion respects other-media audio focus hold', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.mediaHold(true);
+  p.video.paused = true;
+  p.flush();
+  assert.equal(p.video.paused, true, 'do not steal focus from another app');
+});
+
+test('re-entering mini cancels outdated full-player recovery callbacks', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.mini(true);
+  p.video.paused = true;
+  p.flush();
+  assert.equal(p.video.paused, true, 'an old expand callback must not restart mini playback');
+});
