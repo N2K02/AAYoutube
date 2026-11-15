@@ -349,15 +349,15 @@ test('PiP caps quality at 720p and restores the saved quality on exit', () => {
   const p = playerPage({ quality: true });
   p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd1440' });
   p.flush();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440']);
   p.window.__aay.pip(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP must not decode 1440p');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'PiP must not decode 1440p');
   p.window.__aay.pip(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'saved quality returns');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440'], 'saved quality returns');
   p.window.__aay.mini(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player must not decode 1440p');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'mini player must not decode 1440p');
   p.window.__aay.mini(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440']);
 });
 
 test('a wrong play/pause state is reported again without waiting', () => {
@@ -463,7 +463,7 @@ test('direct Chromium car taps reveal YouTube controls without seeking or reacti
 test('720p is requested on startup and does not get reset on small-layout toggles', () => {
   const p = playerPage({ quality: true });
   p.flush();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
   assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd720');
   const n = p.qualityCalls.length;
   p.window.__aay.mini(true);
@@ -540,11 +540,11 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   assert.deepEqual(p.selectedQualities, ['hd1080']);
   assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd1080');
   p.flush();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
   p.window.__aay.mini(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player is capped at 720p');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'mini player is capped at 720p');
   p.window.__aay.mini(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
   p.emit('click', { target: option('Quality 144p') }); // parent menu, not a user pick
   assert.deepEqual(p.selectedQualities, ['hd1080']);
   p.emit('click', { target: option('Auto (720p)') });
@@ -575,7 +575,7 @@ test('background saver waits 60 s and restores on return', () => {
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.setRealHidden(false);
   p.window.__aay.setBg(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible again: saved quality at once');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'visible again: saved quality at once');
 });
 
 test('background saver trusts the app off-screen state even if Chromium still says visible; never on live streams', () => {
@@ -587,7 +587,7 @@ test('background saver trusts the app off-screen state even if Chromium still sa
   p.advance(60600); p.flush();
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.setBg(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'on screen again: saved quality at once');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'on screen again: saved quality at once');
   const live = playerPage({ quality: true });
   live.window.__aay.config({ lowQuality: true });
   live.video.duration = Infinity;
@@ -606,7 +606,7 @@ test('background saver backs off for the session if audio stalls after lowering 
   p.advance(9000);           // audio clock does not move for 9 s
   p.video.currentTime = t;
   p.runIntervals();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'stall restores quality');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'stall restores quality');
   p.window.__aay.setBg(false);
   hideForSaver(p);
   assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'not retried this session');
@@ -618,11 +618,11 @@ test('background quality policy restores visible PiP frames', () => {
   hideForSaver(p);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.pip(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP restores 720p instead of tiny');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'PiP restores 720p instead of tiny');
   p.window.__aay.pip(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'normal background playback may reduce quality');
   p.window.__aay.setBg(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
 });
 
 test('car handoff removes background-only quality cap and preserves mini layout on viewport refit', () => {
@@ -632,12 +632,12 @@ test('car handoff removes background-only quality cap and preserves mini layout 
   hideForSaver(p);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny']);
   p.window.__aay.car(true);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
   p.window.__aay.mini(true);
   p.window.__aay.refitCar();
   assert.equal(p.classNames.has('aay-mini'), true, 'refit must preserve mini player');
   p.window.__aay.car(false);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'still-visible mini returns to saved HD');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'still-visible mini returns to saved HD');
   p.window.__aay.mini(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'true hidden background may use low quality');
 });
@@ -938,10 +938,10 @@ test('saved quality missing on a video: nearest lower tier, preference kept', ()
   p.player.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'large', 'medium', 'auto'];
   p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
   p.flush();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'best available at or below the choice');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080'], 'best available at or below the choice');
   p.player.getAvailableQualityLevels = () => ['medium', 'small'];
   p.window.__aay.setBg(true); p.window.__aay.setBg(false); // force re-apply
-  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'medium']);
 });
 
 test('an intentional seek to zero is never undone by the quality guard', () => {
@@ -1407,9 +1407,9 @@ test('overload: a sustained decoder stall steps down one tier; one bad window do
   p.video.buffered = { length: 1, end: () => 80 };
   p.runIntervals();                       // first sample
   badWindow(p, 'stall');
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'isolated spike ignored');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440'], 'isolated spike ignored');
   badWindow(p, 'stall');
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'sustained: 4K -> 1440p');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440'], 'sustained: 4K -> 1440p');
   assert.equal(p.qualityStorage.get('aay-max-smooth-h'), '1440', 'remembered without native caps');
 });
 
@@ -1418,7 +1418,7 @@ test('overload: buffering from the network (nothing buffered) never lowers quali
   p.video.buffered = { length: 1, end: () => p.video.currentTime + 0.5 };
   p.runIntervals();
   for (let i = 0; i < 4; i++) { p.advance(9000); p.runIntervals(); }
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd2160']);
 });
 
 test('overload: sustained frame dropping steps down gradually with a cooldown, floor 720p', () => {
@@ -1428,15 +1428,15 @@ test('overload: sustained frame dropping steps down gradually with a cooldown, f
   const drop = () => { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); };
   p.runIntervals();
   drop(); drop();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440']);
   p.player.setCurrentQuality('hd1440');
   drop(); drop();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'cooldown: no second step within 60 s');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440'], 'cooldown: no second step within 60 s');
   for (let i = 0; i < 6; i++) drop();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'then the next tier');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080'], 'then the next tier');
   p.player.setCurrentQuality('hd720');
   for (let i = 0; i < 20; i++) drop();
-  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'never below 720p');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'medium'], 'never below 720p');
 });
 
 test('overload: stable playback raises the limit again; preference untouched', () => {
@@ -1445,22 +1445,22 @@ test('overload: stable playback raises the limit again; preference untouched', (
   p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
   p.runIntervals();
   for (let i = 0; i < 2; i++) { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1440']);
   assert.equal(p.qualityStorage.has('aay-max-smooth-h'), false, 'native caps: session only');
   p.player.setCurrentQuality('hd1440');
   for (let i = 0; i < 25; i++) { f += 300; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160'], 'back to the saved 4K after 3 min clean');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd2160'], 'back to the saved 4K after 3 min clean');
 });
 
 test('thermal: severe heat caps at 1080p and cooling restores the saved quality', () => {
   const p = overloadPage('hd2160');
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd2160']);
   p.window.__aay.thermal(3);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
   p.window.__aay.thermal(1);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd2160']);
   const hot = overloadPage('hd2160', { thermal: 4 });
-  assert.deepEqual(hot.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'already hot at page start');
+  assert.deepEqual(hot.qualityCalls.at(-1), ['tiny', 'hd1080'], 'already hot at page start');
 });
 
 test('decoder gate: 60 fps and HDR use their own hardware limits', () => {
@@ -1537,7 +1537,7 @@ test('unrelated taps never save adaptive quality changes', () => {
   p.emit('emptied', { target: p.video });
   p.flush();
   assert.equal(p.selectedQualities.length, n, 'adaptive quality change is not a saved manual choice');
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'saved resolution is restored');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'saved resolution is restored');
 });
 
 test('same-video reload WITHOUT a recent tap still restores the saved quality', () => {
@@ -1545,7 +1545,7 @@ test('same-video reload WITHOUT a recent tap still restores the saved quality', 
   p.flush();
   p.advance(10000);
   p.emit('emptied', { target: p.video });
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'YouTube picked 4K on its own: saved 720p restored');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720'], 'YouTube picked 4K on its own: saved 720p restored');
 });
 
 test('YouTube writing its own saved pick is adopted; our own writes are not', () => {
@@ -1633,4 +1633,69 @@ test('audio DSP reports graph state, not an invented CPU percentage', () => {
   assert.match(eq, /A\.eqPerf = function \(\)/);
   assert.match(eq, /needsRoute\(\) \? 'dsp' : 'bypass'/);
   assert.doesNotMatch(eq, /A\.eqCpuPct/);
+});
+
+test('saved 1080p is a maximum, a 720p-only video plays 720p and next 1080p video restores it', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd1080' } });
+  p.player.getAvailableQualityLevels = () => ['hd720', 'large', 'medium', 'small'];
+  p.window.__aay.applyQuality();
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd1080');
+  assert.equal(p.selectedQualities.length, 0, 'lower offered resolution is never adopted as default');
+  p.player.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'medium'];
+  p.location.search = '?v=anotherVideo';
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd1080');
+});
+
+test('2160p preference remains the maximum after a lower-only video and PiP cap', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd2160' } });
+  p.player.getAvailableQualityLevels = () => ['hd720', 'large', 'medium'];
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  p.window.__aay.pip(true);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd2160');
+  p.window.__aay.pip(false);
+  p.player.getAvailableQualityLevels = () => ['hd2160', 'hd1080', 'hd720'];
+  p.location.search = '?v=another4KVideo';
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd2160']);
+  assert.equal(p.selectedQualities.length, 0);
+});
+
+test('a stale YouTube Play button pauses genuinely playing video and respects user intent', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.player.getPlayerState = () => 2; // YouTube thinks paused; media still playing
+  const paused = [];
+  p.window.AAYNative.userPause = () => paused.push('pause');
+  const target = { tagName: 'BUTTON', closest(sel) {
+    return sel.includes('.ytp-play-button') ? this : null;
+  } };
+  const calls = [];
+  const e = { target, isTrusted: true,
+    preventDefault() { calls.push('prevent'); },
+    stopImmediatePropagation() { calls.push('stop'); } };
+  p.emit('click', e);
+  assert.equal(p.video.paused, true);
+  assert.deepEqual(calls, ['prevent', 'stop']);
+  assert.equal(paused.length, 1);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdog never undoes explicit Pause');
+});
+
+test('ordinary player pause gesture is not swallowed when player state is consistent', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.player.getPlayerState = () => 1; // playing
+  const target = { tagName: 'BUTTON', closest(sel) {
+    return sel.includes('.ytp-play-button') ? this : null;
+  } };
+  let swallowed = false;
+  p.emit('click', { target, isTrusted: true,
+    preventDefault() { swallowed = true; },
+    stopImmediatePropagation() { swallowed = true; } });
+  assert.equal(swallowed, false);
 });
