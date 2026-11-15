@@ -17,10 +17,22 @@
    * Read live, so a change applies from the next video. */
   (function () {
     var C0 = window.__AAY_CFG || {};
+    /* Resolution gate: like the YouTube app, never offer a tier this device cannot
+     * decode smoothly (e.g. 8K froze ~20 s before any decoder started). The limit
+     * comes from Chromium's own MediaCapabilities probe and is cached for the next
+     * page load so YouTube sees it before building its quality menu. 0 = no limit. */
+    var maxSmoothHeight = 0;
+    try { maxSmoothHeight = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+    function tooLarge(t) {
+      if (!maxSmoothHeight) return false;
+      var h = /height\s*=\s*(\d+)/.exec(t);
+      return !!h && parseInt(h[1], 10) > maxSmoothHeight;
+    }
     function blocked(type) {
       var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
       var t = String(type || '').toLowerCase();
       if (t.indexOf('video/') < 0 && t.indexOf('codecs') < 0) return false;
+      if (tooLarge(t)) return true;
       if (c === 'h264') return /vp0?9|vp8|av01/.test(t);
       if (c === 'vp9') return /av01/.test(t);
       return false;
@@ -52,11 +64,33 @@
         var origInfo = mc.decodingInfo.bind(mc);
         var info = function (cfg) {
           var t = cfg && cfg.video && cfg.video.contentType;
-          if (blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
+          var big = cfg && cfg.video && maxSmoothHeight && cfg.video.height > maxSmoothHeight;
+          if (big || blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
           return origInfo(cfg);
         };
         info.__aay = true;
         mc.decodingInfo = info;
+        // Probe the real decoder once per page (cheap, async). Largest height at
+        // which VP9 or AV1 decodes smoothly becomes the limit for the next load.
+        var tiers = [[7680, 4320], [5120, 2880], [3840, 2160], [2560, 1440]];
+        var codecs = ['video/webm; codecs="vp09.00.51.08"', 'video/mp4; codecs="av01.0.16M.08"'];
+        var probe = function (i) {
+          if (i >= tiers.length) return Promise.resolve(1080);
+          var w = tiers[i][0], h = tiers[i][1];
+          return Promise.all(codecs.map(function (ct) {
+            return origInfo({ type: 'media-source', video: { contentType: ct, width: w, height: h,
+              bitrate: h >= 4320 ? 40000000 : h >= 2160 ? 20000000 : 10000000, framerate: 30 } })
+              .then(function (r) { return !!(r && r.supported && r.smooth); }, function () { return false; });
+          })).then(function (ok) { return ok.indexOf(true) >= 0 ? h : probe(i + 1); });
+        };
+        probe(0).then(function (h) {
+          var limit = h >= 4320 ? 0 : h; // 0: the device handles every tier
+          try { localStorage.setItem('aay-max-smooth-h', String(limit)); } catch (e) {}
+          if (limit !== maxSmoothHeight)
+            console.log('[aay] smooth decode limit ' + (limit ? limit + 'p' : 'none') +
+              ' (applies from next page load)');
+          if (!maxSmoothHeight) maxSmoothHeight = limit; // tighten now; never loosen mid-page
+        }, function () {});
       }
     } catch (e) {}
   })();
@@ -1288,6 +1322,15 @@
       qualityState.reset = null;
       return;
     }
+    // YouTube restores the position itself on a quality switch. Seeking at the
+    // same moment caused a second flush (two 'seeking' events, visible stall), so
+    // give it a moment first and only step in if it did not.
+    if (!pending.waited && Date.now() - pending.started < 1000) {
+      if (!pending.timer) pending.timer = later(function () {
+        pending.timer = 0; pending.waited = true; restoreAfterSourceChange(v);
+      }, 1000);
+      return;
+    }
     if (pending.tries++ >= 3) { qualityState.reset = null; return; }
     try {
       v.currentTime = Math.min(pending.seconds, isFinite(v.duration) && v.duration > 0
@@ -1304,7 +1347,7 @@
     if (BROWSE || !id || id !== qualityVideoId() || !isFinite(seconds) || seconds < 10) return;
     qualityState.id = id;
     qualityState.position = Math.max(qualityState.position, seconds);
-    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0 };
+    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0, waited: true }; // new document: YouTube will not restore
     console.log('[aay] same-video document reload: restoring ' + Math.round(seconds) + 's');
     restoreAfterSourceChange(getVideo());
   };
@@ -1329,7 +1372,16 @@
   /* WebView timers may be throttled with the screen off. Check only when the
    * user's last intent was to play; explicit media pauses and completed videos win.
    */
-  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
+  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0, held: false, pausedAt: 0 };
+  // Another app took the audio (music, video, call): Chromium paused us. Do not
+  // grab focus back; native resumes once the other media has stopped.
+  var MEDIA_SETTLE_MS = 2500;
+  A.mediaHold = function (on, giveUp) {
+    bgWatch.held = !!on;
+    if (!on) { bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; }
+    if (!on && giveUp) bgWatch.wanted = false;
+  };
+
   function backgroundWatchdog() {
     bgSaverCheck();
     // Only a watch/live page owns an active media session. A stale video
@@ -1359,6 +1411,17 @@
       return;
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
+    if (bgWatch.held) return;
+    // Let an audio-focus handoff settle: the other app starts its output shortly
+    // after Chromium pauses us, so an instant resume would steal focus back.
+    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
+    try {
+      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold()) {
+        bgWatch.held = true;
+        console.log('[aay] another app is playing media: not resuming');
+        return;
+      }
+    } catch (e) {}
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
@@ -1399,6 +1462,7 @@
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
         }
+        if (ev === 'pause') bgWatch.pausedAt = Date.now();
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
@@ -2078,11 +2142,29 @@
     if (bgSaver.pos < 0 || v.currentTime > bgSaver.pos + 0.2) { bgSaver.pos = v.currentTime; bgSaver.at = now; }
     if (now - bgSaver.switchedAt > 60000) bgSaver.switchedAt = 0; // proven stable
   }
+  /* A video may not offer the saved tier (e.g. 4K saved, video only has 1080p).
+   * Use the best tier at or below it, else the lowest above it. The saved
+   * preference itself is unchanged, so the next 4K video gets 4K again. */
+  var qualityOrder = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'hd1440', 'hd2160', 'highres'];
+  function availableQuality(p, want) {
+    if (want === 'auto') return want;
+    var levels = [];
+    try { if (typeof p.getAvailableQualityLevels === 'function') levels = p.getAvailableQualityLevels() || []; } catch (e) {}
+    levels = levels.filter(function (q) { return qualityOrder.indexOf(q) >= 0; });
+    if (!levels.length || levels.indexOf(want) >= 0) return want;
+    var w = qualityOrder.indexOf(want), below = '', above = '';
+    levels.forEach(function (q) {
+      var i = qualityOrder.indexOf(q);
+      if (i <= w && (!below || i > qualityOrder.indexOf(below))) below = q;
+      if (i > w && (!above || i < qualityOrder.indexOf(above))) above = q;
+    });
+    return below || above || want;
+  }
   function applyPreferredQuality() {
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
-    var chosen = desiredQuality();
+    var chosen = availableQuality(p, desiredQuality());
     var key = qualityVideoId() + ':' + chosen;
     if (qualityApply.player === p && qualityApply.key === key) return;
     try {

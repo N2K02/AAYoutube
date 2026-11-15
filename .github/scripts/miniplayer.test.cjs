@@ -126,6 +126,7 @@ function playerPage(options = {}) {
       mini() { miniRequests++; },
       quality(choice) { selectedQualities.push(choice); },
       state(json) { stateReports.push(JSON.parse(json)); },
+      otherMediaHold() { return !!(options.otherMedia && options.otherMedia.active); },
     },
     addEventListener(type, fn) {
       if (!windowCallbacks.has(type)) windowCallbacks.set(type, []);
@@ -301,11 +302,45 @@ test('car mini player recovers an unexpected pause but honours explicit pause', 
   // as an audio focus handoff when the browse WebView becomes visible.
   p.video.paused = true;
   p.video.trigger('pause');
+  p.advance(3000); // focus-handoff settle window
   p.runIntervals();
   assert.equal(p.video.paused, false, 'mini player must resume an unsolicited pause');
   p.window.__aay.cmd('pause');
   p.runIntervals();
   assert.equal(p.video.paused, true, 'mini player must honour the user pause');
+});
+
+test('pause caused by another app playing media is not resumed until it stops', () => {
+  const other = { active: false };
+  const p = playerPage({ otherMedia: other });
+  p.flush();
+  p.video.paused = true;          // Chromium paused on audio-focus loss
+  p.video.trigger('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'no instant resume during the focus handoff');
+  other.active = true;            // the other app's audio is now playing
+  p.advance(3000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'must not steal audio focus from another app');
+  p.advance(60000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'held while other media plays');
+  other.active = false;           // native sees quiet audio and ends the hold
+  p.window.__aay.mediaHold(false);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'resumes where it was once other media stopped');
+});
+
+test('expired media hold gives up instead of resuming much later', () => {
+  const p = playerPage({ otherMedia: { active: true } });
+  p.flush();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(3000);
+  p.runIntervals();
+  p.window.__aay.mediaHold(false, true);
+  p.runIntervals();
+  assert.equal(p.video.paused, true);
 });
 
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
@@ -815,8 +850,35 @@ test('resolution source reset keeps current video at its old position', () => {
   p.video.currentTime = 0;
   p.video.readyState = 1;
   p.video.trigger('loadedmetadata');
+  assert.equal(p.video.currentTime, 0, 'YouTube gets a moment to restore it first (no double seek)');
+  p.flush();
   assert.ok(p.video.currentTime >= 136, 'switching quality must not restart at 0');
   assert.equal(p.location.pathname, '/watch', 'no page navigation is necessary');
+});
+
+test('quality switch: YouTube own position restore is not seeked again', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 137;
+  p.video.trigger('timeupdate');
+  p.video.trigger('emptied');
+  p.video.currentTime = 0;
+  p.video.readyState = 1;
+  p.video.trigger('loadedmetadata');
+  p.video.currentTime = 137.4; // YouTube restored and kept playing
+  p.flush();
+  assert.equal(p.video.currentTime, 137.4, 'no second seek on top of YouTube');
+});
+
+test('saved quality missing on a video: nearest lower tier, preference kept', () => {
+  const p = playerPage({ quality: true });
+  p.player.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'large', 'medium', 'auto'];
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'best available at or below the choice');
+  p.player.getAvailableQualityLevels = () => ['medium', 'small'];
+  p.window.__aay.setBg(true); p.window.__aay.setBg(false); // force re-apply
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
 });
 
 test('an intentional seek to zero is never undone by the quality guard', () => {

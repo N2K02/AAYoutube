@@ -1428,7 +1428,72 @@ object WebHost {
         }
         resumeTries++
         AppLog.add("PLAY", "Unexpected pause in background=$background mini=$mini: native resume $resumeTries/2")
-        cmd("play")
+        // A focus handoff pauses us before the other app's audio starts: settle first.
+        main.removeCallbacks(droppedResume)
+        main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)
+    }
+
+    internal fun postOtherMediaHold(generation: Int) {
+        main.post { if (generation == webGeneration) startOtherMediaHold("page watchdog") }
+    }
+
+    private val droppedResume = Runnable {
+        val s = snapshot.value
+        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        if (otherMediaActive()) startOtherMediaHold("native resume") else cmd("play")
+    }
+
+    // ------------------------------------------------- other app's media (audio focus)
+    private var otherMediaHeldSince = 0L
+    private var otherMediaQuietSince = 0L
+
+    internal fun otherMediaActive(): Boolean = runCatching {
+        val am = app.getSystemService(android.media.AudioManager::class.java)
+        OtherMediaHoldPolicy.othersActive(am.isMusicActive, am.mode)
+    }.getOrDefault(false)
+
+    internal fun startOtherMediaHold(reason: String) {
+        if (otherMediaHeldSince != 0L || !playbackWanted) return
+        otherMediaHeldSince = SystemClock.elapsedRealtime()
+        otherMediaQuietSince = 0L
+        main.removeCallbacks(droppedResume)
+        AppLog.add("FOCUS", "Another app is playing media; paused until it stops ($reason)")
+        js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(true)")
+        main.removeCallbacks(otherMediaPoll)
+        main.postDelayed(otherMediaPoll, 1_000L)
+    }
+
+    private fun endOtherMediaHold(reason: String, giveUp: Boolean = false) {
+        if (otherMediaHeldSince == 0L) return
+        otherMediaHeldSince = 0L
+        otherMediaQuietSince = 0L
+        main.removeCallbacks(otherMediaPoll)
+        js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(false,$giveUp)")
+        AppLog.add("FOCUS", "Media hold ended: $reason")
+    }
+
+    // Runs while held; the media service keeps a CPU wake lock because the
+    // snapshot stays `recovering` (playback still wanted), so this works screen-off.
+    private val otherMediaPoll = object : Runnable {
+        override fun run() {
+            if (otherMediaHeldSince == 0L) return
+            if (!playbackWanted) { endOtherMediaHold("playback no longer wanted"); return }
+            val now = SystemClock.elapsedRealtime()
+            val active = otherMediaActive()
+            otherMediaQuietSince = OtherMediaHoldPolicy.quietSince(otherMediaQuietSince, active, now)
+            when (OtherMediaHoldPolicy.step(active, otherMediaHeldSince, otherMediaQuietSince, now)) {
+                OtherMediaHoldPolicy.Step.KEEP_HOLDING -> main.postDelayed(this, 1_000L)
+                OtherMediaHoldPolicy.Step.RESUME -> {
+                    endOtherMediaHold("other media stopped")
+                    if (keepRecovering()) cmd("play")
+                }
+                OtherMediaHoldPolicy.Step.GIVE_UP -> {
+                    endOtherMediaHold("hold expired", giveUp = true)
+                    playbackWanted = false
+                    publish(snapshot.value) // drop `recovering`: release wake lock/foreground
+                }
+            }
+        }
     }
 
     private var lastPlaybackServiceStartAt = 0L
@@ -1467,6 +1532,8 @@ object WebHost {
             userPausedAt = SystemClock.elapsedRealtime()
         } else if (incoming.playing) playbackWanted = true
         if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
+        if (otherMediaHeldSince != 0L && (incoming.playing || !playbackWanted))
+            endOtherMediaHold(if (incoming.playing) "playing again" else "paused or ended")
         // Keep foreground media priority while the active watchdog retries a
         // spontaneous pause. Never preserve this for explicit Pause or ending.
         val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
@@ -1780,6 +1847,14 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun speed(rate: Double) {
         WebHost.requestSpeedFromBridge(rate, generation)
+    }
+
+    /** True when another app is playing media; also starts the native hold that resumes us later. */
+    @JavascriptInterface
+    fun otherMediaHold(): Boolean {
+        val active = WebHost.otherMediaActive()
+        if (active) WebHost.postOtherMediaHold(generation)
+        return active
     }
 
     /** Swipe down on the playing video. */

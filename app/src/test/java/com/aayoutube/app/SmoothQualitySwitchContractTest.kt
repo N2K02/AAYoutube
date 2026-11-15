@@ -36,4 +36,14 @@ class SmoothQualitySwitchContractTest {
         assertTrue(media.contains("ForegroundDemotePolicy.delayMs("))
         assertFalse(media.contains("!resumePrefs.getBoolean(\"active\", false)) {"))
     }
+
+    @Test fun unsmoothTiersAreHiddenAndMissingTiersFallBack() {
+        assertTrue(js.contains("localStorage.setItem('aay-max-smooth-h'"))
+        assertTrue(js.contains("if (tooLarge(t)) return true;"))
+        assertTrue(js.contains("var chosen = availableQuality(p, desiredQuality());"))
+    }
+
+    @Test fun positionRestoreWaitsForYouTubeFirst() {
+        assertTrue(js.contains("if (!pending.waited && Date.now() - pending.started < 1000)"))
+    }
 }
