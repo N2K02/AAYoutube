@@ -297,17 +297,25 @@
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
   // unrelated DOM clicks must not disable interruption recovery.
+  var PLAY_PAUSE_BUTTON = '.ytp-play-button, #play-pause-button, .play-pause-button,' +
+    'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
+    '.player-play-pause-button, .player-play-pause-icon,' +
+    'button[aria-label*="pause" i], button[aria-label*="play" i],' +
+    'button[title*="pause" i], button[title*="play" i],' +
+    '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]';
+  function actualPlayPauseButton(target) {
+    return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
+  }
   function manualPauseGesture(e) {
     if (BROWSE || e.isTrusted === false) return;
     var v = getVideo();
     if (!v) return;
     var t = e.target;
-    var playerControl = !!(t && t.closest && t.closest(
-      'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
-      'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
-      '#movie_player, .html5-video-player, .html5-video-container,' +
-      'button[aria-label*="pause" i], button[title*="pause" i],' +
-      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]'));
+    var playerControl = !!actualPlayPauseButton(t);
+    // A tap on Settings, quality, or another player control is not a Pause.
+    // When paused, the actual video rectangle still allows anonymous center Play.
+    var playerSurface = !!(t && t.closest && t.closest(
+      'video, #movie_player, .html5-video-player, .html5-video-container'));
     // On some mobile YouTube versions the center control is an anonymous div,
     // so also accept a trusted touch inside the actual video rectangle.
     var insideVideo = false;
@@ -317,7 +325,7 @@
         e.clientX >= rect.left && e.clientX <= rect.left + rect.width &&
         e.clientY >= rect.top && e.clientY <= rect.top + rect.height;
     }
-    if (v.paused && (playerControl || insideVideo)) {
+    if (v.paused && (playerControl || insideVideo || playerSurface)) {
       userResumeEligibleUntil = Date.now() + 1500;
       PAUSED = false;
       bgWatch.explicitPause = false;
@@ -330,6 +338,24 @@
   }
   document.addEventListener('pointerdown', manualPauseGesture, true);
   document.addEventListener('click', manualPauseGesture, true);
+  // Some mobile YouTube builds render an always-Play button after an
+  // involuntary page pause while the actual <video> continues playing.
+  // Letting YouTube handle this click calls Play again instead of Pause.
+  // Intercept only a genuine Play/Pause control when its state is proven stale.
+  document.addEventListener('click', function (e) {
+    if (BROWSE || e.isTrusted === false || !actualPlayPauseButton(e.target)) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v || v.paused || v.ended || !p || typeof p.getPlayerState !== 'function') return;
+    var st;
+    try { st = p.getPlayerState(); } catch (err) { return; }
+    if (st !== 2) return; // consistent player state: let YouTube handle the click
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    console.log('[aay] stale player Play button: honoring user Pause');
+    noteManualPause();
+    enforceExplicitPause(v);
+    schedReport(0);
+  }, true);
   document.addEventListener('keydown', function (e) {
     if (BROWSE || e.isTrusted === false || e.repeat) return;
     var t = e.target, v = getVideo();
@@ -1274,7 +1300,10 @@
     var now = Date.now();
     if (now - stateFixAt < 2500) return;
     stateFixAt = now;
-    try { p.playVideo(); } catch (e) {}
+    try {
+      p.playVideo();
+      console.log('[aay] reconciled stale player Play icon');
+    } catch (e) {}
   }
   // Never toggle video opacity as a repaint workaround. On Android that can
   // promote/demote Chromium's hardware video overlay and leave a black Surface.
@@ -1486,6 +1515,9 @@
     bgSaverCheck();
     try { overloadCheck(getVideo()); } catch (e) {}
     try { logPlayingFormat(getVideo()); } catch (e) {}
+    // Reconcile YouTube's center Play icon and app status without touching
+    // the decoder surface or forcing stream reloads.
+    try { syncPlayerState(); } catch (e) {}
     // Reconcile the app's play/pause icon with the real element (missed events).
     try {
       var rv = getVideo();
@@ -1578,6 +1610,7 @@
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
         }
+        if (ev === 'playing') later(syncPlayerState, 100);
         if (ev === 'pause') bgWatch.pausedAt = Date.now();
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
