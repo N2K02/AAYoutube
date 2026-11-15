@@ -40,16 +40,6 @@
       var hv = h ? parseInt(h[1], 10) : 0, wv = w ? parseInt(w[1], 10) : 0;
       return hv && wv ? Math.min(hv, wv) : hv;
     }
-    function codecLimit(family, fps) {
-      if (!caps || !family || !(family in caps)) return 0;
-      var limit = parseInt(caps[family], 10) || 0;
-      if (limit <= 0) return SOFTWARE_MAX;
-      if (fps > 32 && (family + '_60') in caps) {
-        var l60 = parseInt(caps[family + '_60'], 10) || 0;
-        limit = Math.min(limit, l60 > 0 ? l60 : SOFTWARE_MAX);
-      }
-      return limit;
-    }
     // VP9 profile 2/3 and AV1 10-bit are YouTube's HDR streams.
     function tenBit(t) { return /vp09\.0[23]\./.test(t) || /av01\.\d\.\d+[mh]\.1[02]/.test(t); }
     function typeFps(t) { var m = /framerate\s*=\s*([\d.]+)/.exec(t); return m ? parseFloat(m[1]) : 0; }
@@ -2528,7 +2518,8 @@
     if (N && typeof N.quality === 'function') { // explicit pick: always persisted natively
       try { N.quality(q); } catch (e) {}
     }
-    if (changed) console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
+    // Log every explicit choice, including picking the same resolution again.
+    console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
     // Smooth switch: YouTube performs the change itself and keeps playing from its
     // buffer. Only lock the range if it did not land on the chosen tier.
     later(function () {
@@ -2537,7 +2528,7 @@
       try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
       if (p && q !== 'auto' && current === q && !bgSaverActive()) {
         qualityApply.player = p;
-        qualityApply.key = qualityVideoId() + ':' + q;
+        qualityApply.key = qualityVideoId() + ':' + q + '-' + q;
         qualityApply.last = qualityApply.key;
         qualityApply.at = Date.now();
         console.log('[aay] quality ' + q + ' applied by YouTube; no re-force');
@@ -2583,7 +2574,8 @@
   document.addEventListener('click', function (event) {
     if (BROWSE || !event.target || !event.target.closest) return;
     var target = event.target;
-    if (target.closest(PLAYER_SETTINGS)) {
+    var q = qualityFromTap(target);
+    if (target.closest(PLAYER_SETTINGS) && !q) {
       if (event.isTrusted !== false) {
         qualityMenuOpenedAt = Date.now();
         qualityMenuOpenedVideo = qualityVideoId();
@@ -2591,7 +2583,6 @@
       return; // opening Settings is not itself a quality selection
     }
     var inQualityMenu = !!target.closest(QUALITY_MENU) || !!target.closest(SHEET);
-    var q = qualityFromTap(target);
     if (!inQualityMenu && (!recentSettingsTap() || !q)) return;
     if (event.isTrusted !== false) {
       A.qualityTapAt = Date.now();
