@@ -296,7 +296,7 @@
   var transitUntil = 0;
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
-  function holding() { return inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini)); }
+  function holding() { return !bgWatch.held && (inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini))); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
@@ -457,7 +457,7 @@
     var pv = playerVideo();
     // YouTube may navigate first and replace the media element later. Never
     // resume the previous video while its old media data is still attached.
-    if (v && (!pv || pv.video_id === urlId())) tryPlay(v);
+    if (v && pv && pv.video_id === urlId()) tryPlay(v);
   }
   try {
     document.addEventListener('click', function (e) {
@@ -1301,7 +1301,7 @@
   function tryPlay(v) {
     var n = 0;
     (function step() {
-      if (!AUTO) return;
+      if (!AUTO || PAUSED || bgWatch.held) return;
       if (v.paused && n++ < 12) {
         try { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } catch (e) {}
         setTimeout(step, 800);
@@ -1551,10 +1551,27 @@
   // grab focus back; native resumes once the other media has stopped.
   var MEDIA_SETTLE_MS = 2500;
   A.mediaHold = function (on, giveUp) {
-    bgWatch.held = !!on;
-    if (on && typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
-    if (!on) { bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; }
-    if (!on && giveUp) bgWatch.wanted = false;
+    if (on) {
+      // Another app (or call) owns audio now. Stop audible playback even when
+      // Chromium missed audio focus loss; preserve intent for a later resume.
+      if (typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
+      var v = getVideo();
+      if (v && !v.ended && !v.paused && !PAUSED && !bgWatch.explicitPause)
+        bgWatch.wanted = true;
+      bgWatch.held = true;
+      if (v && !v.paused && !v.ended) {
+        allowPause = true;
+        try { v.pause(); } finally { allowPause = false; }
+        bgWatch.pausedAt = Date.now();
+        console.log('[aay] media focus hold: playback yielded');
+      }
+    } else {
+      bgWatch.held = false;
+      bgWatch.attempts = 0;
+      bgWatch.lastAttemptAt = 0;
+      if (giveUp) bgWatch.wanted = false;
+    }
+    schedReport(0);
   };
 
   function backgroundWatchdog() {
@@ -1649,7 +1666,11 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
+          if (bgWatch.held) {
+            // YouTube can issue a delayed play() after another app takes audio.
+            allowPause = true;
+            try { v.pause(); } finally { allowPause = false; }
+          } else if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
           else {
             PAUSED = false;
             bgWatch.wanted = true; bgWatch.explicitPause = false;
@@ -1931,7 +1952,7 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held) { console.log('[aay] Play deferred while other media holds focus'); break; } if (!v) AUTO = true; else requestPlayerPlay(v); break;
         case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
