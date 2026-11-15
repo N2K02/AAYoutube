@@ -1339,7 +1339,7 @@
     if (BROWSE) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
-    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || isAd()) return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
     var st;
     try { st = p.getPlayerState(); } catch (e) { return; }
     if (st !== 2) return; // 2 = paused
