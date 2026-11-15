@@ -30,6 +30,49 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    private val resumePrefs by lazy {
+        getSharedPreferences("background_playback_restore", Context.MODE_PRIVATE)
+    }
+    private var lastRestoreSavedAt = 0L
+
+    /** Minimal, short-lived record used only after Android restarts this service.
+     * Not used for reboot/autostart and never overrides explicit user intent.
+     */
+    private fun rememberPlaybackForSystemRestart(s: Snap) {
+        if (s.userPaused || s.ended || s.id.isBlank() || quitRequested) {
+            if (resumePrefs.getBoolean("active", false))
+                resumePrefs.edit().clear().apply()
+            return
+        }
+        if (!s.playing) return // transient Chromium pause is not user intent
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastRestoreSavedAt != 0L && now - lastRestoreSavedAt < 30_000L &&
+            resumePrefs.getString("id", null) == s.id) return
+        lastRestoreSavedAt = now
+        resumePrefs.edit().putBoolean("active", true).putString("id", s.id)
+            .putLong("updatedAt", System.currentTimeMillis()).apply()
+    }
+
+    private fun restoreSystemKilledPlayback() {
+        val active = resumePrefs.getBoolean("active", false)
+        val id = resumePrefs.getString("id", null)
+        val savedAt = resumePrefs.getLong("updatedAt", 0L)
+        // Only immediately recover a genuinely interrupted session. A stale
+        // record must never start music hours after the user stopped using it.
+        val age = System.currentTimeMillis() - savedAt
+        if (!active || id.isNullOrBlank() || age !in 0L..300_000L ||
+            !Features.current.backgroundPlay) {
+            resumePrefs.edit().clear().apply()
+            return
+        }
+        val saved = Library.last
+        val sec = saved?.takeIf { it.id == id }?.posSec?.coerceAtLeast(0L) ?: 0L
+        AppLog.add("MEDIA", "Restoring recent playback after Android service recreation")
+        send(Msg.PLAY, Bundle().apply {
+            putString("id", id)
+            putLong("sec", sec)
+        })
+    }
     // A WebView is not a native MediaPlayer. Prevent CPU sleep while its
     // stream is playing or recovering, without keeping the display awake.
     private var playbackWakeLock: PowerManager.WakeLock? = null
@@ -393,6 +436,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
         if (s.playing) recoveringPlayback = false
+        rememberPlaybackForSystemRestart(s)
         updatePlaybackWakeLock(s.playing || recoveringPlayback)
         if (quitRequested) {
             updateNotification(s)
@@ -452,6 +496,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     }
                 }
                 override fun onPause() {
+                    resumePrefs.edit().clear().apply()
                     transportSkips.clear()
                     recovery.cancel()
                     recoveringPlayback = false
@@ -499,6 +544,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     send(Msg.OPEN, Bundle().apply { putString("id", item) })
                 }
                 override fun onStop() {
+                    resumePrefs.edit().clear().apply()
                     transportSkips.clear()
                     recovery.cancel()
                     recoveringPlayback = false
@@ -546,6 +592,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun requestQuit() {
         if (quitRequested || shuttingDown) return
         quitRequested = true
+        resumePrefs.edit().clear().apply()
         pending.clear()
         recoveringPlayback = false
         recovery.cancel()
@@ -603,6 +650,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
         if (intent?.action == ACTION_QUIT) requestQuit()
+        if (intent == null && !quitRequested) restoreSystemKilledPlayback()
         // Publish the initial playing state even when the WebView Messenger has
         // not registered yet; future IPC reports will update position and metadata.
         if (initial != null && !quitRequested) publish(snapshot)
