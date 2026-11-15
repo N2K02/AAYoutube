@@ -2135,17 +2135,26 @@
     if (N && typeof N.quality === 'function') {
       try { N.quality(q); } catch (e) {}
     }
-    // Smooth switch: YouTube's own menu handler already performs the change and
-    // keeps playing from its buffer. Forcing setPlaybackQualityRange again here
-    // caused a second source switch (visible stall). Only mark it as applied.
-    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    if (p && !bgSaverActive()) {
-      qualityApply.player = p;
-      qualityApply.key = qualityVideoId() + ':' + q;
-      qualityApply.last = qualityApply.key;
-      qualityApply.at = Date.now();
-    } else qualityApply.key = '';
-    console.log('[aay] user selected video quality=' + q + ' (applied by YouTube, no re-force)');
+    // Smooth switch: YouTube's own menu handler performs the change and keeps
+    // playing from its buffer. Re-forcing the range immediately caused a second
+    // source switch (visible stall). Wait, and only lock the range if YouTube
+    // did not land on the chosen tier itself (e.g. capped by our previous lock).
+    later(function () {
+      var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      var current = '';
+      try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
+      if (p && q !== 'auto' && current === q && !bgSaverActive()) {
+        qualityApply.player = p;
+        qualityApply.key = qualityVideoId() + ':' + q;
+        qualityApply.last = qualityApply.key;
+        qualityApply.at = Date.now();
+        console.log('[aay] quality ' + q + ' applied by YouTube; no re-force');
+        return;
+      }
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, 1500);
+    console.log('[aay] user selected video quality=' + q);
   }, true);
   // A reload of the same video (new source, same player and id) must get the saved
   // quality again before it buffers; otherwise YouTube may pick 4K on its own.

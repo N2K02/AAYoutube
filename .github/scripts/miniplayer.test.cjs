@@ -31,6 +31,11 @@ function playerPage(options = {}) {
     nextVideo() { nextVideoCalls++; },
     previousVideo() { previousVideoCalls++; },
   };
+  if (options.currentQuality) {
+    let current = options.currentQuality;
+    mockPlayer.getPlaybackQuality = () => current;
+    mockPlayer.setCurrentQuality = (q) => { current = q; };
+  }
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -173,6 +178,7 @@ function playerPage(options = {}) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
     get miniRequests() { return miniRequests; },
+    player: mockPlayer,
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
     emit(type, event) {
@@ -401,6 +407,25 @@ test('720p is requested on startup and does not get reset on small-layout toggle
   p.window.__aay.pip(false);
   p.window.__aay.mini(false);
   assert.equal(p.qualityCalls.length, n, 'mode switches must not force a redundant reload');
+});
+
+test('menu pick already applied by YouTube is not re-forced (smooth switch)', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const option = (label) => ({
+    tagName: 'BUTTON', textContent: label,
+    closest(selector) {
+      return selector === 'a[href]' || selector === '[class*="renderer"],[class*="lockup"]' ? null : this;
+    },
+  });
+  const n = p.qualityCalls.length;
+  p.emit('click', { target: option('1080p') });
+  p.player.setCurrentQuality('hd1080'); // YouTube's own handler switched seamlessly
+  p.flush();
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  assert.equal(p.qualityCalls.length, n, 'no second source switch after a menu pick');
+  p.window.__aay.mini(true);
+  assert.equal(p.qualityCalls.length, n, 'already-applied pick stays without reload');
 });
 
 test('explicit quality-menu selection is saved; adaptive changes are not', () => {
