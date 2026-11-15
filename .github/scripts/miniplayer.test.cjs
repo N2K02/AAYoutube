@@ -19,6 +19,7 @@ function playerPage(options = {}) {
   const requests = [];
   const qualityCalls = [];
   const qualityStorage = new Map();
+  const perfReports = [];
   const localStorage = {
     getItem(key) { return qualityStorage.get(key) || null; },
     setItem(key, value) { qualityStorage.set(key, String(value)); },
@@ -125,6 +126,7 @@ function playerPage(options = {}) {
       lyricsTime(...args) { lyricReports.push(args); },
       mini() { miniRequests++; },
       quality(choice) { selectedQualities.push(choice); },
+      perf(payload) { perfReports.push(JSON.parse(payload)); },
       state(json) { stateReports.push(JSON.parse(json)); },
       otherMediaHold() { return !!(options.otherMedia && options.otherMedia.active); },
     },
@@ -171,7 +173,7 @@ function playerPage(options = {}) {
   return {
     domNodes: dom ? dom.nodes : null,
     MediaSource: FakeMediaSource,
-    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage,
+    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage, perfReports,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     advance(ms) { clock.t += ms; },
     setRealHidden(on) { pageState.hidden = !!on; },
@@ -1520,4 +1522,40 @@ test('auto quality obeys thermal cap and returns to adaptive when cooled', () =>
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'auto cannot bypass thermal protection');
   p.window.__aay.thermal(0);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'cooling restores the full adaptive quality range');
+});
+
+test('performance diagnostics aggregate playback counters without personal data', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(true); // duplicate must not resize the video surface again
+  p.emit('loadstart', { target: p.video });
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(p.perfReports.length, 1);
+  const perf = p.perfReports[0];
+  assert.equal(perf.sec, 30);
+  assert.equal(perf.layout, 1, 'duplicate mini mode does not trigger surface re-layout');
+  assert.equal(perf.sourceLoads, 1);
+  assert.equal(perf.width, 1920);
+  assert.equal(perf.height, 1080);
+  assert.equal(perf.tier, 'hd720');
+  assert.equal('videoId' in perf, false);
+  assert.equal('url' in perf, false);
+  assert.equal('rendererCpuPct' in perf, false, 'JavaScript cannot claim renderer CPU measurements');
+});
+
+test('paused video produces no periodic performance bridge reports', () => {
+  const p = playerPage({ quality: true });
+  p.video.paused = true;
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(p.perfReports.length, 0);
+});
+
+test('audio DSP reports graph state, not an invented CPU percentage', () => {
+  const eq = fs.readFileSync('app/src/main/assets/aay_eq.js', 'utf8');
+  assert.match(eq, /A\.eqPerf = function \(\)/);
+  assert.match(eq, /needsRoute\(\) \? 'dsp' : 'bypass'/);
+  assert.doesNotMatch(eq, /A\.eqCpuPct/);
 });
