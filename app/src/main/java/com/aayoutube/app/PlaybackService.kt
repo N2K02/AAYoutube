@@ -34,6 +34,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // timer so a WebView that stops reporting is still visible in logcat.
     private var lastHealthElapsed = 0L
     private var lastCpuMs = 0L
+    private val recentMediaCpu = ArrayDeque<Int>()
     private var lastPlaybackPhase = ""
     private var interruptedSince = 0L
     private fun tracePlaybackPhase(s: Snap) {
@@ -50,10 +51,17 @@ class PlaybackService : MediaBrowserServiceCompat() {
         val cpuPercent = ForegroundDemotePolicy.cpuPercent(lastHealthElapsed, lastCpuMs, now, cpu)
         lastHealthElapsed = now
         lastCpuMs = cpu
+        if (cpuPercent >= 0 && cpuPercent <= 1000) {
+            recentMediaCpu.addLast(cpuPercent)
+            if (recentMediaCpu.size > 10) recentMediaCpu.removeFirst()
+        }
+        val cpuAverage = if (recentMediaCpu.isEmpty()) -1 else recentMediaCpu.sum() / recentMediaCpu.size
+        val cpuPeak = recentMediaCpu.maxOrNull() ?: -1
         val audio = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
         val power = getSystemService(Context.POWER_SERVICE) as PowerManager
         AppLog.add("HEALTH", "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)} " +
-            "mainCpuPct=$cpuPercent musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
+            "mainCpuPct=$cpuPercent avgCpuPct=$cpuAverage peakCpuPct=$cpuPeak " +
+            "musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
             "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground bound=$bound")
     }
     private val healthTick = object : Runnable {
