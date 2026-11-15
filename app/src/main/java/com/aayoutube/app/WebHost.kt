@@ -1066,7 +1066,10 @@ object WebHost {
         // A previously playing stream may have dropped silently. Leave the
         // watchdog active until Play succeeds, the user pauses, or Stop/Quit.
         // Background play OFF still permits the normal idle freeze offscreen.
-        if (keepRecovering()) return
+        if (keepRecovering()) {
+            AppLog.add("POWER", "Idle freeze skipped while playback recovery is requested")
+            return
+        }
         // Do not pause the WebView's own timers while it is attempting to recover
         // a spontaneous background pause. A deliberate user pause remains fast-idle.
         val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
@@ -1078,7 +1081,7 @@ object WebHost {
         val w = web ?: return
         if (frozen) return
         frozen = true
-        AppLog.add("POWER", "Page frozen")
+        AppLog.add("POWER", "Page frozen playing=${snapshot.value.playing} wanted=$playbackWanted")
         (w as? BackgroundWebView)?.pauseForIdle()
         w.pauseTimers()
     }
@@ -1147,7 +1150,8 @@ object WebHost {
      * paused with no screen open), or by Android if it needs the memory.
      */
     fun onLinkUnbound() {
-        AppLog.add("LINK", "Media service disconnected")
+        AppLog.add("LINK", "Media service disconnected playing=${snapshot.value.playing} wanted=$playbackWanted " +
+            "shown=$shown frozen=$frozen")
         link = null
         linkEpoch = -1
         if (!shown && !snapshot.value.playing) scheduleFreeze()
