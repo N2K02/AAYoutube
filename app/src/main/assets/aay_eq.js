@@ -441,5 +441,11 @@
     if (!want()) report('off');
     else if (!(EQ.status === 'unsupported' && !EQ.count)) report(settled());
   };
+  // Diagnostic mode only. Realtime audio thread CPU is not exposed to Web Audio.
+  // This distinguishes expensive DSP routing from the unprocessed native path.
+  A.eqPerf = function () {
+    var state = EQ.ctx ? EQ.ctx.state : 'none';
+    return (needsRoute() ? 'dsp' : 'bypass') + ':' + state + ':' + EQ.count;
+  };
   A.eqStatus = function () { return EQ.status || settled(); };
 })();
