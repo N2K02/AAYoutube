@@ -15,17 +15,19 @@ class SmoothQualitySwitchContractTest {
     @Test fun userMenuPickIsNotReForcedAfterYouTubeApplies() {
         val adopt = js.substringAfter("function adoptUserQuality(q, source) {").substringBefore("A.adoptUserQuality = adoptUserQuality;")
         assertTrue(adopt.contains("current === q && !bgSaverActive()"))
-        assertTrue(adopt.contains("qualityApply.key = qualityVideoId() + ':' + q"))
+        assertTrue(adopt.contains("qualityApply.key = qualityVideoId() + ':' + q + '-' + q"))
         assertFalse(adopt.contains("later(applyPreferredQuality"))
     }
 
     @Test fun pickDetectionDoesNotDependOnMenuMarkup() {
-        assertTrue(js.contains("if (q) adoptUserQuality(q, 'menu');"))
+        assertTrue(js.contains("adoptUserQuality(q, 'menu');"))
         assertTrue(js.contains("A.adoptUserQuality(q, 'YouTube saved pick')"))
         assertTrue(js.contains("adoptUserQuality(current, 'player change after tap')"))
         assertTrue(js.contains("if (A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 && tapVideo && tapVideo === qualityVideoId())"))
-        // Only taps inside a quality menu/sheet count (not unrelated page taps).
-        assertTrue(js.contains("if (!inQualityMenu) return;"))
+        // Outside menu/sheet markup, a recognized quality label is accepted only
+        // in the short window after an explicit player Settings tap.
+        assertTrue(js.contains("if (!inQualityMenu && (!recentSettingsTap() || !q)) return;"))
+        assertTrue(js.contains("if (target.closest(PLAYER_SETTINGS) && !q)"))
     }
 
     @Test fun sameVideoReloadReappliesSavedQualityWithoutLoop() {
