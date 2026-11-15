@@ -607,7 +607,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
         // not registered yet; future IPC reports will update position and metadata.
         if (initial != null && !quitRequested) publish(snapshot)
         handler.post { if (!shuttingDown) updateNotification(snapshot) }
-        return super.onStartCommand(intent, flags, startId)
+        super.onStartCommand(intent, flags, startId)
+        // When EMUI reclaims a started foreground service for memory pressure,
+        // Android may recreate it later. This does not bypass user force-stop.
+        return START_STICKY
     }
 
     override fun onGetRoot(
@@ -662,8 +665,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!snapshot.playing && !snapshot.buffering && !recoveringPlayback &&
-            terminalIntent.pendingCommand == null) stopSelf()
+        // EMUI may dispatch task removal during launcher/recents cleanup while
+        // Chromium is momentarily silent. This is not a user Stop or Quit.
+        // The existing idleStop timer performs bounded idle cleanup; stopping
+        // here would remove the foreground service that protects screen-off play.
+        AppLog.add("MEDIA", "Task removed; foreground=$foreground playing=${snapshot.playing} " +
+            "recovering=$recoveringPlayback userPaused=${snapshot.userPaused} quit=$quitRequested")
         super.onTaskRemoved(rootIntent)
     }
 
