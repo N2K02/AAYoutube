@@ -2378,21 +2378,29 @@
   }
   A.applyQuality = applyPreferredQuality;
   function menuQuality(text) {
-    var label = String(text || '').trim();
-    // Do not interpret the parent "Quality 720p" settings button as a pick.
-    if (/quality/i.test(label) || label.length > 36) return null;
-    if (/^auto(?:\s*\([^)]*\))?$/i.test(label)) return 'auto';
-    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:60|HDR|HD|4K|8K))*$/i.exec(label);
+    var label = String(text || '').replace(/\\s+/g, ' ').trim();
+    // A parent settings row such as "Quality 720p" is not a resolution pick.
+    if (/quality/i.test(label) || label.length > 64) return null;
+    if (/^auto(?:\\s*\\([^)]*\\))?$/i.test(label)) return 'auto';
+    // Mobile YouTube uses labels such as "1080p60", "1080p HDR", and
+    // "1080p Premium"; nested text nodes or badges can add whitespace.
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|\\([^)]*\\)))*$/i.exec(label);
     return m ? qualityLabels[m[1]] : null;
   }
   document.addEventListener('click', function (event) {
     if (BROWSE || !event.target || !event.target.closest) return;
+    // The mobile watch page uses ytm-menu-item and yt-list-item variants;
+    // restricting to ytm-select-menu-item-renderer silently lost preferences.
+    // Match a real menu option, not arbitrary page text or the settings header.
     var item = event.target.closest(
       '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
       'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
+      'ytm-menu-item, ytm-sheet-item, ytm-list-item-renderer,' +
       '[role="menuitemradio"], [role="option"]');
     if (!item) return;
-    var q = menuQuality(item.textContent || item.getAttribute('aria-label'));
+    var q = menuQuality(item.textContent);
+    if (!q && item.getAttribute) q = menuQuality(item.getAttribute('aria-label'));
+    if (!q && event.target !== item) q = menuQuality(event.target.textContent);
     if (!q) return;
     CFG.preferredQuality = q;
     writeYouTubeQuality(q);
