@@ -1409,5 +1409,5 @@ test('auto quality obeys thermal cap and returns to adaptive when cooled', () =>
   p.window.__aay.thermal(3);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'auto cannot bypass thermal protection');
   p.window.__aay.thermal(0);
-  assert.deepEqual(p.qualityCalls.at(-1), ['auto', 'auto'], 'cooling restores adaptive choice');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'cooling restores the full adaptive quality range');
 });
