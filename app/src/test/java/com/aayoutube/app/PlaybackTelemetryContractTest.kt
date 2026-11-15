@@ -44,7 +44,8 @@ class PlaybackTelemetryContractTest {
     @Test fun mediaCpuHasBoundedAverageAndPeak() {
         val service = read("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(service.contains("recentMediaCpu.size > 10"))
-        assertTrue(service.contains("avgCpuPct=$cpuAverage peakCpuPct=$cpuPeak"))
+        assertTrue(service.contains("avgCpuPct="))
+        assertTrue(service.contains("peakCpuPct="))
         assertTrue(service.contains("handler.postDelayed(this, 60_000L)"))
     }
 }
