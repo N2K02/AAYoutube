@@ -761,8 +761,14 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                         (hostOrigin.x + from.left + from.width).roundToInt(),
                         (hostOrigin.y + from.top + from.height).roundToInt()))
                 }
+                if (frame == null) {
+                    // Capture failed (protected video, timeout): never animate a black box;
+                    // the plain scrim fade below handles this transition instead.
+                    layoutSmall = small
+                    return@LaunchedEffect
+                }
                 ghostToMini = small
-                ghost = Triple(frame?.asImageBitmap(), from, to)
+                ghost = Triple(frame.asImageBitmap(), from, to)
                 ghostMove.snapTo(0f)
                 ghostAlpha.snapTo(1f)
                 layoutSmall = small // the single WebView resize happens under the ghost

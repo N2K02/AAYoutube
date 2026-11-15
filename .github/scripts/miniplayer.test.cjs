@@ -370,37 +370,6 @@ test('a wrong play/pause state is reported again without waiting', () => {
   assert.equal(p.stateReports.at(-1).playing, false);
 });
 
-test('a tier above 1080p that stalls with data buffered is lowered and remembered', () => {
-  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
-  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
-  p.flush();
-  p.video.buffered = { length: 1, end: () => 80 };
-  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: 100, droppedVideoFrames: 0 });
-  p.runIntervals();               // first sample
-  p.advance(9000);                // decoder stuck: currentTime does not move
-  p.runIntervals();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'falls back one tier');
-  assert.equal(p.qualityStorage.get('aay-max-smooth-h'), '1440', 'limit remembered');
-});
-
-test('heavy frame dropping at 4K also lowers the tier; 1080p is never touched', () => {
-  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
-  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
-  p.flush();
-  let f = 0, d = 0;
-  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
-  p.runIntervals();
-  f = 300; d = 240; p.video.currentTime += 9; p.advance(9000);
-  p.runIntervals();
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
-  const q = playerPage({ quality: true, currentQuality: 'hd1080' });
-  q.flush();
-  const n = q.qualityCalls.length;
-  q.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: 300, droppedVideoFrames: 290 });
-  q.runIntervals(); q.advance(9000); q.runIntervals();
-  assert.equal(q.qualityCalls.length, n, '1080p and below are left alone');
-});
-
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
   const p = playerPage();
   p.window.__aay.mini(true);
@@ -1313,15 +1282,107 @@ test('8K stays available through the codec whose hardware decodes it', () => {
   assert.equal(sw.MediaSource.isTypeSupported(sized(VP9, 7680, 4320)), false, 'no 8K at all here');
 });
 
-test('with native caps a stall only lowers this session', () => {
-  const p = playerPage({ quality: true, currentQuality: 'highres',
-    cfg: { decodeCaps: { vp9: 2160, av1: 4320, h264: 2160 } } });
-  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'highres' });
+function overloadPage(quality, cfg) {
+  const p = playerPage({ quality: true, currentQuality: quality, cfg: cfg || {} });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: quality });
   p.flush();
+  return p;
+}
+function badWindow(p, kind) {
+  if (kind === 'stall') { p.video.buffered = { length: 1, end: () => p.video.currentTime + 60 }; }
+  p.advance(9000);
+  p.runIntervals();
+}
+
+test('overload: a sustained decoder stall steps down one tier; one bad window does not', () => {
+  const p = overloadPage('hd2160');
   p.video.buffered = { length: 1, end: () => 80 };
-  p.runIntervals(); p.advance(9000); p.runIntervals(); // 8K stalls once (heat, bad stream)
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160'], 'drops a tier now');
-  assert.equal(p.qualityStorage.has('aay-max-smooth-h'), false, 'nothing persisted: 8K offered next time');
+  p.runIntervals();                       // first sample
+  badWindow(p, 'stall');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'isolated spike ignored');
+  badWindow(p, 'stall');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'sustained: 4K -> 1440p');
+  assert.equal(p.qualityStorage.get('aay-max-smooth-h'), '1440', 'remembered without native caps');
+});
+
+test('overload: buffering from the network (nothing buffered) never lowers quality', () => {
+  const p = overloadPage('hd2160');
+  p.video.buffered = { length: 1, end: () => p.video.currentTime + 0.5 };
+  p.runIntervals();
+  for (let i = 0; i < 4; i++) { p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+});
+
+test('overload: sustained frame dropping steps down gradually with a cooldown, floor 720p', () => {
+  const p = overloadPage('hd2160');
+  let f = 0, d = 0;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
+  const drop = () => { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); };
+  p.runIntervals();
+  drop(); drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  p.player.setCurrentQuality('hd1440');
+  drop(); drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'cooldown: no second step within 60 s');
+  for (let i = 0; i < 6; i++) drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'then the next tier');
+  p.player.setCurrentQuality('hd720');
+  for (let i = 0; i < 20; i++) drop();
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'never below 720p');
+});
+
+test('overload: stable playback raises the limit again; preference untouched', () => {
+  const p = overloadPage('hd2160', { decodeCaps: { vp9: 4320, av1: 4320, h264: 2160 } });
+  let f = 0, d = 0;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
+  p.runIntervals();
+  for (let i = 0; i < 2; i++) { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.equal(p.qualityStorage.has('aay-max-smooth-h'), false, 'native caps: session only');
+  p.player.setCurrentQuality('hd1440');
+  for (let i = 0; i < 25; i++) { f += 300; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160'], 'back to the saved 4K after 3 min clean');
+});
+
+test('thermal: severe heat caps at 1080p and cooling restores the saved quality', () => {
+  const p = overloadPage('hd2160');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  p.window.__aay.thermal(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  p.window.__aay.thermal(1);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  const hot = overloadPage('hd2160', { thermal: 4 });
+  assert.deepEqual(hot.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'already hot at page start');
+});
+
+test('decoder gate: 60 fps and HDR use their own hardware limits', () => {
+  const ty = (c, w, h, fps) => c + '; width=' + w + '; height=' + h + '; framerate=' + fps;
+  const VP9 = 'video/webm; codecs="vp09.00.51.08"', VP9HDR = 'video/webm; codecs="vp09.02.51.10.01.09.16.09.00"';
+  const AV1 = 'video/mp4; codecs="av01.0.16M.08"', AV1HDR = 'video/mp4; codecs="av01.0.16M.10.0.110.09.16.09.0"';
+  const p = playerPage({ cfg: { decodeCaps: { vp9: 2160, vp9_60: 1440, vp9_hdr: 0, av1: 4320, av1_60: 2160, av1_hdr: 1, h264: 1080, h264_60: 1080 } } });
+  const ms = p.MediaSource;
+  assert.equal(ms.isTypeSupported(ty(VP9, 3840, 2160, 30)), true);
+  assert.equal(ms.isTypeSupported(ty(VP9, 3840, 2160, 60)), false, '4K60 VP9 above its 60 fps limit');
+  assert.equal(ms.isTypeSupported(ty(AV1, 7680, 4320, 30)), true, '8K30 AV1 kept');
+  assert.equal(ms.isTypeSupported(ty(AV1, 7680, 4320, 60)), false, '8K60 AV1 above its 60 fps limit');
+  assert.equal(ms.isTypeSupported(ty(AV1, 3840, 2160, 60)), true);
+  assert.equal(ms.isTypeSupported(ty(VP9HDR, 1920, 1080, 30)), false, 'no 10-bit VP9 decoder: HDR VP9 hidden');
+  assert.equal(ms.isTypeSupported(ty(AV1HDR, 3840, 2160, 30)), true, 'HDR through AV1 instead');
+});
+
+test('hidden page sends progress less often but play/pause changes at once', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.setBg(true);
+  p.video.trigger('timeupdate'); // first heartbeat
+  p.flush();
+  const n = p.stateReports.length;
+  for (let i = 0; i < 4; i++) { p.advance(1500); p.video.currentTime += 1.5; p.video.trigger('timeupdate'); p.flush(); }
+  assert.equal(p.stateReports.length, n, 'no 1.4 s heartbeat while hidden');
+  p.advance(10000); p.video.trigger('timeupdate'); p.flush();
+  assert.equal(p.stateReports.length, n + 1, '10 s heartbeat');
+  p.video.paused = true; p.video.trigger('timeupdate');
+  assert.equal(p.stateReports.at(-1).playing, false, 'state change is immediate');
 });
 
 test('navigation diagnostics redact queries, video identifiers and fragments', () => {

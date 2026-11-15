@@ -42,16 +42,30 @@
       var hv = h ? parseInt(h[1], 10) : 0, wv = w ? parseInt(w[1], 10) : 0;
       return hv && wv ? Math.min(hv, wv) : hv;
     }
-    function codecLimit(family) {
+    function codecLimit(family, fps) {
       if (!caps || !family || !(family in caps)) return 0;
       var limit = parseInt(caps[family], 10) || 0;
-      return limit > 0 ? limit : SOFTWARE_MAX;
+      if (limit <= 0) return SOFTWARE_MAX;
+      if (fps > 32 && (family + '_60') in caps) {
+        var l60 = parseInt(caps[family + '_60'], 10) || 0;
+        limit = Math.min(limit, l60 > 0 ? l60 : SOFTWARE_MAX);
+      }
+      return limit;
+    }
+    // VP9 profile 2/3 and AV1 10-bit are YouTube's HDR streams.
+    function tenBit(t) { return /vp09\.0[23]\./.test(t) || /av01\.\d\.\d+[mh]\.1[02]/.test(t); }
+    function typeFps(t) { var m = /framerate\s*=\s*([\d.]+)/.exec(t); return m ? parseFloat(m[1]) : 0; }
+    function tooLargeFor(family, size, fps, isTenBit) {
+      if (!size && !isTenBit) return false;
+      if (caps) {
+        if (isTenBit && family && (family + '_hdr') in caps && !parseInt(caps[family + '_hdr'], 10)) return true;
+        var limit = codecLimit(family, fps);
+        return !!size && !!limit && size > limit;
+      }
+      return !!size && !!maxSmoothHeight && size > maxSmoothHeight;
     }
     function tooLarge(t) {
-      var size = videoSize(t);
-      if (!size) return false;
-      if (caps) { var limit = codecLimit(codecFamily(t)); return !!limit && size > limit; }
-      return !!maxSmoothHeight && size > maxSmoothHeight;
+      return tooLargeFor(codecFamily(t), videoSize(t), typeFps(t), tenBit(t));
     }
     function blocked(type) {
       var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
@@ -66,8 +80,7 @@
       localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
     } catch (e) {}
     if (caps) try {
-      console.log('[aay] decode limits vp9=' + codecLimit('vp9') + ' av1=' + codecLimit('av1') +
-        ' h264=' + codecLimit('h264') + ' (hardware, from Android)');
+      console.log('[aay] decode limits (hardware, from Android) ' + JSON.stringify(caps));
     } catch (e) {}
     function wrapStatic(Ctor) {
       if (!Ctor || typeof Ctor.isTypeSupported !== 'function' || Ctor.isTypeSupported.__aay) return;
@@ -94,8 +107,8 @@
         var info = function (cfg) {
           var t = cfg && cfg.video && cfg.video.contentType;
           var v0 = cfg && cfg.video, size = v0 ? Math.min(v0.height || 0, v0.width || v0.height || 0) : 0;
-          var big = !!size && (caps ? (codecLimit(codecFamily(String(t || '').toLowerCase())) || Infinity) < size
-            : (maxSmoothHeight && size > maxSmoothHeight));
+          var lt = String(t || '').toLowerCase();
+          var big = tooLargeFor(codecFamily(lt), size, v0 && v0.framerate || 0, tenBit(lt));
           if (big || blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
           return origInfo(cfg);
         };
@@ -973,6 +986,9 @@
     return q.slice(Math.max(0, i - 10), i + 25);
   }
   var lastSent = null;
+  // Nothing on screen shows the position while hidden (Android extrapolates the
+  // media-session position): send progress less often; state changes stay instant.
+  var BG_PROGRESS_MS = 10000;
   function report() {
     if (!N) return;
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
@@ -1417,6 +1433,7 @@
   function backgroundWatchdog() {
     bgSaverCheck();
     try { overloadCheck(getVideo()); } catch (e) {}
+    try { logPlayingFormat(getVideo()); } catch (e) {}
     // Reconcile the app's play/pause icon with the real element (missed events).
     try {
       var rv = getVideo();
@@ -1529,7 +1546,7 @@
       if (lastSent && lastSent.id && lastSent.playing !== (!v.paused && !v.ended)) {
         lastProgressReportAt = now;
         report();
-      } else if (now - lastProgressReportAt > 1400) {
+      } else if (now - lastProgressReportAt > (A.isBg && !A.isCar ? BG_PROGRESS_MS : 1400)) {
         lastProgressReportAt = now;
         schedReport(0);
       }
@@ -2178,46 +2195,110 @@
   var deviceCapH = 0;
   var nativeCaps = !!(CFG.decodeCaps && typeof CFG.decodeCaps === 'object');
   try { if (!nativeCaps) deviceCapH = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+  // Heat: Android thermal status >= SEVERE (3) caps quality at 1080p until it cools.
+  var THERMAL_SEVERE = 3, THERMAL_CAP = 1080;
+  var thermalHot = (parseInt(CFG.thermal, 10) || 0) >= THERMAL_SEVERE;
+  A.thermal = function (status) {
+    var hot = (parseInt(status, 10) || 0) >= THERMAL_SEVERE;
+    if (hot === thermalHot) return;
+    thermalHot = hot;
+    console.log('[aay] device ' + (hot ? 'hot: capping quality at 1080p' : 'cooled: quality limit lifted'));
+    qualityApply.key = '';
+    applyPreferredQuality();
+  };
+  function effectiveCap() {
+    var cap = deviceCapH;
+    if (thermalHot) cap = cap ? Math.min(cap, THERMAL_CAP) : THERMAL_CAP;
+    return cap;
+  }
   function capForDevice(q) {
-    if (!deviceCapH || q === 'auto' || (qualityHeight[q] || 0) <= deviceCapH) return q;
-    var best = 'hd1080';
-    qualityOrder.forEach(function (l) { if (qualityHeight[l] <= deviceCapH) best = l; });
+    var cap = effectiveCap();
+    if (!cap || q === 'auto' || (qualityHeight[q] || 0) <= cap) return q;
+    var best = 'hd720';
+    qualityOrder.forEach(function (l) { if (qualityHeight[l] <= cap) best = l; });
     return best;
   }
-  var overload = { at: 0, t: 0, frames: 0, dropped: 0 };
+  /* Gradual, sustained-only fallback (8K -> 4K -> 1440p -> 1080p -> 720p):
+   *  - a window is 8 s; TWO bad windows in a row are needed (no reaction to spikes);
+   *  - bad = stalled although >3 s is buffered (decoder, not network) or >50% dropped;
+   *  - 60 s cooldown after a step; never below 720p;
+   *  - after 3 min of clean playback the limit steps back up (session-only with
+   *    native caps, so the saved preference and next sessions are untouched). */
+  var OVERLOAD_WINDOW_MS = 8000, OVERLOAD_COOLDOWN_MS = 60000, OVERLOAD_RECOVER_MS = 180000;
+  var stepDown = { 4320: 2160, 2880: 2160, 2160: 1440, 1440: 1080, 1080: 720 };
+  var stepUp = { 720: 1080, 1080: 1440, 1440: 2160, 2160: 4320 };
+  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0 };
+  function overloadSample(v, now, frames, dropped) {
+    overload.at = now; overload.t = v.currentTime; overload.frames = frames; overload.dropped = dropped;
+  }
   function overloadCheck(v) {
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; return; }
+    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; overload.bad = 0; return; }
     var cur = '';
     try { if (typeof p.getPlaybackQuality === 'function') cur = p.getPlaybackQuality(); } catch (e) {}
     var h = qualityHeight[cur] || 0;
-    if (h <= 1080) { overload.at = 0; return; }
     var now = Date.now(), q = null;
     try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
     var frames = q ? q.totalVideoFrames : 0, dropped = q ? q.droppedVideoFrames : 0;
-    if (!overload.at) { overload = { at: now, t: v.currentTime, frames: frames, dropped: dropped }; return; }
-    if (now - overload.at < 8000) return;
+    if (!overload.at) { overloadSample(v, now, frames, dropped); return; }
+    if (now - overload.at < OVERLOAD_WINDOW_MS) return;
     var ahead = 0;
     try { if (v.buffered && v.buffered.length) ahead = v.buffered.end(v.buffered.length - 1) - v.currentTime; } catch (e) {}
     var moved = v.currentTime - overload.t, df = frames - overload.frames, dd = dropped - overload.dropped;
-    // Stalled although data is buffered = the decoder, not the network.
     var stalled = ahead > 3 && moved < (now - overload.at) / 1000 * 0.25;
     var dropping = df > 60 && dd / df > 0.5;
-    overload = { at: now, t: v.currentTime, frames: frames, dropped: dropped };
-    if (!stalled && !dropping) return;
-    var lower = h >= 4320 ? 2160 : h >= 2160 ? 1440 : 1080;
+    overloadSample(v, now, frames, dropped);
+    if (!stalled && !dropping) {
+      overload.bad = 0;
+      if (!overload.goodSince) overload.goodSince = now;
+      // Conditions improved: allow the next tier again (never above the saved choice).
+      if (deviceCapH && now - overload.goodSince >= OVERLOAD_RECOVER_MS && now >= overload.coolUntil) {
+        var up = stepUp[deviceCapH];
+        deviceCapH = up && up < 4320 ? up : 0;
+        overload.goodSince = now; overload.coolUntil = now + OVERLOAD_COOLDOWN_MS;
+        console.log('[aay] playback stable: quality limit ' + (deviceCapH ? 'raised to ' + deviceCapH + 'p' : 'removed'));
+        qualityApply.key = '';
+        applyPreferredQuality();
+      }
+      return;
+    }
+    overload.goodSince = 0;
+    if (h <= 720 || ++overload.bad < 2 || now < overload.coolUntil) return;
+    var lower = stepDown[h] || 720;
     if (deviceCapH && deviceCapH <= lower) return;
     deviceCapH = lower;
+    overload.bad = 0; overload.coolUntil = now + OVERLOAD_COOLDOWN_MS;
     // With Android's codec list the menu is already right; a stall (heat, a bad
     // stream) only lowers THIS session, so 8K is offered again next time.
     if (!nativeCaps) try { localStorage.setItem('aay-max-smooth-h', String(lower)); } catch (e) {}
-    console.log('[aay] ' + cur + ' overloads this device (' + (stalled ? 'stalled' : 'dropping frames') +
-      '): limit now ' + lower + 'p');
-    overload.at = 0;
+    console.log('[aay] ' + cur + ' overloads this device (' + (stalled ? 'stalled with ' + Math.round(ahead) +
+      's buffered' : Math.round(dd * 100 / df) + '% frames dropped') + '): limit now ' + lower + 'p');
     qualityApply.key = '';
     applyPreferredQuality();
   }
   A.overloadCheck = overloadCheck;
+  // Diagnostics: what actually plays (codec, tier, size, fps), once per change.
+  var lastFormat = '';
+  function logPlayingFormat(v) {
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!p || !v || !v.videoWidth) return;
+    var codec = '', fps = '', q = '';
+    try { if (typeof p.getPlaybackQuality === 'function') q = p.getPlaybackQuality(); } catch (e) {}
+    try {
+      var st = typeof p.getStatsForNerds === 'function' ? p.getStatsForNerds() : null;
+      if (st) {
+        codec = String(st.codecs || '').split('/')[0].trim();
+        var m = /@\s*(\d+)/.exec(String(st.resolution || '')); if (m) fps = m[1];
+      }
+    } catch (e) {}
+    var key = qualityVideoId() + '|' + q + '|' + v.videoWidth + 'x' + v.videoHeight + '|' + codec;
+    if (key === lastFormat) return;
+    lastFormat = key;
+    console.log('[aay] playing ' + (q || '?') + ' ' + v.videoWidth + 'x' + v.videoHeight +
+      (fps ? '@' + fps : '') + (codec ? ' codec=' + codec : '') +
+      ' limit=' + (effectiveCap() || 'none') + (thermalHot ? ' hot' : ''));
+  }
+  A.logPlayingFormat = logPlayingFormat;
   function desiredQuality() {
     if (bgSaverActive()) return BG_SAVER_QUALITY;
     var q = capForDevice(savedQuality());

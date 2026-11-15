@@ -2,6 +2,7 @@ package com.aayoutube.app
 
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -32,5 +33,31 @@ class DecoderCapabilitiesTest {
         assertTrue(js.contains("var caps = C0.decodeCaps && typeof C0.decodeCaps === 'object' ? C0.decodeCaps : null;"))
         assertTrue(js.contains("if (caps) { var limit = codecLimit(codecFamily(t)); return !!limit && size > limit; }"))
         assertTrue(js.contains("if (!nativeCaps) try { localStorage.setItem('aay-max-smooth-h'"))
+    }
+
+    @Test fun vendorMeasuredRateWinsOverAdvertised() {
+        assertTrue(DecoderCapabilities.meetsRate(advertised = false, achievableUpper = 60.0, fps = 60.0))
+        assertTrue(DecoderCapabilities.meetsRate(false, 57.5, 60.0)) // within 5%
+        assertFalse(DecoderCapabilities.meetsRate(advertised = true, achievableUpper = 24.0, fps = 30.0))
+        assertTrue(DecoderCapabilities.meetsRate(advertised = true, achievableUpper = null, fps = 30.0))
+        assertFalse(DecoderCapabilities.meetsRate(advertised = false, achievableUpper = null, fps = 30.0))
+    }
+
+    @Test fun hdrProfilesAreTheTenBitOnes() {
+        val p = android.media.MediaCodecInfo.CodecProfileLevel::class.java
+        assertTrue(DecoderCapabilities.tenBitProfiles("vp9").contains(
+            p.getField("VP9Profile2").getInt(null)))
+        assertTrue(DecoderCapabilities.tenBitProfiles("av1").contains(
+            p.getField("AV1ProfileMain10").getInt(null)))
+        assertFalse(DecoderCapabilities.tenBitProfiles("vp9").contains(
+            p.getField("VP9Profile0").getInt(null)))
+        assertTrue(DecoderCapabilities.tenBitProfiles("h264").isEmpty())
+    }
+
+    @Test fun capsCover60FpsAndHdr() {
+        fun read(p: String) = listOf(File(p), File("../$p")).first { it.isFile }.readText()
+        val caps = read("app/src/main/java/com/aayoutube/app/DecoderCapabilities.kt")
+        assertTrue(caps.contains("put(codec + \"_60\""))
+        assertTrue(caps.contains("put(codec + \"_hdr\""))
     }
 }

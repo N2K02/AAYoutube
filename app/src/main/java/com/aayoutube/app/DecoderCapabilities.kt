@@ -31,13 +31,32 @@ internal object DecoderCapabilities {
         return 0
     }
 
-    /** Hardware decoder can do [w]x[h] at >= 30 fps (achievable rate when the vendor publishes it). */
-    fun supports(info: MediaCodecInfo, mime: String, w: Int, h: Int): Boolean = runCatching {
+    const val HIGH_FPS = 60.0
+
+    /** Achievable rate (vendor-measured) wins over the advertised one when published. */
+    fun meetsRate(advertised: Boolean, achievableUpper: Double?, fps: Double): Boolean =
+        if (achievableUpper != null) achievableUpper >= fps * 0.95 else advertised
+
+    /** Hardware decoder can do [w]x[h] at [fps] (achievable rate when the vendor publishes it). */
+    fun supports(info: MediaCodecInfo, mime: String, w: Int, h: Int, fps: Double = MIN_FPS): Boolean = runCatching {
         val vc = info.getCapabilitiesForType(mime).videoCapabilities ?: return false
         if (!vc.isSizeSupported(w, h)) return false
         val achievable = runCatching { vc.getAchievableFrameRatesFor(w, h) }.getOrNull()
-        if (achievable != null) achievable.upper >= MIN_FPS
-        else vc.areSizeAndRateSupported(w, h, MIN_FPS)
+        meetsRate(vc.areSizeAndRateSupported(w, h, fps), achievable?.upper, fps)
+    }.getOrDefault(false)
+
+    /** 10-bit profiles YouTube uses for HDR: VP9 Profile 2, AV1 Main10. */
+    fun tenBitProfiles(codec: String): Set<Int> = when (codec) {
+        "vp9" -> setOf(MediaCodecInfo.CodecProfileLevel.VP9Profile2,
+            MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR, MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR10Plus)
+        "av1" -> setOf(MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10,
+            MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10, MediaCodecInfo.CodecProfileLevel.AV1ProfileMain10HDR10Plus)
+        else -> emptySet()
+    }
+
+    private fun decodesTenBit(info: MediaCodecInfo, mime: String, codec: String): Boolean = runCatching {
+        val wanted = tenBitProfiles(codec)
+        info.getCapabilitiesForType(mime).profileLevels.any { it.profile in wanted }
     }.getOrDefault(false)
 
     private fun hardwareDecoders(mime: String): List<MediaCodecInfo> = runCatching {
@@ -51,12 +70,21 @@ internal object DecoderCapabilities {
 
     @Volatile private var cached: Map<String, Int>? = null
 
-    /** codec -> max hardware height (0: no hardware decoder). Computed once per process. */
-    fun current(): Map<String, Int> = cached ?: MIMES.mapValues { (_, mime) ->
-        hardwareDecoders(mime).maxOfOrNull { info -> maxHeight { w, h -> supports(info, mime, w, h) } } ?: 0
+    /**
+     * codec -> max hardware height at 30 fps (0: no hardware decoder), plus
+     * "<codec>_60" (max height at 60 fps) and "<codec>_hdr" (1 if a 10-bit profile
+     * decodes in hardware). Computed once per process.
+     */
+    fun current(): Map<String, Int> = cached ?: buildMap {
+        MIMES.forEach { (codec, mime) ->
+            val decoders = hardwareDecoders(mime)
+            put(codec, decoders.maxOfOrNull { i -> maxHeight { w, h -> supports(i, mime, w, h) } } ?: 0)
+            put(codec + "_60", decoders.maxOfOrNull { i -> maxHeight { w, h -> supports(i, mime, w, h, HIGH_FPS) } } ?: 0)
+            if (codec != "h264") put(codec + "_hdr", if (decoders.any { decodesTenBit(it, mime, codec) }) 1 else 0)
+        }
     }.also {
         cached = it
-        AppLog.add("VIDEO", "Hardware decode limits " + it.entries.joinToString { (k, v) -> "$k=${if (v > 0) "${v}p" else "none"}" })
+        AppLog.add("VIDEO", "Hardware decode limits " + it.entries.joinToString { (k, v) -> "$k=$v" })
     }
 
     fun json(caps: Map<String, Int> = current()): JSONObject =

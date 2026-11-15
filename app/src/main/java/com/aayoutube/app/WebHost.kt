@@ -371,7 +371,9 @@ object WebHost {
     internal fun script(): String {
         val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
             app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
+        registerThermalWatch()
         val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
+            .put("thermal", thermalStatus())
         return "window.__AAY_CFG=" + cfg + ";window.__AAY_CAR=" + (carDisplay || carShown) +
             ";\n" + source
     }
@@ -1103,6 +1105,9 @@ object WebHost {
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
+        // Quit, idle shutdown and renderer replacement: no hold, listener, timed wake
+        // lock or delayed resume may outlive (or act on the successor of) this renderer.
+        cancelOtherMediaWork("WebView released")
         exitFullscreen()
         val w = web
         web = null
@@ -1434,6 +1439,29 @@ object WebHost {
         main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)
     }
 
+    private fun cancelOtherMediaWork(reason: String) {
+        main.removeCallbacks(droppedResume)
+        main.removeCallbacks(droppedResumeJudge)
+        endOtherMediaHold(reason)
+        unregisterOtherMediaWatch() // idempotent: also clears a stray timed wake lock
+    }
+
+    // Device heat: above SEVERE the page caps quality at 1080p until it cools.
+    private var thermalRegistered = false
+    private fun registerThermalWatch() {
+        if (thermalRegistered || android.os.Build.VERSION.SDK_INT < 29) return
+        runCatching {
+            val pm = app.getSystemService(android.os.PowerManager::class.java)
+            pm.addThermalStatusListener(app.mainExecutor) { status ->
+                AppLog.add("VIDEO", "Thermal status=$status")
+                js("window.__aay&&window.__aay.thermal&&window.__aay.thermal($status)")
+            }
+            thermalRegistered = true
+        }
+    }
+    private fun thermalStatus(): Int = if (android.os.Build.VERSION.SDK_INT < 29) 0 else
+        runCatching { app.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
+
     internal fun postOtherMediaHold(generation: Int) {
         main.post { if (generation == webGeneration) startOtherMediaHold("page watchdog") }
     }
@@ -1592,6 +1620,11 @@ object WebHost {
             userPausedAt = SystemClock.elapsedRealtime()
         } else if (incoming.playing) playbackWanted = true
         if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
+        if (incoming.playing || !playbackWanted) {
+            // A resume/hold decision still pending from an earlier pause is obsolete.
+            main.removeCallbacks(droppedResume)
+            main.removeCallbacks(droppedResumeJudge)
+        }
         if (otherMediaHeldSince != 0L && (incoming.playing || !playbackWanted))
             endOtherMediaHold(if (incoming.playing) "playing again" else "paused or ended")
         // Keep foreground media priority while the active watchdog retries a
