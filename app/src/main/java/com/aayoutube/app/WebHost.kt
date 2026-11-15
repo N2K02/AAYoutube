@@ -1489,7 +1489,7 @@ object WebHost {
     // Bound retries to prevent repeated play requests for an unavailable stream.
     private fun resumeIfDropped(old: Snap, new: Snap) {
         if (!old.playing || new.playing || new.buffering || new.ended ||
-            new.id != old.id || new.id.isBlank()) return
+            new.id != old.id || new.id.isBlank() || otherMediaHeldSince != 0L) return
         val now = SystemClock.elapsedRealtime()
         val background = !shown && !inPip.value && !carShown
         // Background-play OFF is respected when fully hidden. Unexpected pauses
@@ -1576,7 +1576,10 @@ object WebHost {
         registerOtherMediaWatch()
         main.removeCallbacks(otherMediaPoll)
         main.postDelayed(otherMediaPoll, 1_000L)
-        publish(snapshot.value) // `held`: media service releases its CPU wake lock
+        // Yield foreground playback immediately, even if Chromium has not yet
+        // delivered its asynchronous pause event. Preserve playbackWanted so
+        // the other-media watcher can resume after the focus handoff.
+        publish(snapshot.value.copy(playing = false, buffering = false, userPaused = false))
     }
 
     // No CPU wake lock while held: Android wakes us when the other app's player
