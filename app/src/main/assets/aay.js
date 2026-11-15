@@ -194,7 +194,7 @@
             A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 &&
             A.qualityTapVideo === ((location.search.match(/[?&]v=([^&]+)/) || [])[1] || '')) {
           var q = youTubeStoredQuality(v);
-          if (q) A.adoptUserQuality(q, 'YouTube saved pick');
+          if (q && q !== CFG.preferredQuality) A.adoptUserQuality(q, 'YouTube saved pick');
         }
       } catch (e) {}
       return r;
@@ -2490,24 +2490,25 @@
     try { if (typeof p.getAvailableQualityLevels === 'function') levels = p.getAvailableQualityLevels() || []; } catch (e) {}
     levels = levels.filter(function (q) { return qualityOrder.indexOf(q) >= 0; });
     if (!levels.length || levels.indexOf(want) >= 0) return want;
-    var w = qualityOrder.indexOf(want), below = '', above = '';
+    var w = qualityOrder.indexOf(want), below = '';
     levels.forEach(function (q) {
       var i = qualityOrder.indexOf(q);
       if (i <= w && (!below || i > qualityOrder.indexOf(below))) below = q;
-      if (i > w && (!above || i < qualityOrder.indexOf(above))) above = q;
     });
-    return below || above || want;
+    // Never choose a tier ABOVE the stored maximum just because a video lacks
+    // an exact match. The lowest available stream is a YouTube fallback only.
+    return below || 'tiny';
   }
   function applyPreferredQuality() {
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
     var chosen = availableQuality(p, desiredQuality());
-    // Auto must retain downward ABR adaptation under thermal and PiP ceilings.
-    // Only an explicit fixed preference (or background audio saver) locks a tier.
-    var adaptive = savedQuality() === 'auto' && !bgSaverActive();
-    var low = adaptive ? 'tiny' : chosen;
-    var high = adaptive ? (chosen === 'auto' ? 'highres' : chosen) : chosen;
+    // A saved resolution is a MAXIMUM, never a required minimum. Keep ABR
+    // free to drop under that ceiling on weak networks and on lower-res videos.
+    // The background audio saver alone intentionally locks to 144p.
+    var low = bgSaverActive() ? chosen : 'tiny';
+    var high = chosen === 'auto' ? 'highres' : chosen;
     var key = qualityVideoId() + ':' + low + '-' + high;
     if (qualityApply.player === p && qualityApply.key === key) return;
     try {
@@ -2567,7 +2568,7 @@
       try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
       if (p && q !== 'auto' && current === q && !bgSaverActive()) {
         qualityApply.player = p;
-        qualityApply.key = qualityVideoId() + ':' + q + '-' + q;
+        qualityApply.key = qualityVideoId() + ':tiny-' + q;
         qualityApply.last = qualityApply.key;
         qualityApply.at = Date.now();
         console.log('[aay] quality ' + q + ' applied by YouTube; no re-force');
@@ -2641,8 +2642,11 @@
     var current = '';
     try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
     if (!qualityHeight[current] || current === savedQuality()) return;
-    if (current === capForDevice(savedQuality())) return; // only our device/heat limit
-    adoptUserQuality(current, 'player change after tap');
+    // A quality change observed after a settings tap is not proof of intent:
+    // ABR/YouTube can lower the actual tier at that moment. Only an exact
+    // menu choice or YouTube's own explicit preference write can change max.
+    console.log('[aay] observed quality=' + current + ' after tap; saved maximum=' +
+      savedQuality() + ' unchanged');
   }
   ['emptied', 'loadstart'].forEach(function (type) {
     document.addEventListener(type, function (e) {
