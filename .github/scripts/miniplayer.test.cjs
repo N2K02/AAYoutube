@@ -1424,15 +1424,29 @@ test('player reload right after a tap adopts the new quality instead of forcing 
   p.flush();
   p.advance(4000);                        // well after our own last range change
   const before = p.qualityCalls.length;
-  // A real tap on an unrecognised sheet row (logger records time + video).
-  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', textContent: 'x', getAttribute: () => null, closest: () => null } });
-  assert.equal(p.window.__aay.tapVideo, '86p7SP34qSc');
+  // An unrecognised quality-sheet row still identifies a deliberate menu tap.
+  p.emit('click', { isTrusted: true, target: sheetOption('Higher picture quality') });
+  assert.equal(p.window.__aay.qualityTapVideo, '86p7SP34qSc');
   p.player.setCurrentQuality('hd2160');   // YouTube switched after the user's sheet tap
   p.emit('emptied', { target: p.video });   // capture listeners on document
   p.emit('loadstart', { target: p.video });
   assert.equal(p.qualityCalls.length, before, 'saved 720p is NOT forced back');
   p.flush();
   assert.equal(p.selectedQualities.at(-1), 'hd2160', 'the pick is saved for next videos');
+});
+
+test('unrelated taps never save adaptive quality changes', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.advance(4000);
+  const n = p.selectedQualities.length;
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', textContent: 'random video tap',
+    getAttribute: () => null, closest: () => null } });
+  p.player.setCurrentQuality('hd2160');
+  p.emit('emptied', { target: p.video });
+  p.flush();
+  assert.equal(p.selectedQualities.length, n, 'adaptive quality change is not a saved manual choice');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'saved resolution is restored');
 });
 
 test('same-video reload WITHOUT a recent tap still restores the saved quality', () => {
