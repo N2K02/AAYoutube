@@ -813,6 +813,47 @@ object WebHost {
             onWatchPage.value || (snapshot.value.playing && snapshot.value.id.isNotBlank())
     }
 
+    // Track the WebView-owning process separately from the media service and
+    // Chromium's sandboxed renderer. Renderer CPU requires external UID/PID ADB
+    // sampling on Android; a JS callback cannot accurately measure that CPU.
+    private var perfElapsed = 0L
+    private var perfCpu = 0L
+    private val recentWebCpu = ArrayDeque<Int>()
+
+    internal fun onJsPerformance(payload: String, generation: Int) {
+        if (payload.length > 1024) return
+        main.post {
+            if (generation != webGeneration || web == null) return@post
+            val d = runCatching { JSONObject(payload) }.getOrNull() ?: return@post
+            val sec = d.optInt("sec", 0)
+            if (sec !in 10..120) return@post
+            fun metric(key: String, max: Int = 100_000): Int = d.optInt(key, 0).coerceIn(0, max)
+            val now = SystemClock.elapsedRealtime()
+            val cpu = android.os.Process.getElapsedCpuTime()
+            val pct = if (perfElapsed > 0 && now > perfElapsed && cpu >= perfCpu)
+                ((cpu - perfCpu) * 100 / (now - perfElapsed)).toInt().coerceIn(0, 1000) else -1
+            perfElapsed = now
+            perfCpu = cpu
+            if (pct >= 0) {
+                recentWebCpu.addLast(pct)
+                if (recentWebCpu.size > 10) recentWebCpu.removeFirst()
+            }
+            val avg = if (recentWebCpu.isEmpty()) -1 else recentWebCpu.sum() / recentWebCpu.size
+            val peak = recentWebCpu.maxOrNull() ?: -1
+            val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
+            val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
+            val eq = d.optString("eq").take(32).filter { it.isLetterOrDigit() || it in ":-" }
+            AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak " +
+                "rendererCpuPct=adb-only domTicks=${metric("ticks")} domMs=${metric("tickMs")} " +
+                "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
+                "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
+                "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
+                "frames=${metric("frames")} droppedPct=${d.optInt("droppedPct", -1).coerceIn(-1,100)} " +
+                "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
+                "codec=${codec.ifEmpty { "unknown" }} eq=$eq thermal=${thermalStatus()}")
+        }
+    }
+
     /** Called only for explicit player-quality menu picks, never for adaptive playback changes. */
     fun requestQualityFromBridge(quality: String, generation: Int) {
         if (!VideoQualityPolicy.isSupported(quality)) return
@@ -1112,6 +1153,9 @@ object WebHost {
         val w = web
         web = null
         webGeneration++ // Ignore already-queued bridge reports from the disposed renderer.
+        perfElapsed = 0L
+        perfCpu = 0L
+        recentWebCpu.clear()
         sameVideoReloadPosition = null
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
@@ -1923,6 +1967,12 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
         WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
+    }
+
+    /** Aggregated metrics; never URLs, tokens or video IDs. */
+    @JavascriptInterface
+    fun perf(payload: String) {
+        WebHost.onJsPerformance(payload, generation)
     }
 
     /** Persist only explicit quality menu selections (not YouTube's adaptive downgrades). */
