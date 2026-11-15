@@ -1231,34 +1231,19 @@ test('phone center Play resumes after a previous explicit native Pause', () => {
   assert.equal(p.video.paused, false, 'recovery watchdog must honor the resumed playback');
 });
 
-test('video format preference hides unwanted formats from YouTube', () => {
-  const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';
-  const AV1 = 'video/mp4; codecs="av01.0.08M.08"', AVC = 'video/mp4; codecs="avc1.4d401f"';
-  const AAC = 'audio/mp4; codecs="mp4a.40.2"', OPUS = 'audio/webm; codecs="opus"';
-  const h264 = playerPage({ cfg: { videoCodec: 'h264' } });
-  const ms = h264.MediaSource;
-  assert.equal(ms.isTypeSupported(VP9), false);
-  assert.equal(ms.isTypeSupported(VP09), false);
-  assert.equal(ms.isTypeSupported(AV1), false);
-  assert.equal(ms.isTypeSupported(AVC), true);
-  assert.equal(ms.isTypeSupported(AAC), true, 'audio is never blocked');
-  assert.equal(ms.isTypeSupported(OPUS), true);
-  assert.equal(h264.qualityStorage.get('yt-player-av1-pref'), '-1');
-
-  const vp9 = playerPage({ cfg: { videoCodec: 'vp9' } });
-  assert.equal(vp9.MediaSource.isTypeSupported(AV1), false);
-  assert.equal(vp9.MediaSource.isTypeSupported(VP9), true);
-
-  const av1 = playerPage({ cfg: { videoCodec: 'av1' } });
-  assert.equal(av1.MediaSource.isTypeSupported(AV1), true);
-  assert.equal(av1.MediaSource.isTypeSupported(VP9), true, 'AV1 prefers, never blocks fallbacks');
-  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '8192');
-
-  // A change in Features applies live (next video).
-  av1.window.__aay.config({ videoCodec: 'h264' });
-  assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
-  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
+test('automatic codec selection never forces H.264, VP9 or AV1', () => {
+  const VP9 = 'video/webm; codecs="vp09.00.40.08"';
+  const AV1 = 'video/mp4; codecs="av01.0.08M.08"';
+  const AVC = 'video/mp4; codecs="avc1.4d401f"';
+  for (const old of ['h264', 'vp9', 'av1']) {
+    const p = playerPage({ cfg: { videoCodec: old } });
+    assert.equal(p.MediaSource.isTypeSupported(VP9), true);
+    assert.equal(p.MediaSource.isTypeSupported(AV1), true);
+    assert.equal(p.MediaSource.isTypeSupported(AVC), true);
+    assert.equal(p.qualityStorage.get('yt-player-av1-pref'), undefined);
+  }
 });
+
 
 test('8K stays available through the codec whose hardware decodes it', () => {
   const sized = (codec, w, h) => codec + '; width=' + w + '; height=' + h + '; framerate=30';
