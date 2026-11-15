@@ -40,7 +40,7 @@ class ScreenOffPlaybackContractTest {
         assertFalse(task.contains("stopSelf()"))
         assertTrue(task.contains("super.onTaskRemoved(rootIntent)"))
         assertTrue(service.contains("return START_STICKY"))
-        assertTrue(service.contains("if (intent == null && !quitRequested) restoreSystemKilledPlayback()"))
+        assertTrue(service.contains("if (intent == null && !quitRequested) {\n            AppLog.add(\"LIFECYCLE\", \"sticky service recreated after process/service stop\")\n            restoreSystemKilledPlayback()"))
     }
 
     @Test fun systemRestartRecordIsRecentAndNeverOverridesPauseQuitOrDisabledPlayback() {

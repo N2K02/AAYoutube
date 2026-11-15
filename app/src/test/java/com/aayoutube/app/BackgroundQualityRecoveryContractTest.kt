@@ -64,7 +64,7 @@ class BackgroundQualityRecoveryContractTest {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("private fun keepRecovering(): Boolean = playbackWanted"))
         assertTrue(web.contains("Features.current.backgroundPlay || carShown || inPip.value || shown"))
-        assertTrue(web.contains("if (keepRecovering()) return"))
+        assertTrue(web.contains("if (keepRecovering()) {\n            AppLog.add(\"POWER\", \"Idle freeze skipped while playback recovery is requested\")\n            return"))
         assertTrue(web.contains("if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()"))
         assertTrue(web.contains("if (incoming.ended || incoming.id.isBlank()) playbackWanted = false"))
         assertTrue(web.contains("if (!preserveCarOwners) {"))
