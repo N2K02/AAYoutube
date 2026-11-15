@@ -20,7 +20,7 @@ class ScreenOffPlaybackContractTest {
         val service = app("PlaybackService.kt")
         assertTrue(service.contains("PowerManager.PARTIAL_WAKE_LOCK"))
         assertTrue(service.contains("setReferenceCounted(false)"))
-        assertTrue(service.contains("updatePlaybackWakeLock(s.playing || recoveringPlayback)"))
+        assertTrue(service.contains("updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))"))
         assertTrue(service.contains("if (!active || quitRequested || shuttingDown)"))
         assertTrue(service.contains("if (lock.isHeld) lock.release()"))
         val destruction = service.substringAfter("override fun onDestroy() {")
