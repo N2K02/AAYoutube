@@ -812,7 +812,18 @@ object WebHost {
         }
         unfreeze()
         mode.value = PlayerMode.FULL
-        load(withCarPlaybackIntent(normalise(url)))
+        // Opening a video from the secondary browse/playlist WebView is an
+        // explicit play selection, unlike restoring a previously paused page.
+        // Match native media queue OPEN, which already appends aay=1.
+        val destination = withCarPlaybackIntent(normalise(url))
+        val playRoute = uri.path == "/watch" && !uri.getQueryParameter("v").isNullOrBlank()
+        val explicitPaused = uri.getQueryParameter("aay") == "paused"
+        val autoplayUrl = if (playRoute && !explicitPaused &&
+            Uri.parse(destination).getQueryParameter("aay") == null)
+            Uri.parse(destination).buildUpon().appendQueryParameter("aay", "1").build().toString()
+        else destination
+        if (playRoute && !explicitPaused) AppLog.add("PLAY", "Selected video: autoplay requested")
+        load(autoplayUrl)
     }
 
     // ---------------------------------------------------------------- mini player
