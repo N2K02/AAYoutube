@@ -23,7 +23,9 @@ class SmoothQualitySwitchContractTest {
         assertTrue(js.contains("if (q) adoptUserQuality(q, 'menu');"))
         assertTrue(js.contains("A.adoptUserQuality(q, 'YouTube saved pick')"))
         assertTrue(js.contains("adoptUserQuality(current, 'player change after tap')"))
-        assertTrue(js.contains("if (A.tapAt && Date.now() - A.tapAt < 5000 && tapVideo && tapVideo === qualityVideoId())"))
+        assertTrue(js.contains("if (A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 && tapVideo && tapVideo === qualityVideoId())"))
+        // Only taps inside a quality menu/sheet count (not unrelated page taps).
+        assertTrue(js.contains("if (!inQualityMenu) return;"))
     }
 
     @Test fun sameVideoReloadReappliesSavedQualityWithoutLoop() {
