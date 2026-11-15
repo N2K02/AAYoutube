@@ -2378,13 +2378,13 @@
   }
   A.applyQuality = applyPreferredQuality;
   function menuQuality(text) {
-    var label = String(text || '').replace(/\\s+/g, ' ').trim();
+    var label = String(text || '').replace(/\s+/g, ' ').trim();
     // A parent settings row such as "Quality 720p" is not a resolution pick.
     if (/quality/i.test(label) || label.length > 64) return null;
-    if (/^auto(?:\\s*\\([^)]*\\))?$/i.test(label)) return 'auto';
-    // Mobile YouTube uses labels such as "1080p60", "1080p HDR", and
-    // "1080p Premium"; nested text nodes or badges can add whitespace.
-    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|\\([^)]*\\)))*$/i.exec(label);
+    if (/^auto(?:\s*\([^)]*\))?$/i.test(label)) return 'auto';
+    // Mobile YouTube uses labels such as "1080p60", "1080p HDR" and
+    // "1080p Premium"; nested text or badges can add whitespace.
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|\([^)]*\)))*$/i.exec(label);
     return m ? qualityLabels[m[1]] : null;
   }
   document.addEventListener('click', function (event) {
