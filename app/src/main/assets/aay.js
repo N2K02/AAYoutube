@@ -176,7 +176,9 @@
       var r = origSetItem.apply(this, arguments);
       try {
         if (!ownQualityWrite && k === 'yt-player-quality' && this === window.localStorage &&
-            typeof A.adoptUserQuality === 'function') {
+            typeof A.adoptUserQuality === 'function' &&
+            A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 &&
+            A.qualityTapVideo === ((location.search.match(/[?&]v=([^&]+)/) || [])[1] || '')) {
           var q = youTubeStoredQuality(v);
           if (q) A.adoptUserQuality(q, 'YouTube saved pick');
         }
@@ -385,8 +387,8 @@
   try {
     document.addEventListener('click', function (e) {
       var t = e.target;
-      // Quality detection below must not depend on YouTube's menu markup.
-      if (e.isTrusted !== false) { A.tapAt = Date.now(); A.tapVideo = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || ''; }
+      // A general tap is not proof of a manual quality selection.
+      // Quality menu/sheet events are tracked separately below.
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
@@ -2475,13 +2477,20 @@
   }
   document.addEventListener('click', function (event) {
     if (BROWSE || !event.target || !event.target.closest) return;
-    var q = qualityFromTap(event.target);
+    var target = event.target;
+    var inQualityMenu = !!target.closest(QUALITY_MENU) || !!target.closest(SHEET);
+    if (!inQualityMenu) return; // never adopt automatic quality changes after unrelated taps
+    if (event.isTrusted !== false) {
+      A.qualityTapAt = Date.now();
+      A.qualityTapVideo = qualityVideoId();
+    }
+    var q = qualityFromTap(target);
     if (q) adoptUserQuality(q, 'menu');
   }, true);
   // A reload of the same video (new source, same player and id) must get the saved
   // quality again before it buffers; otherwise YouTube may pick 4K on its own.
   function adoptQualityAfterTap(tapAt, tapVideo) {
-    if (A.tapAt !== tapAt || qualityVideoId() !== tapVideo) return; // newer tap / other video
+    if (A.qualityTapAt !== tapAt || qualityVideoId() !== tapVideo) return; // newer tap / other video
     if (bgSaverActive() || A.inPip || A.isMini) return;             // our caps, not a pick
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     var current = '';
@@ -2497,9 +2506,9 @@
       if (Date.now() - qualityApply.at < 3000) return;
       // A reload right after the user's own tap on the same video is THEIR quality
       // change (any menu layout): adopt it instead of forcing the old saved tier.
-      var tapVideo = A.tapVideo || '';
-      if (A.tapAt && Date.now() - A.tapAt < 5000 && tapVideo && tapVideo === qualityVideoId()) {
-        var at = A.tapAt;
+      var tapVideo = A.qualityTapVideo || '';
+      if (A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 && tapVideo && tapVideo === qualityVideoId()) {
+        var at = A.qualityTapAt;
         later(function () { adoptQualityAfterTap(at, tapVideo); }, 1800);
         return;
       }
