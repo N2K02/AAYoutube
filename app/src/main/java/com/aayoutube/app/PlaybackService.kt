@@ -9,6 +9,8 @@ import android.os.Message
 import android.os.Messenger
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.content.Context
 import android.support.v4.media.MediaMetadataCompat
 import android.os.Bundle
 import android.support.v4.media.MediaBrowserCompat
@@ -28,6 +30,26 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    // A WebView is not a native MediaPlayer. Prevent CPU sleep while its
+    // stream is playing or recovering, without keeping the display awake.
+    private var playbackWakeLock: PowerManager.WakeLock? = null
+
+    private fun updatePlaybackWakeLock(active: Boolean) {
+        if (!active || quitRequested || shuttingDown) {
+            playbackWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+            return
+        }
+        runCatching {
+            val lock = playbackWakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AAYouTube:BackgroundAudio")
+                .apply { setReferenceCounted(false) }
+                .also { playbackWakeLock = it }
+            if (!lock.isHeld) {
+                lock.acquire()
+                AppLog.add("POWER", "Background audio CPU wake lock acquired")
+            }
+        }.onFailure { AppLog.add("POWER", "Audio wake lock unavailable: ${it.javaClass.simpleName}") }
+    }
     // A transient WebView pause must not immediately drop foreground-media priority.
     // Android may throttle/kill the :web process before JS gets a chance to resume.
     private val demoteForeground = Runnable {
@@ -371,6 +393,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
         if (s.playing) recoveringPlayback = false
+        updatePlaybackWakeLock(s.playing || recoveringPlayback)
         if (quitRequested) {
             updateNotification(s)
             return
@@ -652,6 +675,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         recovery.cancel()
         terminalIntent.clear()
         artworkLoader.shutdown()
+        updatePlaybackWakeLock(false)
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         session.isActive = false
         session.release()
