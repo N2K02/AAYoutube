@@ -34,7 +34,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // timer so a WebView that stops reporting is still visible in logcat.
     private var lastHealthElapsed = 0L
     private var lastCpuMs = 0L
-    private val recentMediaCpu = ArrayDeque<Int>()
+    private val recentMediaCpu = ArrayDeque<Long>()
     private var lastPlaybackPhase = ""
     private var interruptedSince = 0L
     private fun tracePlaybackPhase(s: Snap) {
