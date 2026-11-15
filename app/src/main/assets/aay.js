@@ -1257,13 +1257,14 @@
     stateFixAt = now;
     try { p.playVideo(); } catch (e) {}
   }
-  // Repaint the video layer: after a WebView resize Chromium can keep showing
-  // a black layer although new frames are decoded.
+  // Never toggle video opacity as a repaint workaround. On Android that can
+  // promote/demote Chromium's hardware video overlay and leave a black Surface.
+  // Request a normal geometry update only; frame-stall recovery is separate.
   function repaintVideo(v) {
-    if (!v || !v.style || typeof v.style.setProperty !== 'function') return;
-    v.style.setProperty('opacity', '0.999', 'important');
-    var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
-    raf(function () { raf(function () { v.style.removeProperty('opacity'); }); });
+    if (!v || !v.getBoundingClientRect) return;
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && typeof p.setInternalSize === 'function') p.setInternalSize(); } catch (e) {}
+    window.dispatchEvent(new Event('resize'));
   }
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
@@ -1858,7 +1859,7 @@
   var refitAt = 0;
   function refitSmall(v) {
     var now = Date.now();
-    if (now - refitAt < 3000) return;
+    if (now - refitAt < 6000) return;
     refitAt = now;
     liftAncestors(v, true);
     document.documentElement.classList.add('aay-video-only');
@@ -2124,7 +2125,7 @@
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
     // Clear YouTube's cached video dimensions when Android resizes into PiP.
-    if (on && !pipTimer) { pipLast = null; pipTimer = setInterval(pipCheck, 2000); }
+    if (on && !pipTimer) { pipLast = null; pipFixAt = 0; pipTimer = setInterval(pipCheck, 2000); }
     if (!on && pipTimer) { clearInterval(pipTimer); pipTimer = 0; pipLast = null; }
     if (on) {
       document.documentElement.classList.remove('aay-fit');
@@ -2136,7 +2137,7 @@
         window.dispatchEvent(new Event('resize'));
         var v = getVideo();
         if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
-        if (ms === 450 && v) { repaintVideo(v); syncPlayerState(); }
+        if (ms === 450 && v) syncPlayerState(); // no forced compositor-layer change
       }, ms); });
     } else fixLayout();
   }
@@ -2147,7 +2148,7 @@
     if (!(A.isMini || A.inPip)) return;
     if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
     pipLast = null;
-    later(function () { repaintVideo(getVideo()); }, 300);
+    later(function () { if (A.isMini || A.inPip) repaintVideo(getVideo()); }, 300);
     later(pipCheck, 1200);
     later(pipCheck, 2600);
   });
