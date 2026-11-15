@@ -31,6 +31,8 @@ class PlaybackTelemetryContractTest {
         assertTrue(host.contains("android.os.Process.getElapsedCpuTime()"))
         assertTrue(host.contains("rendererCpuPct=adb-only"))
         assertTrue(host.contains("recentWebCpu.size > 10"))
+        assertTrue(host.contains("w.addOnLayoutChangeListener"))
+        assertTrue(host.contains("resizeCount="))
         assertTrue(host.contains("fun perf(payload: String)"))
     }
 
