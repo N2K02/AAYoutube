@@ -44,7 +44,8 @@ class PlaybackQualityAndTransitionTest {
         assertTrue(root.contains("lastPanel"))
         val pane = ui.substringAfter("fun WebPane(").substringBefore("// ---------------------------------------------------------------------------- settings")
         assertTrue(pane.contains("key(version)"))
-        assertTrue(pane.contains("}.size(miniW, miniH).clip(RoundedCornerShape(12.dp))"))
+        assertTrue(pane.contains("}.size(miniW, miniH) // Do not clip a decoder-backed SurfaceView"))
+        assertFalse(pane.contains("}.size(miniW, miniH).clip(RoundedCornerShape(12.dp))"))
         assertFalse(pane.contains("scaleX = 1f +"))
     }
 
