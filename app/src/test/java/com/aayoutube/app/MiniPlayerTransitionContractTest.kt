@@ -13,7 +13,11 @@ class MiniPlayerTransitionContractTest {
     @Test fun miniUsesRealWebViewSizeAndNoGraphicsLayerVideoScaling() {
         val pane = read("app/src/main/java/com/aayoutube/app/Screens.kt")
             .substringAfter("fun WebPane(").substringBefore("// ---------------------------------------------------------------------------- settings")
-        assertTrue(pane.contains("small -> Modifier.offset {"))
+        assertTrue(pane.contains("layoutSmall -> Modifier.offset {"))
+        // Smooth transition: the WebView is resized once; a captured frame animates.
+        assertTrue(pane.contains("layoutSmall = small // the single WebView resize happens under the ghost"))
+        assertTrue(pane.contains("captureWindowRegion(it, android.graphics.Rect("))
+        assertTrue(pane.contains("PlayerTransitionPolicy.animates(inPip, onCar, projectedToCar, hidden)"))
         assertTrue(pane.contains("}.size(miniW, miniH).clip(RoundedCornerShape(12.dp))"))
         assertTrue(pane.contains("inPip -> Modifier.fillMaxSize()"))
         assertTrue(pane.contains("key(version)"))
