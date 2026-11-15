@@ -24,10 +24,16 @@ class BackgroundDomPerformanceContractTest {
         assertTrue(script.contains("if (v && !v.paused) schedReport(0);"))
     }
 
+    @Test fun throttledDomTraversalDoesNotDisableImmediatePlaybackRecovery() {
+        assertTrue(script.contains("new MutationObserver(schedTick).observe"))
+        assertTrue(script.contains("setInterval(backgroundWatchdog, 5000)"))
+        assertTrue(script.contains("window.addEventListener('yt-navigate-finish'"))
+    }
+
     @Test fun foregroundRechecksDomAndBackgroundRecoveryContinues() {
         assertTrue(script.contains("if (wasBg && !A.isBg) schedTick();"))
         assertTrue(script.contains("setInterval(backgroundWatchdog, 5000)"))
         assertTrue(script.contains("setInterval(sendLyricClock, 250)"))
-        assertTrue(script.contains("(A.isBg && !A.inPip && !A.isCar) ? 5000 : 900"))
+        assertTrue(script.contains("(A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800"))
     }
 }
