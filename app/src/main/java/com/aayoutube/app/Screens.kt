@@ -789,7 +789,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 hidden -> Modifier.size(1.dp)
                 layoutSmall -> Modifier.offset {
                     IntOffset(px.roundToInt(), py.roundToInt())
-                }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
+                }.size(miniW, miniH) // Do not clip a decoder-backed SurfaceView: some devices paint black.
                 else -> Modifier.fillMaxSize()
             }.then(if (!layoutSmall && !inPip && onCar) carSwipeDown else Modifier)
             // Smooth mode changes (mini, expand, landscape fill): a scrim over the video
