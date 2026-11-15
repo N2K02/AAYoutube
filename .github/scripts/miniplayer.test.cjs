@@ -1757,3 +1757,61 @@ test('re-entering mini cancels outdated full-player recovery callbacks', () => {
   p.flush();
   assert.equal(p.video.paused, true, 'an old expand callback must not restart mini playback');
 });
+
+test('tapping a playlist video auto-plays the newly navigated watch item', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause'); // previous video had been paused deliberately
+  assert.equal(p.video.paused, true);
+  const link = { href: 'https://m.youtube.com/watch?v=newPlaylistVideo&list=PLtest',
+    getAttribute() { return '/watch?v=newPlaylistVideo&list=PLtest'; } };
+  p.emit('click', { isTrusted: true, target: {
+    tagName: 'A',
+    closest(selector) {
+      if (selector === 'a[href]') return link;
+      if (selector.includes('ytm-playlist-panel-video-renderer')) return {};
+      return null;
+    },
+  } });
+  // A click alone must not restart the previously paused video.
+  assert.equal(p.video.paused, true);
+  p.location.search = '?v=newPlaylistVideo&list=PLtest';
+  p.location.href = 'https://m.youtube.com/watch?v=newPlaylistVideo&list=PLtest';
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, false, 'selected playlist video must play without another tap');
+});
+
+test('playlist selection does not override Pause pressed while next track loads', () => {
+  const p = playerPage();
+  p.flush();
+  const link = { href: 'https://m.youtube.com/watch?v=nextPlaylistItem',
+    getAttribute() { return '/watch?v=nextPlaylistItem'; } };
+  p.emit('click', { isTrusted: true, target: {
+    tagName: 'A', closest(selector) {
+      return selector === 'a[href]' ? link : null;
+    },
+  } });
+  p.window.__aay.cmd('pause');
+  p.location.search = '?v=nextPlaylistItem';
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  p.flush();
+  assert.equal(p.video.paused, true, 'explicit Pause cancels pending playlist autoplay');
+});
+
+test('an unrelated tap or same-video navigation never starts a paused video', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause');
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', closest: () => null } });
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, true);
+  const link = { href: p.location.href, getAttribute() { return '/watch?v=86p7SP34qSc'; } };
+  p.emit('click', { isTrusted: true, target: { tagName: 'A',
+    closest(selector) { return selector === 'a[href]' ? link : null; },
+  } });
+  p.emitWindow('yt-navigate-finish', {});
+  assert.equal(p.video.paused, true, 'reselecting same route is not a new video');
+});
