@@ -2508,11 +2508,12 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
     var chosen = availableQuality(p, desiredQuality());
-    // A saved resolution is a MAXIMUM, never a required minimum. Keep ABR
-    // free to drop under that ceiling on weak networks and on lower-res videos.
-    // The background audio saver alone intentionally locks to 144p.
-    var low = bgSaverActive() ? chosen : 'tiny';
-    var high = chosen === 'auto' ? 'highres' : chosen;
+    // Each video uses its highest available tier at or below the saved
+    // maximum. Only Auto is adaptive, including under temporary device/PiP
+    // ceilings. A lower-res video must never change the persisted maximum.
+    var adaptive = savedQuality() === 'auto' && !bgSaverActive();
+    var low = adaptive ? 'tiny' : chosen;
+    var high = adaptive ? (chosen === 'auto' ? 'highres' : chosen) : chosen;
     var key = qualityVideoId() + ':' + low + '-' + high;
     if (qualityApply.player === p && qualityApply.key === key) return;
     try {
@@ -2572,7 +2573,7 @@
       try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
       if (p && q !== 'auto' && current === q && !bgSaverActive()) {
         qualityApply.player = p;
-        qualityApply.key = qualityVideoId() + ':tiny-' + q;
+        qualityApply.key = qualityVideoId() + ':' + q + '-' + q;
         qualityApply.last = qualityApply.key;
         qualityApply.at = Date.now();
         console.log('[aay] quality ' + q + ' applied by YouTube; no re-force');
