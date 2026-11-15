@@ -371,7 +371,8 @@ object WebHost {
     internal fun script(): String {
         val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
             app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) +
+        val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
+        return "window.__AAY_CFG=" + cfg + ";window.__AAY_CAR=" + (carDisplay || carShown) +
             ";\n" + source
     }
 

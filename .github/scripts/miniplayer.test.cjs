@@ -1291,6 +1291,38 @@ test('video format preference hides unwanted formats from YouTube', () => {
   assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
 });
 
+test('8K stays available through the codec whose hardware decodes it', () => {
+  const sized = (codec, w, h) => codec + '; width=' + w + '; height=' + h + '; framerate=30';
+  const VP9 = 'video/webm; codecs="vp09.00.51.08"', AV1 = 'video/mp4; codecs="av01.0.16M.08"';
+  const AVC = 'video/mp4; codecs="avc1.640033"';
+  // Like this phone: VP9 hardware to 4K, AV1 hardware to 8K, H.264 to 4K.
+  const p = playerPage({ cfg: { decodeCaps: { vp9: 2160, av1: 4320, h264: 2160 } } });
+  const ms = p.MediaSource;
+  assert.equal(ms.isTypeSupported(sized(VP9, 7680, 4320)), false, '8K VP9 froze: hidden');
+  assert.equal(ms.isTypeSupported(sized(AV1, 7680, 4320)), true, '8K offered through AV1');
+  assert.equal(ms.isTypeSupported(sized(VP9, 3840, 2160)), true);
+  assert.equal(ms.isTypeSupported(sized(AVC, 1920, 1080)), true);
+  assert.equal(ms.isTypeSupported(sized(VP9, 2160, 3840)), true, 'vertical 4K counts by its short side');
+  assert.equal(ms.isTypeSupported(VP9), true, 'type without size is never blocked');
+  assert.equal(ms.isTypeSupported('audio/webm; codecs="opus"'), true);
+
+  // No hardware AV1 decoder: software is limited to 1080p.
+  const sw = playerPage({ cfg: { decodeCaps: { vp9: 2160, av1: 0, h264: 1080 } } });
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 1920, 1080)), true);
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 2560, 1440)), false);
+  assert.equal(sw.MediaSource.isTypeSupported(sized(VP9, 7680, 4320)), false, 'no 8K at all here');
+});
+
+test('with native caps a stall only lowers this session', () => {
+  const p = playerPage({ quality: true, currentQuality: 'highres',
+    cfg: { decodeCaps: { vp9: 2160, av1: 4320, h264: 2160 } } });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'highres' });
+  p.flush();
+  p.video.buffered = { length: 1, end: () => 80 };
+  p.runIntervals(); p.advance(9000); p.runIntervals(); // 8K stalls once (heat, bad stream)
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160'], 'drops a tier now');
+  assert.equal(p.qualityStorage.has('aay-max-smooth-h'), false, 'nothing persisted: 8K offered next time');
+});
 
 test('navigation diagnostics redact queries, video identifiers and fragments', () => {
   const start = source.indexOf('  function logRoute(url) {');

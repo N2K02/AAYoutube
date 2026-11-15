@@ -17,16 +17,41 @@
    * Read live, so a change applies from the next video. */
   (function () {
     var C0 = window.__AAY_CFG || {};
-    /* Resolution gate: like the YouTube app, never offer a tier this device cannot
-     * decode smoothly (e.g. 8K froze ~20 s before any decoder started). The limit
-     * comes from Chromium's own MediaCapabilities probe and is cached for the next
-     * page load so YouTube sees it before building its quality menu. 0 = no limit. */
+    /* Resolution gate, per codec. Android's codec list (native decodeCaps:
+     * {vp9, av1, h264} -> max hardware height) decides which codec can play which
+     * tier, so 8K stays available through AV1 when only VP9 cannot do it (8K VP9
+     * froze ~20 s). A codec without a hardware decoder is limited to 1080p
+     * (software). Without native caps (older host), fall back to Chromium's
+     * MediaCapabilities probe result cached from the previous page load. */
+    var caps = C0.decodeCaps && typeof C0.decodeCaps === 'object' ? C0.decodeCaps : null;
+    var SOFTWARE_MAX = 1080;
     var maxSmoothHeight = 0;
-    try { maxSmoothHeight = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+    try {
+      if (caps) localStorage.removeItem('aay-max-smooth-h'); // stale guess from the probe
+      else maxSmoothHeight = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0;
+    } catch (e) {}
+    function codecFamily(t) {
+      if (/av01/.test(t)) return 'av1';
+      if (/vp0?9/.test(t)) return 'vp9';
+      if (/avc[13]|h264/.test(t)) return 'h264';
+      return '';
+    }
+    // Short side, so a vertical 1080x1920 video counts as 1080p.
+    function videoSize(t) {
+      var h = /height\s*=\s*(\d+)/.exec(t), w = /width\s*=\s*(\d+)/.exec(t);
+      var hv = h ? parseInt(h[1], 10) : 0, wv = w ? parseInt(w[1], 10) : 0;
+      return hv && wv ? Math.min(hv, wv) : hv;
+    }
+    function codecLimit(family) {
+      if (!caps || !family || !(family in caps)) return 0;
+      var limit = parseInt(caps[family], 10) || 0;
+      return limit > 0 ? limit : SOFTWARE_MAX;
+    }
     function tooLarge(t) {
-      if (!maxSmoothHeight) return false;
-      var h = /height\s*=\s*(\d+)/.exec(t);
-      return !!h && parseInt(h[1], 10) > maxSmoothHeight;
+      var size = videoSize(t);
+      if (!size) return false;
+      if (caps) { var limit = codecLimit(codecFamily(t)); return !!limit && size > limit; }
+      return !!maxSmoothHeight && size > maxSmoothHeight;
     }
     function blocked(type) {
       var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
@@ -39,6 +64,10 @@
     }
     try {
       localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
+    } catch (e) {}
+    if (caps) try {
+      console.log('[aay] decode limits vp9=' + codecLimit('vp9') + ' av1=' + codecLimit('av1') +
+        ' h264=' + codecLimit('h264') + ' (hardware, from Android)');
     } catch (e) {}
     function wrapStatic(Ctor) {
       if (!Ctor || typeof Ctor.isTypeSupported !== 'function' || Ctor.isTypeSupported.__aay) return;
@@ -64,7 +93,9 @@
         var origInfo = mc.decodingInfo.bind(mc);
         var info = function (cfg) {
           var t = cfg && cfg.video && cfg.video.contentType;
-          var big = cfg && cfg.video && maxSmoothHeight && cfg.video.height > maxSmoothHeight;
+          var v0 = cfg && cfg.video, size = v0 ? Math.min(v0.height || 0, v0.width || v0.height || 0) : 0;
+          var big = !!size && (caps ? (codecLimit(codecFamily(String(t || '').toLowerCase())) || Infinity) < size
+            : (maxSmoothHeight && size > maxSmoothHeight));
           if (big || blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
           return origInfo(cfg);
         };
@@ -83,7 +114,7 @@
               .then(function (r) { return !!(r && r.supported && r.smooth); }, function () { return false; });
           })).then(function (ok) { return ok.indexOf(true) >= 0 ? h : probe(i + 1); });
         };
-        probe(0).then(function (h) {
+        if (!caps) probe(0).then(function (h) {
           var limit = h >= 4320 ? 0 : h; // 0: the device handles every tier
           try { localStorage.setItem('aay-max-smooth-h', String(limit)); } catch (e) {}
           if (limit !== maxSmoothHeight)
@@ -2145,7 +2176,8 @@
   var qualityHeight = { tiny: 144, small: 240, medium: 360, large: 480, hd720: 720,
     hd1080: 1080, hd1440: 1440, hd2160: 2160, highres: 4320 };
   var deviceCapH = 0;
-  try { deviceCapH = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+  var nativeCaps = !!(CFG.decodeCaps && typeof CFG.decodeCaps === 'object');
+  try { if (!nativeCaps) deviceCapH = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
   function capForDevice(q) {
     if (!deviceCapH || q === 'auto' || (qualityHeight[q] || 0) <= deviceCapH) return q;
     var best = 'hd1080';
@@ -2176,7 +2208,9 @@
     var lower = h >= 4320 ? 2160 : h >= 2160 ? 1440 : 1080;
     if (deviceCapH && deviceCapH <= lower) return;
     deviceCapH = lower;
-    try { localStorage.setItem('aay-max-smooth-h', String(lower)); } catch (e) {}
+    // With Android's codec list the menu is already right; a stall (heat, a bad
+    // stream) only lowers THIS session, so 8K is offered again next time.
+    if (!nativeCaps) try { localStorage.setItem('aay-max-smooth-h', String(lower)); } catch (e) {}
     console.log('[aay] ' + cur + ' overloads this device (' + (stalled ? 'stalled' : 'dropping frames') +
       '): limit now ' + lower + 'p');
     overload.at = 0;
