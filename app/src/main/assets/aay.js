@@ -1610,7 +1610,7 @@
     }
   }
 
-  var tickTimer = 0;
+  var tickTimer = 0, lastNonCriticalDomAt = 0;
   function tick() {
     tickTimer = 0;
     var started = Date.now();
@@ -1621,14 +1621,19 @@
       // but visual DOM work is unnecessary when the phone is hidden.
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
       if (A.isBg && !A.inPip && !A.isCar) return;
+      // Playback and ad handling stay responsive. Heavier noncritical UI
+      // traversals run at most every 8 s despite YouTube's frequent mutations.
       skipAd();
       syncPlayerState();
-      dialogs();
-      rydApply();
-      openFirstResult();
       carLayout();
-      landPlaylist();
-      reportAccount();
+      if (Date.now() - lastNonCriticalDomAt >= 8000) {
+        lastNonCriticalDomAt = Date.now();
+        dialogs();
+        rydApply();
+        openFirstResult();
+        landPlaylist();
+        reportAccount();
+      }
     } catch (e) {}
     finally {
       perf.ticks++;
@@ -1704,7 +1709,11 @@
     if (v && !v.paused) schedReport(0);
   }, 10000);
   // Route changes can replace the video without raising loadedmetadata.
-  window.addEventListener('yt-navigate-finish', function () { schedReport(0); });
+  window.addEventListener('yt-navigate-finish', function () {
+    lastNonCriticalDomAt = 0;
+    schedTick();
+    schedReport(0);
+  });
 
   /* ---------- 9b. Timed lyrics: use real HTMLVideoElement.currentTime ---------- */
   // Media-session snapshots are infrequent. A dedicated clock is necessary for
@@ -2217,7 +2226,6 @@
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
-    window.dispatchEvent(new Event('resize'));
   };
 
   A.pip = function (on) {
@@ -2231,7 +2239,6 @@
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
     A.setBg(A.isBg);
-    window.dispatchEvent(new Event('resize'));
   };
 
   /* ---------- 11. Video quality preference ----------
