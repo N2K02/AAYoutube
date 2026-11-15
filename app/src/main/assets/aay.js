@@ -58,8 +58,14 @@
       });
     }
     function tooLargeFor(family, size, fps, isTenBit) {
-      // MIME-only probes have no frame size: do not globally remove a codec.
-      if (!size && !isTenBit) return false;
+      // MIME-only probes have no size. YouTube often negotiates formats this
+      // way, so reject a wholly software codec if a hardware codec can handle
+      // ordinary playback (720p); otherwise software VP9/AV1 remains selectable.
+      if (!size) {
+        return !!(caps && family && family in caps &&
+          hardwareLimit(family, fps, isTenBit) === 0 &&
+          hardwareAlternative(family, 720, fps));
+      }
       if (caps && family && family in caps) {
         var hardware = hardwareLimit(family, fps, isTenBit);
         if (size && hardware >= size) return false;
