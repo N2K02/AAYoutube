@@ -39,7 +39,9 @@ class SmoothQualitySwitchContractTest {
 
     @Test fun unsmoothTiersAreHiddenAndMissingTiersFallBack() {
         assertTrue(js.contains("localStorage.setItem('aay-max-smooth-h'"))
-        assertTrue(js.contains("if (tooLarge(t)) return true;"))
+        assertTrue(js.contains("return tooLarge(t);"))
+        assertFalse(js.contains("if (c === 'h264')"))
+        assertFalse(js.contains("if (c === 'vp9')"))
         assertTrue(js.contains("var chosen = availableQuality(p, desiredQuality());"))
     }
 
