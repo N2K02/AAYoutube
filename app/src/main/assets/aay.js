@@ -22,7 +22,7 @@
      * (software). Without native caps (older host), fall back to Chromium's
      * MediaCapabilities probe result cached from the previous page load. */
     var caps = C0.decodeCaps && typeof C0.decodeCaps === 'object' ? C0.decodeCaps : null;
-    var SOFTWARE_MAX = 1080;
+    var SOFTWARE_MAX = 1080; // only when no supported hardware codec covers this size
     var maxSmoothHeight = 0;
     try {
       if (caps) localStorage.removeItem('aay-max-smooth-h'); // stale guess from the probe
@@ -53,12 +53,30 @@
     // VP9 profile 2/3 and AV1 10-bit are YouTube's HDR streams.
     function tenBit(t) { return /vp09\.0[23]\./.test(t) || /av01\.\d\.\d+[mh]\.1[02]/.test(t); }
     function typeFps(t) { var m = /framerate\s*=\s*([\d.]+)/.exec(t); return m ? parseFloat(m[1]) : 0; }
+    function hardwareLimit(family, fps, isTenBit) {
+      if (!caps || !(family in caps)) return 0;
+      if (isTenBit && (family + '_hdr') in caps && !parseInt(caps[family + '_hdr'], 10)) return 0;
+      var limit = parseInt(caps[family], 10) || 0;
+      if (fps > 32 && (family + '_60') in caps)
+        limit = Math.min(limit, parseInt(caps[family + '_60'], 10) || 0);
+      return limit;
+    }
+    function hardwareAlternative(family, size, fps) {
+      if (!caps || !size) return false;
+      return ['vp9', 'av1', 'h264'].some(function (candidate) {
+        return candidate !== family && hardwareLimit(candidate, fps, false) >= size;
+      });
+    }
     function tooLargeFor(family, size, fps, isTenBit) {
+      // MIME-only probes have no frame size: do not globally remove a codec.
       if (!size && !isTenBit) return false;
-      if (caps) {
-        if (isTenBit && family && (family + '_hdr') in caps && !parseInt(caps[family + '_hdr'], 10)) return true;
-        var limit = codecLimit(family, fps);
-        return !!size && !!limit && size > limit;
+      if (caps && family && family in caps) {
+        var hardware = hardwareLimit(family, fps, isTenBit);
+        if (size && hardware >= size) return false;
+        // Prefer hardware decoding at this size. Only fall back to software
+        // when every known codec lacks a suitable hardware decoder.
+        if (hardwareAlternative(family, size, fps)) return true;
+        return !!size && size > SOFTWARE_MAX;
       }
       return !!size && !!maxSmoothHeight && size > maxSmoothHeight;
     }
@@ -1532,6 +1550,15 @@
   A.checkBackgroundPlayback = backgroundWatchdog;
   setInterval(backgroundWatchdog, 5000);
 
+  // Capturing media events arrive for a newly-created <video> even if the
+  // background DOM scan is throttled. Bind once, before its own event handler
+  // needs to report play/pause/ended. Only actual VIDEO targets are considered.
+  ['loadstart', 'emptied'].forEach(function (eventName) {
+    document.addEventListener(eventName, function (e) {
+      if (!BROWSE && e.target && e.target.tagName === 'VIDEO') bind(e.target);
+    }, true);
+  });
+
   function bind(v) {
     if (!v || v.__aay) return;
     trackNewVideoElement(v);
@@ -2314,10 +2341,9 @@
   }
   function capForDevice(q) {
     var cap = effectiveCap();
-    // Adaptive 'auto' otherwise bypasses thermal/overload caps entirely.
-    // Temporarily request the highest capped tier; restore auto when the cap lifts.
+    // Auto under a cap stays adaptive: the chosen tier is only a ceiling.
     if (!cap || (q !== 'auto' && (qualityHeight[q] || 0) <= cap)) return q;
-    var best = 'hd720';
+    var best = 'tiny';
     qualityOrder.forEach(function (l) { if (qualityHeight[l] <= cap) best = l; });
     return best;
   }
@@ -2448,12 +2474,16 @@
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
     var chosen = availableQuality(p, desiredQuality());
-    var key = qualityVideoId() + ':' + chosen;
+    // Auto must retain downward ABR adaptation under thermal and PiP ceilings.
+    // Only an explicit fixed preference (or background audio saver) locks a tier.
+    var adaptive = savedQuality() === 'auto' && !bgSaverActive();
+    var low = adaptive ? 'tiny' : chosen;
+    var high = adaptive ? (chosen === 'auto' ? 'highres' : chosen) : chosen;
+    var key = qualityVideoId() + ':' + low + '-' + high;
     if (qualityApply.player === p && qualityApply.key === key) return;
     try {
       if (typeof p.setPlaybackQualityRange === 'function') {
-        p.setPlaybackQualityRange(chosen === 'auto' ? 'tiny' : chosen,
-          chosen === 'auto' ? 'highres' : chosen);
+        p.setPlaybackQualityRange(low, high);
       } else if (typeof p.setPlaybackQuality === 'function') {
         p.setPlaybackQuality(chosen === 'auto' ? 'default' : chosen);
       } else return; // YouTube's API is not ready; the next DOM tick will retry.
@@ -2526,6 +2556,13 @@
     '[role="menuitemradio"], [role="option"]';
   var SHEET = '#bottom-sheet, ytm-bottom-sheet-renderer, bottom-sheet-container, ' +
     'ytm-bottom-sheet-layout, [role="dialog"], .bottom-sheet-layout';
+  var PLAYER_SETTINGS = 'button.player-settings-icon, .player-settings-icon, ' +
+    '.ytp-settings-button, [aria-label="Settings"]';
+  var qualityMenuOpenedAt = 0, qualityMenuOpenedVideo = '';
+  function recentSettingsTap() {
+    return qualityMenuOpenedAt && Date.now() - qualityMenuOpenedAt < 7000 &&
+      qualityMenuOpenedVideo === qualityVideoId();
+  }
   function qualityFromTap(target) {
     var item = target.closest(QUALITY_MENU);
     if (item) {
@@ -2535,7 +2572,7 @@
       if (q0) return q0;
     }
     // New mobile bottom sheet: plain divs. Walk up a few levels inside the sheet.
-    if (!target.closest(SHEET)) return null;
+    if (!target.closest(SHEET) && !recentSettingsTap()) return null;
     for (var el = target, i = 0; el && i < 5; el = el.parentElement, i++) {
       var q = menuQuality(el.textContent || (el.getAttribute && el.getAttribute('aria-label')));
       if (q) return q;
@@ -2546,14 +2583,24 @@
   document.addEventListener('click', function (event) {
     if (BROWSE || !event.target || !event.target.closest) return;
     var target = event.target;
+    if (target.closest(PLAYER_SETTINGS)) {
+      if (event.isTrusted !== false) {
+        qualityMenuOpenedAt = Date.now();
+        qualityMenuOpenedVideo = qualityVideoId();
+      }
+      return; // opening Settings is not itself a quality selection
+    }
     var inQualityMenu = !!target.closest(QUALITY_MENU) || !!target.closest(SHEET);
-    if (!inQualityMenu) return; // never adopt automatic quality changes after unrelated taps
+    var q = qualityFromTap(target);
+    if (!inQualityMenu && (!recentSettingsTap() || !q)) return;
     if (event.isTrusted !== false) {
       A.qualityTapAt = Date.now();
       A.qualityTapVideo = qualityVideoId();
     }
-    var q = qualityFromTap(target);
-    if (q) adoptUserQuality(q, 'menu');
+    if (q) {
+      adoptUserQuality(q, 'menu');
+      qualityMenuOpenedAt = 0; // do not treat later unrelated taps as quality picks
+    }
   }, true);
   // A reload of the same video (new source, same player and id) must get the saved
   // quality again before it buffers; otherwise YouTube may pick 4K on its own.
