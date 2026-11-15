@@ -143,8 +143,10 @@
   var BROWSE = !!window.__AAY_BROWSE;
   // YouTube reads this preference during player creation. Persist it before
   // its scripts run so initial playback need not start at adaptive 144p.
+  var ownQualityWrite = false;
   function writeYouTubeQuality(q) {
     if (BROWSE) return;
+    ownQualityWrite = true;
     try {
       if (q === 'auto') localStorage.removeItem('yt-player-quality');
       else if (/^(tiny|small|medium|large|hd720|hd1080|hd1440|hd2160|highres)$/.test(q)) {
@@ -154,7 +156,34 @@
         }));
       }
     } catch (e) {} // Storage can be disabled by a WebView profile.
+    ownQualityWrite = false;
   }
+  // YouTube stores the user's manual pick itself ({"data":"{\"quality\":2160,...}"}):
+  // the most markup-independent signal that a resolution was chosen in its menu.
+  function youTubeStoredQuality(value) {
+    try {
+      var outer = JSON.parse(value), data = outer && outer.data;
+      var inner = typeof data === 'string' && data.charAt(0) === '{' ? JSON.parse(data) : data;
+      var n = inner && typeof inner === 'object' ? inner.quality : inner;
+      return { 144: 'tiny', 240: 'small', 360: 'medium', 480: 'large', 720: 'hd720', 1080: 'hd1080',
+        1440: 'hd1440', 2160: 'hd2160', 4320: 'highres' }[parseInt(n, 10)] ||
+        (/^(tiny|small|medium|large|hd720|hd1080|hd1440|hd2160|highres)$/.test(n) ? n : null);
+    } catch (e) { return null; }
+  }
+  if (!BROWSE) try {
+    var origSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      var r = origSetItem.apply(this, arguments);
+      try {
+        if (!ownQualityWrite && k === 'yt-player-quality' && this === window.localStorage &&
+            typeof A.adoptUserQuality === 'function') {
+          var q = youTubeStoredQuality(v);
+          if (q) A.adoptUserQuality(q, 'YouTube saved pick');
+        }
+      } catch (e) {}
+      return r;
+    };
+  } catch (e) {}
   if (!BROWSE) writeYouTubeQuality(CFG.preferredQuality || 'hd720');
   // The secondary browse WebView is never allowed competing audible playback.
   if (BROWSE) {
@@ -356,6 +385,8 @@
   try {
     document.addEventListener('click', function (e) {
       var t = e.target;
+      // Quality detection below must not depend on YouTube's menu markup.
+      if (e.isTrusted !== false) { A.tapAt = Date.now(); A.tapVideo = (location.search.match(/[?&]v=([^&]+)/) || [])[1] || ''; }
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
@@ -2382,35 +2413,24 @@
     // A parent settings row such as "Quality 720p" is not a resolution pick.
     if (/quality/i.test(label) || label.length > 64) return null;
     if (/^auto(?:\s*\([^)]*\))?$/i.test(label)) return 'auto';
-    // Mobile YouTube uses labels such as "1080p60", "1080p HDR" and
-    // "1080p Premium"; nested text or badges can add whitespace.
-    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|\([^)]*\)))*$/i.exec(label);
+    // Mobile YouTube uses labels such as "1080p60", "1080p HDR", "2160p (4K)" and
+    // "1080p Premium" / "Enhanced bitrate"; nested text or badges can add whitespace.
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|bitrate|\([^)]*\)))*$/i.exec(label);
     return m ? qualityLabels[m[1]] : null;
   }
-  document.addEventListener('click', function (event) {
-    if (BROWSE || !event.target || !event.target.closest) return;
-    // The mobile watch page uses ytm-menu-item and yt-list-item variants;
-    // restricting to ytm-select-menu-item-renderer silently lost preferences.
-    // Match a real menu option, not arbitrary page text or the settings header.
-    var item = event.target.closest(
-      '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
-      'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
-      'ytm-menu-item, ytm-sheet-item, ytm-list-item-renderer,' +
-      '[role="menuitemradio"], [role="option"]');
-    if (!item) return;
-    var q = menuQuality(item.textContent);
-    if (!q && item.getAttribute) q = menuQuality(item.getAttribute('aria-label'));
-    if (!q && event.target !== item) q = menuQuality(event.target.textContent);
-    if (!q) return;
+  // One place that records the user's resolution choice (menu, bottom sheet,
+  // YouTube's own saved pick, or a player change right after a tap).
+  function adoptUserQuality(q, source) {
+    if (!q || BROWSE) return;
+    var changed = CFG.preferredQuality !== q;
     CFG.preferredQuality = q;
     writeYouTubeQuality(q);
-    if (N && typeof N.quality === 'function') {
+    if (N && typeof N.quality === 'function') { // explicit pick: always persisted natively
       try { N.quality(q); } catch (e) {}
     }
-    // Smooth switch: YouTube's own menu handler performs the change and keeps
-    // playing from its buffer. Re-forcing the range immediately caused a second
-    // source switch (visible stall). Wait, and only lock the range if YouTube
-    // did not land on the chosen tier itself (e.g. capped by our previous lock).
+    if (changed) console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
+    // Smooth switch: YouTube performs the change itself and keeps playing from its
+    // buffer. Only lock the range if it did not land on the chosen tier.
     later(function () {
       var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
       var current = '';
@@ -2426,15 +2446,63 @@
       qualityApply.key = '';
       applyPreferredQuality();
     }, 1500);
-    console.log('[aay] user selected video quality=' + q);
+  }
+  A.adoptUserQuality = adoptUserQuality;
+  // The mobile watch page uses ytm-menu-item and yt-list-item variants;
+  // restricting to ytm-select-menu-item-renderer silently lost preferences.
+  var QUALITY_MENU = '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
+    'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
+    'ytm-menu-item, ytm-sheet-item, ytm-list-item-renderer,' +
+    '[role="menuitemradio"], [role="option"]';
+  var SHEET = '#bottom-sheet, ytm-bottom-sheet-renderer, bottom-sheet-container, ' +
+    'ytm-bottom-sheet-layout, [role="dialog"], .bottom-sheet-layout';
+  function qualityFromTap(target) {
+    var item = target.closest(QUALITY_MENU);
+    if (item) {
+      var q0 = menuQuality(item.textContent);
+      if (!q0 && item.getAttribute) q0 = menuQuality(item.getAttribute('aria-label'));
+      if (!q0 && target !== item) q0 = menuQuality(target.textContent);
+      if (q0) return q0;
+    }
+    // New mobile bottom sheet: plain divs. Walk up a few levels inside the sheet.
+    if (!target.closest(SHEET)) return null;
+    for (var el = target, i = 0; el && i < 5; el = el.parentElement, i++) {
+      var q = menuQuality(el.textContent || (el.getAttribute && el.getAttribute('aria-label')));
+      if (q) return q;
+      if (el.matches && el.matches(SHEET)) break;
+    }
+    return null;
+  }
+  document.addEventListener('click', function (event) {
+    if (BROWSE || !event.target || !event.target.closest) return;
+    var q = qualityFromTap(event.target);
+    if (q) adoptUserQuality(q, 'menu');
   }, true);
   // A reload of the same video (new source, same player and id) must get the saved
   // quality again before it buffers; otherwise YouTube may pick 4K on its own.
+  function adoptQualityAfterTap(tapAt, tapVideo) {
+    if (A.tapAt !== tapAt || qualityVideoId() !== tapVideo) return; // newer tap / other video
+    if (bgSaverActive() || A.inPip || A.isMini) return;             // our caps, not a pick
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    var current = '';
+    try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
+    if (!qualityHeight[current] || current === savedQuality()) return;
+    if (current === capForDevice(savedQuality())) return; // only our device/heat limit
+    adoptUserQuality(current, 'player change after tap');
+  }
   ['emptied', 'loadstart'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       if (!e.target || e.target.tagName !== 'VIDEO') return;
       // Our own range change also reloads the source: never re-apply in a loop.
       if (Date.now() - qualityApply.at < 3000) return;
+      // A reload right after the user's own tap on the same video is THEIR quality
+      // change (any menu layout): adopt it instead of forcing the old saved tier.
+      var tapVideo = A.tapVideo || '';
+      if (A.tapAt && Date.now() - A.tapAt < 5000 && tapVideo && tapVideo === qualityVideoId()) {
+        var at = A.tapAt;
+        later(function () { adoptQualityAfterTap(at, tapVideo); }, 1800);
+        return;
+      }
       qualityApply.key = '';
       applyPreferredQuality();
     }, true);

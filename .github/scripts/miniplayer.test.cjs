@@ -1402,6 +1402,71 @@ test('hidden page sends progress less often but play/pause changes at once', () 
   assert.equal(p.stateReports.at(-1).playing, false, 'state change is immediate');
 });
 
+function sheetOption(label) {
+  const sheet = { tagName: 'DIV', textContent: 'Quality for current video ' + label, parentElement: null,
+    matches: (sel) => sel.includes('#bottom-sheet'), getAttribute: () => null };
+  const row = { tagName: 'DIV', textContent: label, parentElement: sheet, matches: () => false, getAttribute: () => null };
+  const text = { tagName: 'DIV', textContent: label, parentElement: row, matches: () => false, getAttribute: () => null,
+    closest(sel) { if (sel.includes('#bottom-sheet')) return sheet; return null; } };
+  return text;
+}
+
+test('quality pick in the new mobile bottom sheet (plain divs) is saved', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.emit('click', { target: sheetOption('2160p (4K)') });
+  p.flush();
+  assert.deepEqual(p.selectedQualities.at(-1), 'hd2160');
+});
+
+test('player reload right after a tap adopts the new quality instead of forcing the old one', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.advance(4000);                        // well after our own last range change
+  const before = p.qualityCalls.length;
+  // A real tap on an unrecognised sheet row (logger records time + video).
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', textContent: 'x', getAttribute: () => null, closest: () => null } });
+  assert.equal(p.window.__aay.tapVideo, '86p7SP34qSc');
+  p.player.setCurrentQuality('hd2160');   // YouTube switched after the user's sheet tap
+  p.emit('emptied', { target: p.video });   // capture listeners on document
+  p.emit('loadstart', { target: p.video });
+  assert.equal(p.qualityCalls.length, before, 'saved 720p is NOT forced back');
+  p.flush();
+  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'the pick is saved for next videos');
+});
+
+test('same-video reload WITHOUT a recent tap still restores the saved quality', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
+  p.flush();
+  p.advance(10000);
+  p.emit('emptied', { target: p.video });
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'YouTube picked 4K on its own: saved 720p restored');
+});
+
+test('YouTube writing its own saved pick is adopted; our own writes are not', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const n = p.selectedQualities.length;
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd720' });
+  assert.equal(p.selectedQualities.length, n, 'own config write ignored');
+  if (typeof p.window.Storage === 'function' && p.window.localStorage instanceof p.window.Storage) {
+    p.window.localStorage.setItem('yt-player-quality', JSON.stringify({ data: JSON.stringify({ quality: 1440, previousQuality: 720 }) }));
+    p.flush();
+    assert.equal(p.selectedQualities.at(-1), 'hd1440');
+  }
+});
+
+test('menu labels with suffixes parse', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const opt = (label) => ({ tagName: 'BUTTON', textContent: label, getAttribute: () => null,
+    closest(sel) { return sel.includes('[role="option"]') ? this : null; } });
+  p.emit('click', { target: opt('2160p60 HDR Premium') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160');
+  p.emit('click', { target: opt('Higher picture quality') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'preset rows are not tiers');
+});
+
 test('navigation diagnostics redact queries, video identifiers and fragments', () => {
   const start = source.indexOf('  function logRoute(url) {');
   const end = source.indexOf('\n  }', start) + 4;

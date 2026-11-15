@@ -13,10 +13,17 @@ class SmoothQualitySwitchContractTest {
     private val js get() = read("app/src/main/assets/aay.js")
 
     @Test fun userMenuPickIsNotReForcedAfterYouTubeApplies() {
-        val click = js.substringAfter("var q = menuQuality(").substringBefore("}, true);")
-        assertFalse(click.contains("later(applyPreferredQuality"))
-        assertFalse(click.contains("setPlaybackQualityRange"))
-        assertTrue(click.contains("qualityApply.key = qualityVideoId() + ':' + q"))
+        val adopt = js.substringAfter("function adoptUserQuality(q, source) {").substringBefore("A.adoptUserQuality = adoptUserQuality;")
+        assertTrue(adopt.contains("current === q && !bgSaverActive()"))
+        assertTrue(adopt.contains("qualityApply.key = qualityVideoId() + ':' + q"))
+        assertFalse(adopt.contains("later(applyPreferredQuality"))
+    }
+
+    @Test fun pickDetectionDoesNotDependOnMenuMarkup() {
+        assertTrue(js.contains("if (q) adoptUserQuality(q, 'menu');"))
+        assertTrue(js.contains("A.adoptUserQuality(q, 'YouTube saved pick')"))
+        assertTrue(js.contains("adoptUserQuality(current, 'player change after tap')"))
+        assertTrue(js.contains("if (A.tapAt && Date.now() - A.tapAt < 5000 && tapVideo && tapVideo === qualityVideoId())"))
     }
 
     @Test fun sameVideoReloadReappliesSavedQualityWithoutLoop() {
