@@ -12,6 +12,7 @@ object AppLog {
         File(context.filesDir, "crash-journal-web.log").delete()
     }
     fun add(tag: String, message: String) {
+        if (LogNoisePolicy.isGraphicsNoise(message)) return
         val safe = redact(message).replace('\n', ' ').replace('\r', ' ').take(1000)
         // runCatching: JVM unit tests have no android.util.Log implementation.
         runCatching {
