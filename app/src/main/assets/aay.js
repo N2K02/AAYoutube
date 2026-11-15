@@ -377,6 +377,7 @@
   }, true);
   function noteManualPause() {
     AUTO = false; // cancel autoplay still pending during YouTube page load
+    selectedWatch.at = 0; // user Pause cancels pending playlist autoplay
     PAUSED = true;
     bgWatch.explicitPause = true;
     bgWatch.wanted = false;
@@ -433,6 +434,31 @@
   }
 
   /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
+  // Playlist taps can navigate within the same document, retaining a paused
+  // <video> even though the user explicitly selected another track.
+  // Arm autoplay only for an actual new video route, never a random page tap.
+  var selectedWatch = { at: 0, from: '', to: '' };
+  function selectedWatchRoute() {
+    if (BROWSE || !selectedWatch.at || Date.now() - selectedWatch.at > 12000) return false;
+    var id = urlId();
+    return !!(id && id !== selectedWatch.from && (!selectedWatch.to || selectedWatch.to === id));
+  }
+  function applySelectedWatchPlayback() {
+    if (!selectedWatchRoute()) return;
+    selectedWatch.at = 0; // one selection, not perpetual autoplay
+    AUTO = true;
+    PAUSED = false;
+    bgWatch.explicitPause = false;
+    bgWatch.wanted = true;
+    bgWatch.attempts = 0;
+    bgWatch.lastAttemptAt = 0;
+    console.log('[aay] selected playlist video: autoplay armed');
+    var v = getVideo();
+    var pv = playerVideo();
+    // YouTube may navigate first and replace the media element later. Never
+    // resume the previous video while its old media data is still attached.
+    if (v && (!pv || pv.video_id === urlId())) tryPlay(v);
+  }
   try {
     document.addEventListener('click', function (e) {
       var t = e.target;
@@ -442,6 +468,21 @@
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
       console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + logRoute(a.getAttribute('href')) : ' (no link)'));
+      if (!BROWSE && e.isTrusted !== false) {
+        var playlistItem = t && t.closest && t.closest(
+          'ytm-playlist-panel-video-renderer, ytm-playlist-video-renderer,' +
+          'ytd-playlist-panel-video-renderer, ytm-compact-video-renderer,' +
+          '[class*="playlist-video"], [class*="playlist-item"]');
+        var candidate = a && a.href;
+        var nextId = '';
+        try {
+          var match = candidate && /[?&]v=([^&#]+)/.exec(candidate);
+          if (match) nextId = decodeURIComponent(match[1]);
+        } catch (err) {}
+        if ((playlistItem || nextId) && (nextId !== urlId() || !nextId)) {
+          selectedWatch = { at: Date.now(), from: urlId(), to: nextId };
+        }
+      }
       if (!a) return;
       var href = a.href, before = location.href;
       // Browse page (under the mini player): a video opens in the player, not here.
@@ -1269,6 +1310,7 @@
   }
 
   function onLoaded(v) {
+    applySelectedWatchPlayback();
     var id = urlId();
     sbLoad(id);
     rydLoad(id);
@@ -1770,6 +1812,7 @@
   }, 10000);
   // Route changes can replace the video without raising loadedmetadata.
   window.addEventListener('yt-navigate-finish', function () {
+    applySelectedWatchPlayback();
     lastNonCriticalDomAt = 0;
     schedTick();
     schedReport(0);
@@ -1889,7 +1932,7 @@
     try {
       switch (c) {
         case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
-        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
+        case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
         case 'next': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; next(); break;
