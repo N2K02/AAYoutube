@@ -1308,11 +1308,84 @@ test('8K stays available through the codec whose hardware decodes it', () => {
   assert.equal(ms.isTypeSupported(VP9), true, 'type without size is never blocked');
   assert.equal(ms.isTypeSupported('audio/webm; codecs="opus"'), true);
 
-  // No hardware AV1 decoder: software is limited to 1080p.
+  // No AV1 hardware: software AV1 is hidden where H.264/VP9 hardware can decode.
   const sw = playerPage({ cfg: { decodeCaps: { vp9: 2160, av1: 0, h264: 1080 } } });
-  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 1920, 1080)), true);
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 1920, 1080)), false);
   assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 2560, 1440)), false);
   assert.equal(sw.MediaSource.isTypeSupported(sized(VP9, 7680, 4320)), false, 'no 8K at all here');
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AVC, 1920, 1080)), true);
+});
+
+test('software VP9 and AV1 are blocked when a hardware fallback exists at the same size', () => {
+  const vp9 = 'video/webm; codecs="vp09.00.40.08"';
+  const av1 = 'video/mp4; codecs="av01.0.08M.08"';
+  const avc = 'video/mp4; codecs="avc1.4d401f"';
+  const sized = (codec, w, h, fps = 30) => codec + '; width=' + w + '; height=' + h + '; framerate=' + fps;
+  const older = playerPage({ cfg: { decodeCaps: { vp9: 0, av1: 0, h264: 1080,
+    vp9_60: 0, av1_60: 0, h264_60: 720 } } });
+  assert.equal(older.MediaSource.isTypeSupported(sized(vp9, 1920, 1080)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(av1, 1920, 1080)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1920, 1080)), true);
+  assert.equal(older.MediaSource.isTypeSupported(sized(vp9, 1280, 720, 60)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1280, 720, 60)), true);
+  assert.equal(older.MediaSource.isTypeSupported(vp9), true, 'unqualified MIME has no known size');
+  const softwareOnly = playerPage({ cfg: { decodeCaps: { vp9: 0, av1: 0, h264: 0 } } });
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1280, 720)), true,
+    'software fallback allowed when no hardware codec covers the size');
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1920, 1080)), true);
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 2560, 1440)), false);
+});
+
+test('Auto retains adaptive quality under thermal and mini or PiP ceilings', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'auto' } });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  p.window.__aay.thermal(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  p.window.__aay.mini(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.thermal(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  p.window.__aay.pip(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  p.window.__aay.pip(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+});
+
+test('captured media loadstart binds a new video immediately without DOM ticks', () => {
+  const p = playerPage({ noVideo: true });
+  const next = new p.window.HTMLMediaElement();
+  next.tagName = 'VIDEO';
+  assert.equal(next.events.has('play'), false);
+  p.emit('loadstart', { target: next });
+  assert.equal(next.events.has('play'), true);
+  assert.equal(next.events.has('ended'), true);
+  const before = next.events.get('play').length;
+  p.emit('emptied', { target: next });
+  assert.equal(next.events.get('play').length, before, 'same video never double binds');
+  p.emit('play', { target: next });
+  next.trigger('play');
+  assert.ok(p.stateReports.length > 0 || next.events.has('pause'), 'new video is ready to report state');
+});
+
+test('settings button anchors quality choice when YouTube uses unknown sheet markup', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const button = { tagName: 'BUTTON', textContent: '',
+    closest(sel) { return sel.includes('player-settings-icon') ? this : null; } };
+  const unmarked = label => ({ tagName: 'DIV', textContent: label, parentElement: null,
+    closest: () => null, getAttribute: () => null });
+  p.emit('click', { isTrusted: true, target: unmarked('2160p') });
+  assert.equal(p.selectedQualities.length, 0, 'arbitrary resolution text cannot save quality');
+  p.emit('click', { isTrusted: true, target: button });
+  assert.equal(p.selectedQualities.length, 0, 'settings button is not itself a quality selection');
+  p.emit('click', { isTrusted: true, target: unmarked('2160p') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160');
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd2160');
+  p.emit('click', { isTrusted: true, target: unmarked('1080p') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'settings tap window ends after selection');
 });
 
 function overloadPage(quality, cfg) {
@@ -1519,7 +1592,7 @@ test('auto quality obeys thermal cap and returns to adaptive when cooled', () =>
   p.window.__aay.config({ preferredQuality: 'auto' });
   p.flush();
   p.window.__aay.thermal(3);
-  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'auto cannot bypass thermal protection');
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080'], 'Auto may adapt below thermal cap');
   p.window.__aay.thermal(0);
   assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'cooling restores the full adaptive quality range');
 });
