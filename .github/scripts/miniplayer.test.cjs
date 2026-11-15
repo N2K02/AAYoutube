@@ -343,6 +343,33 @@ test('expired media hold gives up instead of resuming much later', () => {
   assert.equal(p.video.paused, true);
 });
 
+test('PiP caps quality at 720p and restores the saved quality on exit', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd1440' });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  p.window.__aay.pip(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP must not decode 1440p');
+  p.window.__aay.pip(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'saved quality returns');
+  p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player must not decode 1440p');
+  p.window.__aay.mini(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+});
+
+test('a wrong play/pause state is reported again without waiting', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  const n = p.stateReports.length;
+  assert.equal(p.stateReports.at(-1).playing, true);
+  p.video.paused = true;      // a pause the page never announced
+  p.runIntervals();
+  assert.ok(p.stateReports.length > n, 'reconciled on the watchdog tick');
+  assert.equal(p.stateReports.at(-1).playing, false);
+});
+
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
   const p = playerPage();
   p.window.__aay.mini(true);
@@ -459,7 +486,7 @@ test('menu pick already applied by YouTube is not re-forced (smooth switch)', ()
   p.flush();
   assert.deepEqual(p.selectedQualities, ['hd1080']);
   assert.equal(p.qualityCalls.length, n, 'no second source switch after a menu pick');
-  p.window.__aay.mini(true);
+  p.window.__aay.setBg(false);
   assert.equal(p.qualityCalls.length, n, 'already-applied pick stays without reload');
 });
 
@@ -481,6 +508,8 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   p.flush();
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
   p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player is capped at 720p');
+  p.window.__aay.mini(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
   p.emit('click', { target: option('Quality 144p') }); // parent menu, not a user pick
   assert.deepEqual(p.selectedQualities, ['hd1080']);

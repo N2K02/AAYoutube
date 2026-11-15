@@ -46,4 +46,10 @@ class SmoothQualitySwitchContractTest {
     @Test fun positionRestoreWaitsForYouTubeFirst() {
         assertTrue(js.contains("if (!pending.waited && Date.now() - pending.started < 1000)"))
     }
+
+    @Test fun smallWindowsCapQualityAndPlayStateReconciles() {
+        assertTrue(js.contains("if ((A.inPip || A.isMini) && (q === 'auto'"))
+        assertTrue(js.contains("var PIP_MAX_QUALITY = 'hd720';"))
+        assertTrue(js.contains("lastSent.playing !== (!v.paused && !v.ended)"))
+    }
 }

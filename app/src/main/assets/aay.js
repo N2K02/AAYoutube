@@ -1384,6 +1384,11 @@
 
   function backgroundWatchdog() {
     bgSaverCheck();
+    // Reconcile the app's play/pause icon with the real element (missed events).
+    try {
+      var rv = getVideo();
+      if (rv && lastSent && lastSent.id && lastSent.playing !== (!rv.paused && !rv.ended)) report();
+    } catch (e) {}
     // Only a watch/live page owns an active media session. A stale video
     // element/URL parameter can survive SPA navigation back to YouTube Home.
     if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1486,7 +1491,12 @@
       // This also notices a new video playing in an existing element (Mix/Autoplay)
       // without waiting for the 30-second heartbeat. Limit cross-process traffic.
       var now = Date.now();
-      if (now - lastProgressReportAt > 1400) {
+      // Under heavy decode load reports can lag; a wrong play/pause icon is
+      // corrected at once instead of waiting for the progress heartbeat.
+      if (lastSent && lastSent.id && lastSent.playing !== (!v.paused && !v.ended)) {
+        lastProgressReportAt = now;
+        report();
+      } else if (now - lastProgressReportAt > 1400) {
         lastProgressReportAt = now;
         schedReport(0);
       }
@@ -2091,6 +2101,7 @@
     '2160': 'hd2160', '4320': 'highres'
   };
   var qualityApply = { player: null, key: '', last: '', at: 0 };
+  var qualityOrder = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'hd1440', 'hd2160', 'highres'];
   function savedQuality() {
     var q = CFG.preferredQuality || 'hd720';
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
@@ -2122,8 +2133,16 @@
     if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }
     return true;
   }
+  /* PiP and the mini player are small windows: above 1080p both turned black
+   * (720p rendered fine). Like the YouTube app, cap them at 720p; the saved
+   * quality returns as soon as the full player is back. */
+  var PIP_MAX_QUALITY = 'hd720';
   function desiredQuality() {
-    return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();
+    if (bgSaverActive()) return BG_SAVER_QUALITY;
+    var q = savedQuality();
+    if ((A.inPip || A.isMini) && (q === 'auto' || qualityOrder.indexOf(q) > qualityOrder.indexOf(PIP_MAX_QUALITY)))
+      return PIP_MAX_QUALITY;
+    return q;
   }
   // Circuit breaker: audio must keep moving after a switch to 144p.
   function bgSaverCheck() {
@@ -2145,7 +2164,6 @@
   /* A video may not offer the saved tier (e.g. 4K saved, video only has 1080p).
    * Use the best tier at or below it, else the lowest above it. The saved
    * preference itself is unchanged, so the next 4K video gets 4K again. */
-  var qualityOrder = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'hd1440', 'hd2160', 'highres'];
   function availableQuality(p, want) {
     if (want === 'auto') return want;
     var levels = [];
