@@ -2213,7 +2213,9 @@
   }
   function capForDevice(q) {
     var cap = effectiveCap();
-    if (!cap || q === 'auto' || (qualityHeight[q] || 0) <= cap) return q;
+    // Adaptive 'auto' otherwise bypasses thermal/overload caps entirely.
+    // Temporarily request the highest capped tier; restore auto when the cap lifts.
+    if (!cap || (q !== 'auto' && (qualityHeight[q] || 0) <= cap)) return q;
     var best = 'hd720';
     qualityOrder.forEach(function (l) { if (qualityHeight[l] <= cap) best = l; });
     return best;
