@@ -81,6 +81,8 @@ object WebHost {
     private var lastLinkRequest = 0L
     private var lastRendererCrashAt = 0L
     private var rendererCrashCount = 0
+    private var webResizeCount = 0
+    private var lastWebResizeLogAt = 0L
 
     // What the screens show.
     val progress = MutableStateFlow(100)
@@ -276,6 +278,21 @@ object WebHost {
             " directCarContext=" + inCarDisplay)
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
+        // Actual WebView geometry changes are a cheap proxy for potential
+        // decoder Surface rebinding. Do not confuse them with Codec2 creation.
+        w.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            if (width <= 0 || height <= 0 ||
+                (width == oldRight - oldLeft && height == oldBottom - oldTop)) return@addOnLayoutChangeListener
+            webResizeCount++
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastWebResizeLogAt >= 1_000L) {
+                lastWebResizeLogAt = now
+                AppLog.add("VIDEO", "WebView surface geometry=${width}x${height} " +
+                    "resizeCount=$webResizeCount mode=${mode.value} pip=${inPip.value}")
+            }
+        }
         configure(w)
         // WebView.pauseTimers() is process-wide. An older idle/frozen player
         // may have paused Chromium's shared timers before being disposed.
@@ -1156,6 +1173,8 @@ object WebHost {
         perfElapsed = 0L
         perfCpu = 0L
         recentWebCpu.clear()
+        webResizeCount = 0
+        lastWebResizeLogAt = 0L
         sameVideoReloadPosition = null
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
