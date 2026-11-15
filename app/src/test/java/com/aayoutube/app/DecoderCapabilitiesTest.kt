@@ -31,7 +31,7 @@ class DecoderCapabilitiesTest {
         assertTrue(web.contains("Features.current.toJson().put(\"decodeCaps\", DecoderCapabilities.json())"))
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("var caps = C0.decodeCaps && typeof C0.decodeCaps === 'object' ? C0.decodeCaps : null;"))
-        assertTrue(js.contains("if (caps) { var limit = codecLimit(codecFamily(t)); return !!limit && size > limit; }"))
+        assertTrue(js.contains("return tooLargeFor(codecFamily(t), videoSize(t), typeFps(t), tenBit(t));"))
         assertTrue(js.contains("if (!nativeCaps) try { localStorage.setItem('aay-max-smooth-h'"))
     }
 

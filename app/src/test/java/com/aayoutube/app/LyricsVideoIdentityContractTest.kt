@@ -69,7 +69,7 @@ class LyricsVideoIdentityContractTest {
     @Test fun routeAndTimeEventsRefreshPlaybackSnapshots() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("v.addEventListener('timeupdate', function () {"))
-        assertTrue(js.contains("if (now - lastProgressReportAt > 1400)"))
+        assertTrue(js.contains("now - lastProgressReportAt > (A.isBg && !A.isCar ? BG_PROGRESS_MS : 1400)"))
         assertTrue(js.contains("window.addEventListener('yt-navigate-finish', function () { schedReport(0); })"))
     }
 
