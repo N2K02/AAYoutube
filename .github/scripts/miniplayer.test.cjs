@@ -1094,7 +1094,7 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   p.video.trigger('play');
   assert.equal(p.video.paused, true, 'unrelated click is not Play');
   const playButton = { tagName: 'BUTTON', closest(selector) {
-    return selector.includes('video, .ytp-play-button') ? { tagName: 'VIDEO' } : null;
+    return selector.includes('.ytp-play-button') ? { tagName: 'BUTTON' } : null;
   } };
   p.emit('click', { isTrusted: true, target: playButton });
   p.video.play();
@@ -1510,7 +1510,7 @@ test('quality pick in the new mobile bottom sheet (plain divs) is saved', () => 
   assert.deepEqual(p.selectedQualities.at(-1), 'hd2160');
 });
 
-test('player reload right after a tap adopts the new quality instead of forcing the old one', () => {
+test('unidentified quality change after a tap never overwrites the saved maximum', () => {
   const p = playerPage({ quality: true, currentQuality: 'hd720' });
   p.flush();
   p.advance(4000);                        // well after our own last range change
@@ -1521,9 +1521,11 @@ test('player reload right after a tap adopts the new quality instead of forcing 
   p.player.setCurrentQuality('hd2160');   // YouTube switched after the user's sheet tap
   p.emit('emptied', { target: p.video });   // capture listeners on document
   p.emit('loadstart', { target: p.video });
-  assert.equal(p.qualityCalls.length, before, 'saved 720p is NOT forced back');
+  assert.equal(p.qualityCalls.length, before, 'do not interrupt an in-progress quality switch');
   p.flush();
-  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'the pick is saved for next videos');
+  assert.equal(p.selectedQualities.length, 0, 'lower or higher observed tier is not explicit user intent');
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd720',
+    'only an exact menu selection is allowed to change the saved maximum');
 });
 
 test('unrelated taps never save adaptive quality changes', () => {
