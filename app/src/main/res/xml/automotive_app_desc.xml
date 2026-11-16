@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <automotiveApp xmlns:tools="http://schemas.android.com/tools">
-    <!-- Same as AABrowser: the projected video entry plus the media (music) entry.
-         AABrowser's extra "template" line belongs to its AndroidX wide service, which
-         AAYoutube does not ship (it froze the shared WebView). -->
+    <!-- Legacy parked-only projection plus existing MediaBrowser audio entry.
+         The modern AndroidX CarAppService provides a separate, car-safe media
+         template. Template support does not authorize video projection. -->
     <uses name="service" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="projection" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="media" />
+    <uses name="template" />
 </automotiveApp>
