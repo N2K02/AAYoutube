@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Car App Library media templates (not navigation or video projection). -->
+    <uses-permission android:name="androidx.car.app.MEDIA_TEMPLATES" />
+    <uses-feature android:name="android.software.car.templates_host.media" android:required="false" />
 
     <!-- Installs its own updates (Android asks the user first) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -38,6 +41,10 @@
         android:theme="@style/Theme.AAYoutube"
         android:usesCleartextTraffic="false">
 
+
+        <meta-data
+            android:name="androidx.car.app.minCarApiLevel"
+            android:value="8" />
 
         <meta-data
             android:name="distractionOptimized"
@@ -114,6 +121,20 @@
         <service
             android:name=".WebHostService"
             android:exported="false" />
+
+        <!-- Distinct modern AndroidX MEDIA template, no WebView ownership.
+             This does not turn video into a driving-optimized navigation app. -->
+        <service
+            android:name=".CarMediaTemplateService"
+            android:enabled="true"
+            android:exported="true"
+            android:label="AAYT Media">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.MEDIA" />
+            </intent-filter>
+            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="8" />
+        </service>
 
         <!-- Independent Android Auto MUSIC entry. The native MediaBrowserServiceCompat
              renders the host-owned playback template; it never creates or moves
