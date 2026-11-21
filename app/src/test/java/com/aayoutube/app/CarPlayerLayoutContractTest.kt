@@ -49,9 +49,10 @@ class CarPlayerLayoutContractTest {
         val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(js.contains("if (!A.isCar || BROWSE || A.isMini) return;"))
         // Explicit battery saver is limited to fully hidden background audio.
-        // Car, PiP, and draggable mini video must keep the saved user quality.
+        // Car keeps the saved user quality; PiP and the mini player are capped at
+        // 720p because above 1080p they turned black (user report, Nov 2026).
         assertTrue(js.contains("if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality"))
-        assertTrue(js.contains("return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();"))
+        assertTrue(js.contains("if (bgSaverActive()) return BG_SAVER_QUALITY;"))
         assertTrue(js.contains("A.setBg = function (on)"))
         assertTrue(js.contains("applyPreferredQuality();"))
         assertTrue(js.contains("qualityApply.player === p && qualityApply.key === key"))

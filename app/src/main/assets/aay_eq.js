@@ -430,6 +430,9 @@
   }, true);
 
   var A = window.__aay || (window.__aay = {});
+  // Native asks before judging whether ANOTHER app is playing: close our own
+  // idle output now instead of after the 2 s grace (AudioManager cannot tell owners).
+  A.eqIdleNow = function () { clearTimeout(EQ.idleTimer); suspendIfIdle(); };
   A.eq = function (cfg) {
     if (!cfg || typeof cfg !== 'object') return;
     EQ.cfg = cfg;
@@ -437,6 +440,12 @@
     if (needsRoute()) scan();
     if (!want()) report('off');
     else if (!(EQ.status === 'unsupported' && !EQ.count)) report(settled());
+  };
+  // Diagnostic mode only. Realtime audio thread CPU is not exposed to Web Audio.
+  // This distinguishes expensive DSP routing from the unprocessed native path.
+  A.eqPerf = function () {
+    var state = EQ.ctx ? EQ.ctx.state : 'none';
+    return (needsRoute() ? 'dsp' : 'bypass') + ':' + state + ':' + EQ.count;
   };
   A.eqStatus = function () { return EQ.status || settled(); };
 })();

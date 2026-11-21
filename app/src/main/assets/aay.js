@@ -10,23 +10,90 @@
   if (window.__aay) return;
   if (!/(^|\.)youtube\.com$/.test(location.hostname)) return;
 
-  /* Video format preference (Features > Video format): av1, vp9 or h264.
-   * YouTube picks a format from what the browser says it can play, so hide the
-   * formats the user does not want. AV1 is asked for via YouTube's own AV1
-   * preference and blocks nothing: videos without AV1 still play as VP9/H.264.
-   * Read live, so a change applies from the next video. */
+  /* Automatic codec selection: Chromium and YouTube choose among supported
+   * formats. Block only combinations beyond device decoder limits, keeping
+   * unsupported software-intensive formats away from high resolutions. */
   (function () {
     var C0 = window.__AAY_CFG || {};
+    /* Resolution gate, per codec. Android's codec list (native decodeCaps:
+     * {vp9, av1, h264} -> max hardware height) decides which codec can play which
+     * tier, so 8K stays available through AV1 when only VP9 cannot do it (8K VP9
+     * froze ~20 s). A codec without a hardware decoder is limited to 1080p
+     * (software). Without native caps (older host), fall back to Chromium's
+     * MediaCapabilities probe result cached from the previous page load. */
+    var caps = C0.decodeCaps && typeof C0.decodeCaps === 'object' ? C0.decodeCaps : null;
+    var SOFTWARE_MAX = 1080; // only when no supported hardware codec covers this size
+    var maxSmoothHeight = 0;
+    try {
+      if (caps) localStorage.removeItem('aay-max-smooth-h'); // stale guess from the probe
+      else maxSmoothHeight = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0;
+    } catch (e) {}
+    function codecFamily(t) {
+      if (/av01/.test(t)) return 'av1';
+      if (/vp0?9/.test(t)) return 'vp9';
+      if (/avc[13]|h264/.test(t)) return 'h264';
+      return '';
+    }
+    // Short side, so a vertical 1080x1920 video counts as 1080p.
+    function videoSize(t) {
+      var h = /height\s*=\s*(\d+)/.exec(t), w = /width\s*=\s*(\d+)/.exec(t);
+      var hv = h ? parseInt(h[1], 10) : 0, wv = w ? parseInt(w[1], 10) : 0;
+      return hv && wv ? Math.min(hv, wv) : hv;
+    }
+    // VP9 profile 2/3 and AV1 10-bit are YouTube's HDR streams.
+    function tenBit(t) { return /vp09\.0[23]\./.test(t) || /av01\.\d\.\d+[mh]\.1[02]/.test(t); }
+    function typeFps(t) { var m = /framerate\s*=\s*([\d.]+)/.exec(t); return m ? parseFloat(m[1]) : 0; }
+    function hardwareLimit(family, fps, isTenBit) {
+      if (!caps || !(family in caps)) return 0;
+      if (isTenBit && (family + '_hdr') in caps && !parseInt(caps[family + '_hdr'], 10)) return 0;
+      var limit = parseInt(caps[family], 10) || 0;
+      if (fps > 32 && (family + '_60') in caps)
+        limit = Math.min(limit, parseInt(caps[family + '_60'], 10) || 0);
+      return limit;
+    }
+    function hardwareAlternative(family, size, fps) {
+      if (!caps || !size) return false;
+      return ['vp9', 'av1', 'h264'].some(function (candidate) {
+        return candidate !== family && hardwareLimit(candidate, fps, false) >= size;
+      });
+    }
+    function tooLargeFor(family, size, fps, isTenBit) {
+      // MIME-only probes have no size. YouTube often negotiates formats this
+      // way, so reject a wholly software codec if a hardware codec can handle
+      // ordinary playback (720p); otherwise software VP9/AV1 remains selectable.
+      if (!size) {
+        return !!(caps && family && family in caps &&
+          hardwareLimit(family, fps, isTenBit) === 0 &&
+          hardwareAlternative(family, 720, fps));
+      }
+      if (caps && family && family in caps) {
+        var hardware = hardwareLimit(family, fps, isTenBit);
+        if (size && hardware >= size) return false;
+        // Prefer hardware decoding at this size. Only fall back to software
+        // when every known codec lacks a suitable hardware decoder.
+        if (hardwareAlternative(family, size, fps)) return true;
+        return !!size && size > SOFTWARE_MAX;
+      }
+      return !!size && !!maxSmoothHeight && size > maxSmoothHeight;
+    }
+    function tooLarge(t) {
+      return tooLargeFor(codecFamily(t), videoSize(t), typeFps(t), tenBit(t));
+    }
     function blocked(type) {
-      var c = (window.__aay && window.__aay.__cfg ? window.__aay.__cfg() : C0).videoCodec;
       var t = String(type || '').toLowerCase();
       if (t.indexOf('video/') < 0 && t.indexOf('codecs') < 0) return false;
-      if (c === 'h264') return /vp0?9|vp8|av01/.test(t);
-      if (c === 'vp9') return /av01/.test(t);
-      return false;
+      return tooLarge(t);
     }
+    // Clear the former fixed AV1 preference once; leave future choices to
+    // Chromium and YouTube, with the hardware capability gate remaining.
     try {
-      localStorage.setItem('yt-player-av1-pref', C0.videoCodec === 'av1' ? '8192' : '-1');
+      if (localStorage.getItem('aay-auto-codec-migrated') !== '1') {
+        localStorage.removeItem('yt-player-av1-pref');
+        localStorage.setItem('aay-auto-codec-migrated', '1');
+      }
+    } catch (e) {}
+    if (caps) try {
+      console.log('[aay] decode limits (hardware, from Android) ' + JSON.stringify(caps));
     } catch (e) {}
     function wrapStatic(Ctor) {
       if (!Ctor || typeof Ctor.isTypeSupported !== 'function' || Ctor.isTypeSupported.__aay) return;
@@ -52,11 +119,35 @@
         var origInfo = mc.decodingInfo.bind(mc);
         var info = function (cfg) {
           var t = cfg && cfg.video && cfg.video.contentType;
-          if (blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
+          var v0 = cfg && cfg.video, size = v0 ? Math.min(v0.height || 0, v0.width || v0.height || 0) : 0;
+          var lt = String(t || '').toLowerCase();
+          var big = tooLargeFor(codecFamily(lt), size, v0 && v0.framerate || 0, tenBit(lt));
+          if (big || blocked(t)) return Promise.resolve({ supported: false, smooth: false, powerEfficient: false });
           return origInfo(cfg);
         };
         info.__aay = true;
         mc.decodingInfo = info;
+        // Probe the real decoder once per page (cheap, async). Largest height at
+        // which VP9 or AV1 decodes smoothly becomes the limit for the next load.
+        var tiers = [[7680, 4320], [5120, 2880], [3840, 2160], [2560, 1440]];
+        var codecs = ['video/webm; codecs="vp09.00.51.08"', 'video/mp4; codecs="av01.0.16M.08"'];
+        var probe = function (i) {
+          if (i >= tiers.length) return Promise.resolve(1080);
+          var w = tiers[i][0], h = tiers[i][1];
+          return Promise.all(codecs.map(function (ct) {
+            return origInfo({ type: 'media-source', video: { contentType: ct, width: w, height: h,
+              bitrate: h >= 4320 ? 40000000 : h >= 2160 ? 20000000 : 10000000, framerate: 30 } })
+              .then(function (r) { return !!(r && r.supported && r.smooth); }, function () { return false; });
+          })).then(function (ok) { return ok.indexOf(true) >= 0 ? h : probe(i + 1); });
+        };
+        if (!caps) probe(0).then(function (h) {
+          var limit = h >= 4320 ? 0 : h; // 0: the device handles every tier
+          try { localStorage.setItem('aay-max-smooth-h', String(limit)); } catch (e) {}
+          if (limit !== maxSmoothHeight)
+            console.log('[aay] smooth decode limit ' + (limit ? limit + 'p' : 'none') +
+              ' (applies from next page load)');
+          if (!maxSmoothHeight) maxSmoothHeight = limit; // tighten now; never loosen mid-page
+        }, function () {});
       }
     } catch (e) {}
   })();
@@ -66,8 +157,10 @@
   var BROWSE = !!window.__AAY_BROWSE;
   // YouTube reads this preference during player creation. Persist it before
   // its scripts run so initial playback need not start at adaptive 144p.
+  var ownQualityWrite = false;
   function writeYouTubeQuality(q) {
     if (BROWSE) return;
+    ownQualityWrite = true;
     try {
       if (q === 'auto') localStorage.removeItem('yt-player-quality');
       else if (/^(tiny|small|medium|large|hd720|hd1080|hd1440|hd2160|highres)$/.test(q)) {
@@ -77,7 +170,40 @@
         }));
       }
     } catch (e) {} // Storage can be disabled by a WebView profile.
+    ownQualityWrite = false;
   }
+  // YouTube stores the user's manual pick itself ({"data":"{\"quality\":2160,...}"}):
+  // the most markup-independent signal that a resolution was chosen in its menu.
+  function youTubeStoredQuality(value) {
+    try {
+      var outer = JSON.parse(value), data = outer && outer.data;
+      var inner = typeof data === 'string' && data.charAt(0) === '{' ? JSON.parse(data) : data;
+      var n = inner && typeof inner === 'object' ? inner.quality : inner;
+      return { 144: 'tiny', 240: 'small', 360: 'medium', 480: 'large', 720: 'hd720', 1080: 'hd1080',
+        1440: 'hd1440', 2160: 'hd2160', 4320: 'highres' }[parseInt(n, 10)] ||
+        (/^(tiny|small|medium|large|hd720|hd1080|hd1440|hd2160|highres)$/.test(n) ? n : null);
+    } catch (e) { return null; }
+  }
+  if (!BROWSE) try {
+    var origSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      var r = origSetItem.apply(this, arguments);
+      try {
+        if (!ownQualityWrite && k === 'yt-player-quality' && this === window.localStorage &&
+            typeof A.adoptUserQuality === 'function' &&
+            A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 &&
+            A.qualityTapVideo === ((location.search.match(/[?&]v=([^&]+)/) || [])[1] || '')) {
+          var q = youTubeStoredQuality(v);
+          // YouTube also writes its *current adaptive tier* here. It is not
+          // always an intentional change of the user's saved maximum.
+          // Persist only the exact quality option identified by the click.
+          if (q && q === A.qualityTapChoice && q !== CFG.preferredQuality)
+            A.adoptUserQuality(q, 'YouTube saved pick');
+        }
+      } catch (e) {}
+      return r;
+    };
+  } catch (e) {}
   if (!BROWSE) writeYouTubeQuality(CFG.preferredQuality || 'hd720');
   // The secondary browse WebView is never allowed competing audible playback.
   if (BROWSE) {
@@ -94,6 +220,11 @@
     } catch (e) {}
   }
   var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, isLand: false };
+  // Bounded, aggregated counters only: no page content, URLs or video identifiers.
+  var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
+    layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
+    lastFrames: -1, lastDropped: -1 };
+  A.perf = function () { return perf; };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
   // cookies and avatar placeholders are not proof that YouTube is signed in.
@@ -165,22 +296,30 @@
   var transitUntil = 0;
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
-  function holding() { return inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini)); }
+  function holding() { return !bgWatch.held && (inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini))); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
   // unrelated DOM clicks must not disable interruption recovery.
+  var PLAY_PAUSE_BUTTON = '.ytp-play-button, #play-pause-button, .play-pause-button,' +
+    'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
+    '.player-play-pause-button, .player-play-pause-icon,' +
+    'button[aria-label*="pause" i], button[aria-label*="play" i],' +
+    'button[title*="pause" i], button[title*="play" i],' +
+    '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]';
+  function actualPlayPauseButton(target) {
+    return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
+  }
   function manualPauseGesture(e) {
     if (BROWSE || e.isTrusted === false) return;
     var v = getVideo();
     if (!v) return;
     var t = e.target;
-    var playerControl = !!(t && t.closest && t.closest(
-      'video, .ytp-play-button, #play-pause-button, .play-pause-button,' +
-      'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
-      '#movie_player, .html5-video-player, .html5-video-container,' +
-      'button[aria-label*="pause" i], button[title*="pause" i],' +
-      '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]'));
+    var playerControl = !!actualPlayPauseButton(t);
+    // A tap on Settings, quality, or another player control is not a Pause.
+    // When paused, the actual video rectangle still allows anonymous center Play.
+    var playerSurface = !!(t && t.closest && t.closest(
+      'video, #movie_player, .html5-video-player, .html5-video-container'));
     // On some mobile YouTube versions the center control is an anonymous div,
     // so also accept a trusted touch inside the actual video rectangle.
     var insideVideo = false;
@@ -190,7 +329,7 @@
         e.clientX >= rect.left && e.clientX <= rect.left + rect.width &&
         e.clientY >= rect.top && e.clientY <= rect.top + rect.height;
     }
-    if (v.paused && (playerControl || insideVideo)) {
+    if (v.paused && (playerControl || insideVideo || playerSurface)) {
       userResumeEligibleUntil = Date.now() + 1500;
       PAUSED = false;
       bgWatch.explicitPause = false;
@@ -203,6 +342,24 @@
   }
   document.addEventListener('pointerdown', manualPauseGesture, true);
   document.addEventListener('click', manualPauseGesture, true);
+  // Some mobile YouTube builds render an always-Play button after an
+  // involuntary page pause while the actual <video> continues playing.
+  // Letting YouTube handle this click calls Play again instead of Pause.
+  // Intercept only a genuine Play/Pause control when its state is proven stale.
+  document.addEventListener('click', function (e) {
+    if (BROWSE || e.isTrusted === false || !actualPlayPauseButton(e.target)) return;
+    var v = getVideo(), p = ytPlayer();
+    if (!v || v.paused || v.ended || !p || typeof p.getPlayerState !== 'function') return;
+    var st;
+    try { st = p.getPlayerState(); } catch (err) { return; }
+    if (st !== 2) return; // consistent player state: let YouTube handle the click
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    console.log('[aay] stale player Play button: honoring user Pause');
+    noteManualPause();
+    enforceExplicitPause(v);
+    schedReport(0);
+  }, true);
   document.addEventListener('keydown', function (e) {
     if (BROWSE || e.isTrusted === false || e.repeat) return;
     var t = e.target, v = getVideo();
@@ -220,6 +377,7 @@
   }, true);
   function noteManualPause() {
     AUTO = false; // cancel autoplay still pending during YouTube page load
+    selectedWatch.at = 0; // user Pause cancels pending playlist autoplay
     PAUSED = true;
     bgWatch.explicitPause = true;
     bgWatch.wanted = false;
@@ -276,13 +434,55 @@
   }
 
   /* ---------- 1c. Taps and player events (for the Logs page), and links that do nothing ---------- */
+  // Playlist taps can navigate within the same document, retaining a paused
+  // <video> even though the user explicitly selected another track.
+  // Arm autoplay only for an actual new video route, never a random page tap.
+  var selectedWatch = { at: 0, from: '', to: '' };
+  function selectedWatchRoute() {
+    if (BROWSE || !selectedWatch.at || Date.now() - selectedWatch.at > 12000) return false;
+    var id = urlId();
+    return !!(id && id !== selectedWatch.from && (!selectedWatch.to || selectedWatch.to === id));
+  }
+  function applySelectedWatchPlayback() {
+    if (!selectedWatchRoute()) return;
+    selectedWatch.at = 0; // one selection, not perpetual autoplay
+    AUTO = true;
+    PAUSED = false;
+    bgWatch.explicitPause = false;
+    bgWatch.wanted = true;
+    bgWatch.attempts = 0;
+    bgWatch.lastAttemptAt = 0;
+    console.log('[aay] selected playlist video: autoplay armed');
+    var v = getVideo();
+    var pv = playerVideo();
+    // YouTube may navigate first and replace the media element later. Never
+    // resume the previous video while its old media data is still attached.
+    if (v && pv && pv.video_id === urlId()) tryPlay(v);
+  }
   try {
     document.addEventListener('click', function (e) {
       var t = e.target;
+      // A general tap is not proof of a manual quality selection.
+      // Quality menu/sheet events are tracked separately below.
       var a = t && t.closest ? t.closest('a[href]') : null;
       var tag = t ? (t.tagName || '').toLowerCase() : '?';
       var host = t && t.closest ? t.closest('[class*="renderer"],[class*="lockup"]') : null;
       console.log('[aay] tap ' + tag + (host ? ' in ' + host.tagName.toLowerCase() : '') + (a ? ' link ' + logRoute(a.getAttribute('href')) : ' (no link)'));
+      if (!BROWSE && e.isTrusted !== false) {
+        var playlistItem = t && t.closest && t.closest(
+          'ytm-playlist-panel-video-renderer, ytm-playlist-video-renderer,' +
+          'ytd-playlist-panel-video-renderer, ytm-compact-video-renderer,' +
+          '[class*="playlist-video"], [class*="playlist-item"]');
+        var candidate = a && a.href;
+        var nextId = '';
+        try {
+          var match = candidate && /[?&]v=([^&#]+)/.exec(candidate);
+          if (match) nextId = decodeURIComponent(match[1]);
+        } catch (err) {}
+        if ((playlistItem || nextId) && (nextId !== urlId() || !nextId)) {
+          selectedWatch = { at: Date.now(), from: urlId(), to: nextId };
+        }
+      }
       if (!a) return;
       var href = a.href, before = location.href;
       // Browse page (under the mini player): a video opens in the player, not here.
@@ -908,6 +1108,9 @@
     return q.slice(Math.max(0, i - 10), i + 25);
   }
   var lastSent = null;
+  // Nothing on screen shows the position while hidden (Android extrapolates the
+  // media-session position): send progress less often; state changes stay instant.
+  var BG_PROGRESS_MS = 10000;
   function report() {
     if (!N) return;
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
@@ -1098,7 +1301,7 @@
   function tryPlay(v) {
     var n = 0;
     (function step() {
-      if (!AUTO) return;
+      if (!AUTO || PAUSED || bgWatch.held) return;
       if (v.paused && n++ < 12) {
         try { var pr = v.play(); if (pr && pr.catch) pr.catch(function () {}); } catch (e) {}
         setTimeout(step, 800);
@@ -1107,6 +1310,7 @@
   }
 
   function onLoaded(v) {
+    applySelectedWatchPlayback();
     var id = urlId();
     sbLoad(id);
     rydLoad(id);
@@ -1135,22 +1339,26 @@
     if (BROWSE) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
-    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || isAd()) return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
     var st;
     try { st = p.getPlayerState(); } catch (e) { return; }
     if (st !== 2) return; // 2 = paused
     var now = Date.now();
-    if (now - stateFixAt < 2500) return;
+    if (now - stateFixAt < 12000) return; // avoid retrying playVideo every watchdog tick
     stateFixAt = now;
-    try { p.playVideo(); } catch (e) {}
+    try {
+      p.playVideo();
+      console.log('[aay] reconciled stale player Play icon');
+    } catch (e) {}
   }
-  // Repaint the video layer: after a WebView resize Chromium can keep showing
-  // a black layer although new frames are decoded.
+  // Never toggle video opacity as a repaint workaround. On Android that can
+  // promote/demote Chromium's hardware video overlay and leave a black Surface.
+  // Request a normal geometry update only; frame-stall recovery is separate.
   function repaintVideo(v) {
-    if (!v || !v.style || typeof v.style.setProperty !== 'function') return;
-    v.style.setProperty('opacity', '0.999', 'important');
-    var raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (f) { setTimeout(f, 16); };
-    raf(function () { raf(function () { v.style.removeProperty('opacity'); }); });
+    if (!v || !v.getBoundingClientRect) return;
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    try { if (p && typeof p.setInternalSize === 'function') p.setInternalSize(); } catch (e) {}
+    window.dispatchEvent(new Event('resize'));
   }
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
@@ -1288,6 +1496,15 @@
       qualityState.reset = null;
       return;
     }
+    // YouTube restores the position itself on a quality switch. Seeking at the
+    // same moment caused a second flush (two 'seeking' events, visible stall), so
+    // give it a moment first and only step in if it did not.
+    if (!pending.waited && Date.now() - pending.started < 1000) {
+      if (!pending.timer) pending.timer = later(function () {
+        pending.timer = 0; pending.waited = true; restoreAfterSourceChange(v);
+      }, 1000);
+      return;
+    }
     if (pending.tries++ >= 3) { qualityState.reset = null; return; }
     try {
       v.currentTime = Math.min(pending.seconds, isFinite(v.duration) && v.duration > 0
@@ -1304,7 +1521,7 @@
     if (BROWSE || !id || id !== qualityVideoId() || !isFinite(seconds) || seconds < 10) return;
     qualityState.id = id;
     qualityState.position = Math.max(qualityState.position, seconds);
-    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0 };
+    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0, waited: true }; // new document: YouTube will not restore
     console.log('[aay] same-video document reload: restoring ' + Math.round(seconds) + 's');
     restoreAfterSourceChange(getVideo());
   };
@@ -1329,9 +1546,46 @@
   /* WebView timers may be throttled with the screen off. Check only when the
    * user's last intent was to play; explicit media pauses and completed videos win.
    */
-  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0 };
+  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0, held: false, pausedAt: 0 };
+  // Another app took the audio (music, video, call): Chromium paused us. Do not
+  // grab focus back; native resumes once the other media has stopped.
+  var MEDIA_SETTLE_MS = 2500;
+  A.mediaHold = function (on, giveUp) {
+    if (on) {
+      // Another app (or call) owns audio now. Stop audible playback even when
+      // Chromium missed audio focus loss; preserve intent for a later resume.
+      if (typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
+      var v = getVideo();
+      if (v && !v.ended && !v.paused && !PAUSED && !bgWatch.explicitPause)
+        bgWatch.wanted = true;
+      bgWatch.held = true;
+      if (v && !v.paused && !v.ended) {
+        allowPause = true;
+        try { v.pause(); } finally { allowPause = false; }
+        bgWatch.pausedAt = Date.now();
+        console.log('[aay] media focus hold: playback yielded');
+      }
+    } else {
+      bgWatch.held = false;
+      bgWatch.attempts = 0;
+      bgWatch.lastAttemptAt = 0;
+      if (giveUp) bgWatch.wanted = false;
+    }
+    schedReport(0);
+  };
+
   function backgroundWatchdog() {
     bgSaverCheck();
+    try { overloadCheck(getVideo()); } catch (e) {}
+    try { logPlayingFormat(getVideo()); } catch (e) {}
+    // Reconcile YouTube's center Play icon and app status without touching
+    // the decoder surface or forcing stream reloads.
+    try { syncPlayerState(); } catch (e) {}
+    // Reconcile the app's play/pause icon with the real element (missed events).
+    try {
+      var rv = getVideo();
+      if (rv && lastSent && lastSent.id && lastSent.playing !== (!rv.paused && !rv.ended)) report();
+    } catch (e) {}
     // Only a watch/live page owns an active media session. A stale video
     // element/URL parameter can survive SPA navigation back to YouTube Home.
     if (BROWSE || !/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1359,6 +1613,17 @@
       return;
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
+    if (bgWatch.held) return;
+    // Let an audio-focus handoff settle: the other app starts its output shortly
+    // after Chromium pauses us, so an instant resume would steal focus back.
+    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
+    try {
+      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold()) {
+        bgWatch.held = true;
+        console.log('[aay] another app is playing media: not resuming');
+        return;
+      }
+    } catch (e) {}
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
@@ -1376,6 +1641,15 @@
   A.checkBackgroundPlayback = backgroundWatchdog;
   setInterval(backgroundWatchdog, 5000);
 
+  // Capturing media events arrive for a newly-created <video> even if the
+  // background DOM scan is throttled. Bind once, before its own event handler
+  // needs to report play/pause/ended. Only actual VIDEO targets are considered.
+  ['loadstart', 'emptied'].forEach(function (eventName) {
+    document.addEventListener(eventName, function (e) {
+      if (!BROWSE && e.target && e.target.tagName === 'VIDEO') bind(e.target);
+    }, true);
+  });
+
   function bind(v) {
     if (!v || v.__aay) return;
     trackNewVideoElement(v);
@@ -1392,13 +1666,19 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
+          if (bgWatch.held) {
+            // YouTube can issue a delayed play() after another app takes audio.
+            allowPause = true;
+            try { v.pause(); } finally { allowPause = false; }
+          } else if (PAUSED && !AUTO && Date.now() > userResumeEligibleUntil) enforceExplicitPause(v);
           else {
             PAUSED = false;
             bgWatch.wanted = true; bgWatch.explicitPause = false;
             bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
           }
         }
+        if (ev === 'playing') later(syncPlayerState, 100);
+        if (ev === 'pause') bgWatch.pausedAt = Date.now();
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
@@ -1422,7 +1702,12 @@
       // This also notices a new video playing in an existing element (Mix/Autoplay)
       // without waiting for the 30-second heartbeat. Limit cross-process traffic.
       var now = Date.now();
-      if (now - lastProgressReportAt > 1400) {
+      // Under heavy decode load reports can lag; a wrong play/pause icon is
+      // corrected at once instead of waiting for the progress heartbeat.
+      if (lastSent && lastSent.id && lastSent.playing !== (!v.paused && !v.ended)) {
+        lastProgressReportAt = now;
+        report();
+      } else if (now - lastProgressReportAt > (A.isBg && !A.isCar ? BG_PROGRESS_MS : 1400)) {
         lastProgressReportAt = now;
         schedReport(0);
       }
@@ -1448,9 +1733,10 @@
     }
   }
 
-  var tickTimer = 0;
+  var tickTimer = 0, lastNonCriticalDomAt = 0;
   function tick() {
     tickTimer = 0;
+    var started = Date.now();
     try {
       var v = getVideo();
       if (v) bind(v);
@@ -1458,29 +1744,85 @@
       // but visual DOM work is unnecessary when the phone is hidden.
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
       if (A.isBg && !A.inPip && !A.isCar) return;
+      // Playback and ad handling stay responsive. Heavier noncritical UI
+      // traversals run at most every 8 s despite YouTube's frequent mutations.
       skipAd();
       syncPlayerState();
-      dialogs();
-      rydApply();
-      openFirstResult();
       carLayout();
-      landPlaylist();
-      reportAccount();
+      if (Date.now() - lastNonCriticalDomAt >= 8000) {
+        lastNonCriticalDomAt = Date.now();
+        dialogs();
+        rydApply();
+        openFirstResult();
+        landPlaylist();
+        reportAccount();
+      }
     } catch (e) {}
+    finally {
+      perf.ticks++;
+      perf.tickMs += Math.max(0, Date.now() - started);
+    }
   }
   // YouTube mutates the page continuously, even when the player is unchanged.
   // Coalesce those mutations to avoid repeated DOM traversal and layout work.
   // Playback, source and route event listeners remain immediate.
   function schedTick() {
     if (tickTimer) return;
-    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 5000 : 900);
+    // Huawei/EMUI WebView pages can mutate constantly even while idle.
+    // Coalesce expensive full-page traversals without changing immediate media events.
+    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800);
   }
 
   whenRoot(function () {
-    new MutationObserver(schedTick).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(function (records) {
+      perf.mutations += records ? records.length : 1;
+      schedTick();
+    }).observe(document.documentElement, { childList: true, subtree: true });
     schedTick();
   });
 
+  // Low-frequency WebView telemetry: avoids continuous inspection of the page.
+  // Chromium renderer CPU is a separate Android process and MUST be measured
+  // externally (ADB); JavaScript timing and dropped frames are not CPU percentages.
+  if (!BROWSE) {
+    try {
+      if (typeof PerformanceObserver === 'function') {
+        var po = new PerformanceObserver(function (list) {
+          perf.longTasks += list.getEntries().length;
+        });
+        po.observe({ entryTypes: ['longtask'] });
+      }
+    } catch (e) {}
+    setInterval(function () {
+      var now = Date.now(), span = now - perf.lastAt;
+      if (span < 10000) return; // avoid short, misleading samples
+      var v = getVideo(), q = null, p = ytPlayer(), codec = '', tier = '';
+      try { if (v && v.getVideoPlaybackQuality) q = v.getVideoPlaybackQuality(); } catch (e) {}
+      try {
+        if (p && p.getPlaybackQuality) tier = String(p.getPlaybackQuality()).slice(0, 12);
+        var st = p && p.getStatsForNerds ? p.getStatsForNerds() : null;
+        if (st && st.codecs) codec = String(st.codecs).split('/')[0].trim().slice(0, 45);
+      } catch (e) {}
+      var frames = q && isFinite(q.totalVideoFrames) ? q.totalVideoFrames : -1;
+      var dropped = q && isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : -1;
+      var df = frames >= 0 && perf.lastFrames >= 0 ? Math.max(0, frames - perf.lastFrames) : 0;
+      var dd = dropped >= 0 && perf.lastDropped >= 0 ? Math.max(0, dropped - perf.lastDropped) : 0;
+      var droppedPct = df ? Math.round(Math.min(100, dd / df * 100)) : -1;
+      var playing = !!(v && !v.paused && !v.ended);
+      if (playing && N && typeof N.perf === 'function') try {
+        N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
+          tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
+          sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
+          refits: perf.refits, recoveries: perf.paintRecoveries,
+          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
+          width: v.videoWidth || 0, height: v.videoHeight || 0,
+          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }));
+      } catch (e) {}
+      perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
+      perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
+      perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
+    }, 30000);
+  }
   // Fresh position now and then while playing, in case an event was missed.
   setInterval(function () {
     // Media element events and the background watchdog keep audio state
@@ -1490,7 +1832,12 @@
     if (v && !v.paused) schedReport(0);
   }, 10000);
   // Route changes can replace the video without raising loadedmetadata.
-  window.addEventListener('yt-navigate-finish', function () { schedReport(0); });
+  window.addEventListener('yt-navigate-finish', function () {
+    applySelectedWatchPlayback();
+    lastNonCriticalDomAt = 0;
+    schedTick();
+    schedReport(0);
+  });
 
   /* ---------- 9b. Timed lyrics: use real HTMLVideoElement.currentTime ---------- */
   // Media-session snapshots are infrequent. A dedicated clock is necessary for
@@ -1605,8 +1952,8 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (!v) AUTO = true; else requestPlayerPlay(v); break;
-        case 'pause': AUTO = false; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held) { console.log('[aay] Play deferred while other media holds focus'); break; } if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
         case 'next': PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; next(); break;
@@ -1622,7 +1969,6 @@
     for (var k in c) { if (Object.prototype.hasOwnProperty.call(c, k)) CFG[k] = c[k]; }
     applyCss();
     applyPlayerPrefs();
-    try { localStorage.setItem('yt-player-av1-pref', CFG.videoCodec === 'av1' ? '8192' : '-1'); } catch (e) {}
     if (oldSponsor !== CFG.sponsorBlock || oldExtra !== CFG.sbExtra) {
       sb.request++;
       sb.id = ''; sb.segs = [];
@@ -1701,8 +2047,9 @@
   var refitAt = 0;
   function refitSmall(v) {
     var now = Date.now();
-    if (now - refitAt < 3000) return;
+    if (now - refitAt < 6000) return;
     refitAt = now;
+    perf.refits++;
     liftAncestors(v, true);
     document.documentElement.classList.add('aay-video-only');
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
@@ -1726,6 +2073,7 @@
       console.log('[aay] pip: sound plays but no new video frames (' + i.text + ')');
       if (now - pipFixAt > 6000) {
         pipFixAt = now;
+        perf.paintRecoveries++;
         console.log('[aay] pip: restarting the picture');
         try { v.currentTime = v.currentTime; } catch (e) {}
         repaintVideo(v);
@@ -1961,13 +2309,14 @@
   }
   function smallLayout() {
     var on = !!(A.inPip || A.isMini);
+    perf.layoutChanges++;
     var revision = ++layoutRevision;
     liftAncestors(getVideo(), on);
     document.documentElement.classList.toggle('aay-video-only', on);
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
     // Clear YouTube's cached video dimensions when Android resizes into PiP.
-    if (on && !pipTimer) { pipLast = null; pipTimer = setInterval(pipCheck, 2000); }
+    if (on && !pipTimer) { pipLast = null; pipFixAt = 0; pipTimer = setInterval(pipCheck, 2000); }
     if (!on && pipTimer) { clearInterval(pipTimer); pipTimer = 0; pipLast = null; }
     if (on) {
       document.documentElement.classList.remove('aay-fit');
@@ -1979,7 +2328,7 @@
         window.dispatchEvent(new Event('resize'));
         var v = getVideo();
         if (ms === 450 && v && !smallFits(v)) { refitAt = 0; refitSmall(v); }
-        if (ms === 450 && v) { repaintVideo(v); syncPlayerState(); }
+        if (ms === 450 && v) syncPlayerState(); // no forced compositor-layer change
       }, ms); });
     } else fixLayout();
   }
@@ -1990,20 +2339,44 @@
     if (!(A.isMini || A.inPip)) return;
     if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) return;
     pipLast = null;
-    later(function () { repaintVideo(getVideo()); }, 300);
+    later(function () { if (A.isMini || A.inPip) repaintVideo(getVideo()); }, 300);
     later(pipCheck, 1200);
     later(pipCheck, 2600);
   });
 
+  // On mini -> full, Chromium/YouTube may pause when the video Surface is
+  // resized. Capture actual playback intent BEFORE the change. Recover only
+  // a dropped stream, never a user's explicit Pause or an audio-focus handoff.
+  var miniExpandSerial = 0;
   A.mini = function (on) {
+    if (A.isMini === !!on) return; // duplicate native state is not a new Surface transition
+    var leavingMini = A.isMini && !on;
+    var v = leavingMini ? getVideo() : null;
+    var resume = !!(v && !v.paused && !v.ended && !PAUSED &&
+      !bgWatch.explicitPause && !bgWatch.held);
+    var serial = ++miniExpandSerial;
+    if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
-    window.dispatchEvent(new Event('resize'));
+    if (leavingMini && resume) {
+      [500, 1400, 2900].forEach(function (ms) { later(function () {
+        if (serial !== miniExpandSerial || A.isMini || A.inPip || PAUSED ||
+            bgWatch.explicitPause || bgWatch.held) return;
+        var current = getVideo();
+        if (!current || current !== v || current.ended || !current.paused) return;
+        // Reset only an involuntary transition pause. No seeking or reloading.
+        console.log('[aay] mini expand: restoring interrupted playback');
+        bgWatch.wanted = true;
+        requestPlayerPlay(current);
+        schedReport(0);
+      }, ms); });
+    }
   };
 
   A.pip = function (on) {
+    if (A.inPip === !!on) return; // avoid redundant WebView/codec resize requests
     A.inPip = !!on;
     smallLayout();
     carLayout();
@@ -2013,7 +2386,6 @@
       later(function () { var w = getVideo(); if (w) console.log('[aay] pip after layout: ' + videoInfo(w).text); }, 1500);
     }
     A.setBg(A.isBg);
-    window.dispatchEvent(new Event('resize'));
   };
 
   /* ---------- 11. Video quality preference ----------
@@ -2026,7 +2398,8 @@
     '720': 'hd720', '1080': 'hd1080', '1440': 'hd1440',
     '2160': 'hd2160', '4320': 'highres'
   };
-  var qualityApply = { player: null, key: '', last: '' };
+  var qualityApply = { player: null, key: '', last: '', at: 0 };
+  var qualityOrder = ['tiny', 'small', 'medium', 'large', 'hd720', 'hd1080', 'hd1440', 'hd2160', 'highres'];
   function savedQuality() {
     var q = CFG.preferredQuality || 'hd720';
     return q === 'auto' || Object.values(qualityLabels).indexOf(q) >= 0 ? q : 'hd720';
@@ -2058,8 +2431,129 @@
     if (!bgSaver.armed) { bgSaver.armed = true; bgSaver.switchedAt = Date.now(); bgSaver.pos = -1; }
     return true;
   }
+  /* PiP and the mini player are small windows: above 1080p both turned black
+   * (720p rendered fine). Like the YouTube app, cap them at 720p; the saved
+   * quality returns as soon as the full player is back. */
+  var PIP_MAX_QUALITY = 'hd720';
+  /* Runtime overload fallback: the capability probe is only a prediction. If a tier
+   * above 1080p stalls with data buffered, or drops most frames, lower the device
+   * limit one tier and remember it (also hides that tier from the next page load). */
+  var qualityHeight = { tiny: 144, small: 240, medium: 360, large: 480, hd720: 720,
+    hd1080: 1080, hd1440: 1440, hd2160: 2160, highres: 4320 };
+  var deviceCapH = 0;
+  var nativeCaps = !!(CFG.decodeCaps && typeof CFG.decodeCaps === 'object');
+  try { if (!nativeCaps) deviceCapH = parseInt(localStorage.getItem('aay-max-smooth-h') || '0', 10) || 0; } catch (e) {}
+  // Heat: Android thermal status >= SEVERE (3) caps quality at 1080p until it cools.
+  var THERMAL_SEVERE = 3, THERMAL_CAP = 1080;
+  var thermalHot = (parseInt(CFG.thermal, 10) || 0) >= THERMAL_SEVERE;
+  A.thermal = function (status) {
+    var hot = (parseInt(status, 10) || 0) >= THERMAL_SEVERE;
+    if (hot === thermalHot) return;
+    thermalHot = hot;
+    console.log('[aay] device ' + (hot ? 'hot: capping quality at 1080p' : 'cooled: quality limit lifted'));
+    qualityApply.key = '';
+    applyPreferredQuality();
+  };
+  function effectiveCap() {
+    var cap = deviceCapH;
+    if (thermalHot) cap = cap ? Math.min(cap, THERMAL_CAP) : THERMAL_CAP;
+    return cap;
+  }
+  function capForDevice(q) {
+    var cap = effectiveCap();
+    // Auto under a cap stays adaptive: the chosen tier is only a ceiling.
+    if (!cap || (q !== 'auto' && (qualityHeight[q] || 0) <= cap)) return q;
+    var best = 'tiny';
+    qualityOrder.forEach(function (l) { if (qualityHeight[l] <= cap) best = l; });
+    return best;
+  }
+  /* Gradual, sustained-only fallback (8K -> 4K -> 1440p -> 1080p -> 720p):
+   *  - a window is 8 s; TWO bad windows in a row are needed (no reaction to spikes);
+   *  - bad = stalled although >3 s is buffered (decoder, not network) or >50% dropped;
+   *  - 60 s cooldown after a step; never below 720p;
+   *  - after 3 min of clean playback the limit steps back up (session-only with
+   *    native caps, so the saved preference and next sessions are untouched). */
+  var OVERLOAD_WINDOW_MS = 8000, OVERLOAD_COOLDOWN_MS = 60000, OVERLOAD_RECOVER_MS = 180000;
+  var stepDown = { 4320: 2160, 2880: 2160, 2160: 1440, 1440: 1080, 1080: 720 };
+  var stepUp = { 720: 1080, 1080: 1440, 1440: 2160, 2160: 4320 };
+  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0 };
+  function overloadSample(v, now, frames, dropped) {
+    overload.at = now; overload.t = v.currentTime; overload.frames = frames; overload.dropped = dropped;
+  }
+  function overloadCheck(v) {
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; overload.bad = 0; return; }
+    var cur = '';
+    try { if (typeof p.getPlaybackQuality === 'function') cur = p.getPlaybackQuality(); } catch (e) {}
+    var h = qualityHeight[cur] || 0;
+    var now = Date.now(), q = null;
+    try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
+    var frames = q ? q.totalVideoFrames : 0, dropped = q ? q.droppedVideoFrames : 0;
+    if (!overload.at) { overloadSample(v, now, frames, dropped); return; }
+    if (now - overload.at < OVERLOAD_WINDOW_MS) return;
+    var ahead = 0;
+    try { if (v.buffered && v.buffered.length) ahead = v.buffered.end(v.buffered.length - 1) - v.currentTime; } catch (e) {}
+    var moved = v.currentTime - overload.t, df = frames - overload.frames, dd = dropped - overload.dropped;
+    var stalled = ahead > 3 && moved < (now - overload.at) / 1000 * 0.25;
+    var dropping = df > 60 && dd / df > 0.5;
+    overloadSample(v, now, frames, dropped);
+    if (!stalled && !dropping) {
+      overload.bad = 0;
+      if (!overload.goodSince) overload.goodSince = now;
+      // Conditions improved: allow the next tier again (never above the saved choice).
+      if (deviceCapH && now - overload.goodSince >= OVERLOAD_RECOVER_MS && now >= overload.coolUntil) {
+        var up = stepUp[deviceCapH];
+        deviceCapH = up && up < 4320 ? up : 0;
+        overload.goodSince = now; overload.coolUntil = now + OVERLOAD_COOLDOWN_MS;
+        console.log('[aay] playback stable: quality limit ' + (deviceCapH ? 'raised to ' + deviceCapH + 'p' : 'removed'));
+        qualityApply.key = '';
+        applyPreferredQuality();
+      }
+      return;
+    }
+    overload.goodSince = 0;
+    if (h <= 720 || ++overload.bad < 2 || now < overload.coolUntil) return;
+    var lower = stepDown[h] || 720;
+    if (deviceCapH && deviceCapH <= lower) return;
+    deviceCapH = lower;
+    overload.bad = 0; overload.coolUntil = now + OVERLOAD_COOLDOWN_MS;
+    // With Android's codec list the menu is already right; a stall (heat, a bad
+    // stream) only lowers THIS session, so 8K is offered again next time.
+    if (!nativeCaps) try { localStorage.setItem('aay-max-smooth-h', String(lower)); } catch (e) {}
+    console.log('[aay] ' + cur + ' overloads this device (' + (stalled ? 'stalled with ' + Math.round(ahead) +
+      's buffered' : Math.round(dd * 100 / df) + '% frames dropped') + '): limit now ' + lower + 'p');
+    qualityApply.key = '';
+    applyPreferredQuality();
+  }
+  A.overloadCheck = overloadCheck;
+  // Diagnostics: what actually plays (codec, tier, size, fps), once per change.
+  var lastFormat = '';
+  function logPlayingFormat(v) {
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!p || !v || !v.videoWidth) return;
+    var codec = '', fps = '', q = '';
+    try { if (typeof p.getPlaybackQuality === 'function') q = p.getPlaybackQuality(); } catch (e) {}
+    try {
+      var st = typeof p.getStatsForNerds === 'function' ? p.getStatsForNerds() : null;
+      if (st) {
+        codec = String(st.codecs || '').split('/')[0].trim();
+        var m = /@\s*(\d+)/.exec(String(st.resolution || '')); if (m) fps = m[1];
+      }
+    } catch (e) {}
+    var key = qualityVideoId() + '|' + q + '|' + v.videoWidth + 'x' + v.videoHeight + '|' + codec;
+    if (key === lastFormat) return;
+    lastFormat = key;
+    console.log('[aay] playing ' + (q || '?') + ' ' + v.videoWidth + 'x' + v.videoHeight +
+      (fps ? '@' + fps : '') + (codec ? ' codec=' + codec : '') +
+      ' limit=' + (effectiveCap() || 'none') + (thermalHot ? ' hot' : ''));
+  }
+  A.logPlayingFormat = logPlayingFormat;
   function desiredQuality() {
-    return bgSaverActive() ? BG_SAVER_QUALITY : savedQuality();
+    if (bgSaverActive()) return BG_SAVER_QUALITY;
+    var q = capForDevice(savedQuality());
+    if ((A.inPip || A.isMini) && (q === 'auto' || qualityOrder.indexOf(q) > qualityOrder.indexOf(PIP_MAX_QUALITY)))
+      return PIP_MAX_QUALITY;
+    return q;
   }
   // Circuit breaker: audio must keep moving after a switch to 144p.
   function bgSaverCheck() {
@@ -2078,22 +2572,46 @@
     if (bgSaver.pos < 0 || v.currentTime > bgSaver.pos + 0.2) { bgSaver.pos = v.currentTime; bgSaver.at = now; }
     if (now - bgSaver.switchedAt > 60000) bgSaver.switchedAt = 0; // proven stable
   }
+  /* A video may not offer the saved tier (e.g. 4K saved, video only has 1080p).
+   * Use the best tier at or below it, else the lowest above it. The saved
+   * preference itself is unchanged, so the next 4K video gets 4K again. */
+  function availableQuality(p, want) {
+    if (want === 'auto') return want;
+    var levels = [];
+    try { if (typeof p.getAvailableQualityLevels === 'function') levels = p.getAvailableQualityLevels() || []; } catch (e) {}
+    levels = levels.filter(function (q) { return qualityOrder.indexOf(q) >= 0; });
+    if (!levels.length || levels.indexOf(want) >= 0) return want;
+    var w = qualityOrder.indexOf(want), below = '';
+    levels.forEach(function (q) {
+      var i = qualityOrder.indexOf(q);
+      if (i <= w && (!below || i > qualityOrder.indexOf(below))) below = q;
+    });
+    // Never choose a tier ABOVE the stored maximum just because a video lacks
+    // an exact match. The lowest available stream is a YouTube fallback only.
+    return below || 'tiny';
+  }
   function applyPreferredQuality() {
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
-    var chosen = desiredQuality();
-    var key = qualityVideoId() + ':' + chosen;
+    var chosen = availableQuality(p, desiredQuality());
+    // Each video uses its highest available tier at or below the saved
+    // maximum. Only Auto is adaptive, including under temporary device/PiP
+    // ceilings. A lower-res video must never change the persisted maximum.
+    var adaptive = savedQuality() === 'auto' && !bgSaverActive();
+    var low = adaptive ? 'tiny' : chosen;
+    var high = adaptive ? (chosen === 'auto' ? 'highres' : chosen) : chosen;
+    var key = qualityVideoId() + ':' + low + '-' + high;
     if (qualityApply.player === p && qualityApply.key === key) return;
     try {
       if (typeof p.setPlaybackQualityRange === 'function') {
-        p.setPlaybackQualityRange(chosen === 'auto' ? 'tiny' : chosen,
-          chosen === 'auto' ? 'highres' : chosen);
+        p.setPlaybackQualityRange(low, high);
       } else if (typeof p.setPlaybackQuality === 'function') {
         p.setPlaybackQuality(chosen === 'auto' ? 'default' : chosen);
       } else return; // YouTube's API is not ready; the next DOM tick will retry.
       qualityApply.player = p;
       qualityApply.key = key;
+      qualityApply.at = Date.now();
       // Record actual vs requested quality for diagnosis, without forcing more
       // source changes when the server/device cannot serve the requested tier.
       later(function () {
@@ -2113,31 +2631,135 @@
   }
   A.applyQuality = applyPreferredQuality;
   function menuQuality(text) {
-    var label = String(text || '').trim();
-    // Do not interpret the parent "Quality 720p" settings button as a pick.
-    if (/quality/i.test(label) || label.length > 36) return null;
+    var label = String(text || '').replace(/\s+/g, ' ').trim();
+    // A parent settings row such as "Quality 720p" is not a resolution pick.
+    if (/quality/i.test(label) || label.length > 64) return null;
     if (/^auto(?:\s*\([^)]*\))?$/i.test(label)) return 'auto';
-    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:60|HDR|HD|4K|8K))*$/i.exec(label);
+    // Mobile YouTube uses labels such as "1080p60", "1080p HDR", "2160p (4K)" and
+    // "1080p Premium" / "Enhanced bitrate"; nested text or badges can add whitespace.
+    var m = /^(144|240|360|480|720|1080|1440|2160|4320)p(?:\s*(?:24|25|30|50|60|120|fps|hdr|hd|4k|8k|premium|enhanced|bitrate|\([^)]*\)))*$/i.exec(label);
     return m ? qualityLabels[m[1]] : null;
+  }
+  // One place that records the user's resolution choice (menu, bottom sheet,
+  // YouTube's own saved pick, or a player change right after a tap).
+  function adoptUserQuality(q, source) {
+    if (!q || BROWSE) return;
+    var changed = CFG.preferredQuality !== q;
+    CFG.preferredQuality = q;
+    writeYouTubeQuality(q);
+    if (N && typeof N.quality === 'function') { // explicit pick: always persisted natively
+      try { N.quality(q); } catch (e) {}
+    }
+    // Log every explicit choice, including picking the same resolution again.
+    console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
+    // Smooth switch: YouTube performs the change itself and keeps playing from its
+    // buffer. Only lock the range if it did not land on the chosen tier.
+    later(function () {
+      var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      var current = '';
+      try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
+      if (p && q !== 'auto' && current === q && !bgSaverActive()) {
+        qualityApply.player = p;
+        qualityApply.key = qualityVideoId() + ':' + q + '-' + q;
+        qualityApply.last = qualityApply.key;
+        qualityApply.at = Date.now();
+        console.log('[aay] quality ' + q + ' applied by YouTube; no re-force');
+        return;
+      }
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, 1500);
+  }
+  A.adoptUserQuality = adoptUserQuality;
+  // The mobile watch page uses ytm-menu-item and yt-list-item variants;
+  // restricting to ytm-select-menu-item-renderer silently lost preferences.
+  var QUALITY_MENU = '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
+    'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
+    'ytm-menu-item, ytm-sheet-item, ytm-list-item-renderer,' +
+    '[role="menuitemradio"], [role="option"]';
+  var SHEET = '#bottom-sheet, ytm-bottom-sheet-renderer, bottom-sheet-container, ' +
+    'ytm-bottom-sheet-layout, [role="dialog"], .bottom-sheet-layout';
+  var PLAYER_SETTINGS = 'button.player-settings-icon, .player-settings-icon, ' +
+    '.ytp-settings-button, [aria-label="Settings"]';
+  var qualityMenuOpenedAt = 0, qualityMenuOpenedVideo = '';
+  function recentSettingsTap() {
+    return qualityMenuOpenedAt && Date.now() - qualityMenuOpenedAt < 7000 &&
+      qualityMenuOpenedVideo === qualityVideoId();
+  }
+  function qualityFromTap(target) {
+    var item = target.closest(QUALITY_MENU);
+    if (item) {
+      var q0 = menuQuality(item.textContent);
+      if (!q0 && item.getAttribute) q0 = menuQuality(item.getAttribute('aria-label'));
+      if (!q0 && target !== item) q0 = menuQuality(target.textContent);
+      if (q0) return q0;
+    }
+    // New mobile bottom sheet: plain divs. Walk up a few levels inside the sheet.
+    if (!target.closest(SHEET) && !recentSettingsTap()) return null;
+    for (var el = target, i = 0; el && i < 5; el = el.parentElement, i++) {
+      var q = menuQuality(el.textContent || (el.getAttribute && el.getAttribute('aria-label')));
+      if (q) return q;
+      if (el.matches && el.matches(SHEET)) break;
+    }
+    return null;
   }
   document.addEventListener('click', function (event) {
     if (BROWSE || !event.target || !event.target.closest) return;
-    var item = event.target.closest(
-      '.ytp-quality-menu .ytp-menuitem, .ytp-settings-menu .ytp-menuitem,' +
-      'ytm-select-menu-item-renderer, ytm-menu-service-item-renderer,' +
-      '[role="menuitemradio"], [role="option"]');
-    if (!item) return;
-    var q = menuQuality(item.textContent || item.getAttribute('aria-label'));
-    if (!q) return;
-    CFG.preferredQuality = q;
-    writeYouTubeQuality(q);
-    qualityApply.key = ''; // release the old range after the user's new choice
-    if (N && typeof N.quality === 'function') {
-      try { N.quality(q); } catch (e) {}
+    var target = event.target;
+    var q = qualityFromTap(target);
+    if (target.closest(PLAYER_SETTINGS) && !q) {
+      if (event.isTrusted !== false) {
+        qualityMenuOpenedAt = Date.now();
+        qualityMenuOpenedVideo = qualityVideoId();
+        A.qualityTapChoice = '';
+      }
+      return; // opening Settings is not itself a quality selection
     }
-    console.log('[aay] user selected video quality=' + q);
-    later(applyPreferredQuality, 500); // allow YouTube's menu handler to finish first
+    var inQualityMenu = !!target.closest(QUALITY_MENU) || !!target.closest(SHEET);
+    if (!inQualityMenu && (!recentSettingsTap() || !q)) return;
+    if (event.isTrusted !== false) {
+      A.qualityTapAt = Date.now();
+      A.qualityTapVideo = qualityVideoId();
+    }
+    if (q) {
+      A.qualityTapChoice = q; // only a specific choice can update saved max
+      adoptUserQuality(q, 'menu');
+      qualityMenuOpenedAt = 0; // do not treat later unrelated taps as quality picks
+    }
   }, true);
+  // A reload of the same video (new source, same player and id) must get the saved
+  // quality again before it buffers; otherwise YouTube may pick 4K on its own.
+  function adoptQualityAfterTap(tapAt, tapVideo) {
+    if (A.qualityTapAt !== tapAt || qualityVideoId() !== tapVideo) return; // newer tap / other video
+    if (bgSaverActive() || A.inPip || A.isMini) return;             // our caps, not a pick
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    var current = '';
+    try { if (p && typeof p.getPlaybackQuality === 'function') current = p.getPlaybackQuality(); } catch (e) {}
+    if (!qualityHeight[current] || current === savedQuality()) return;
+    // A quality change observed after a settings tap is not proof of intent:
+    // ABR/YouTube can lower the actual tier at that moment. Only an exact
+    // menu choice or YouTube's own explicit preference write can change max.
+    console.log('[aay] observed quality=' + current + ' after tap; saved maximum=' +
+      savedQuality() + ' unchanged');
+  }
+  ['emptied', 'loadstart'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (!e.target || e.target.tagName !== 'VIDEO') return;
+      if (type === 'loadstart') perf.sourceLoads++; // resource reset proxy, NOT codec instantiation
+      // Our own range change also reloads the source: never re-apply in a loop.
+      if (Date.now() - qualityApply.at < 3000) return;
+      // A reload right after the user's own tap on the same video is THEIR quality
+      // change (any menu layout): adopt it instead of forcing the old saved tier.
+      var tapVideo = A.qualityTapVideo || '';
+      if (A.qualityTapAt && Date.now() - A.qualityTapAt < 5000 && tapVideo && tapVideo === qualityVideoId()) {
+        var at = A.qualityTapAt;
+        later(function () { adoptQualityAfterTap(at, tapVideo); }, 1800);
+        return;
+      }
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, true);
+  });
 
   A.setBg = function (on) {
     var wasBg = A.isBg;

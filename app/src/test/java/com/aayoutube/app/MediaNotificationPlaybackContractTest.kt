@@ -29,7 +29,7 @@ class MediaNotificationPlaybackContractTest {
         assertTrue(js.contains("function syncPlayerState()"))
         assertTrue(js.contains("if (st !== 2) return"))
         assertTrue(js.contains("#movie_player, .html5-video-player, .html5-video-container"))
-        assertTrue(js.contains("PAUSED || bgWatch.explicitPause || isAd()"))
+        assertTrue(js.contains("PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()"))
         assertTrue(js.contains("if (v.paused) {"))
     }
 }

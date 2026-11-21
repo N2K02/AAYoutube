@@ -106,6 +106,8 @@ dependencies {
     // AABrowser's androidx.fragment stack is transitively supplied by AppCompat;
     // Jetifier rewrites old android.support.v4.app.FragmentManager references.
     implementation("androidx.appcompat:appcompat:${v["appCompat"]}")
+    // AABrowser-style second car entry, correctly declared as MEDIA (API 8).
+    implementation("androidx.car.app:app:1.8.0-rc01")
     // Material 3 Expressive (MaterialExpressiveTheme, expressive shapes/motion/components)
     implementation("androidx.compose.material3:material3:${v["material3"]}")
     implementation("androidx.compose.material:material-icons-extended:1.7.8")
