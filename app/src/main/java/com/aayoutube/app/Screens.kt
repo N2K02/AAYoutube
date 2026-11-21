@@ -242,6 +242,13 @@ fun AppRoot(activity: MainActivity) {
     var tab by rememberSaveable {
         mutableIntStateOf(if (openCarPreview) Tab.ExperimentalVideo.ordinal else 0)
     }
+    val sharedLinkOpened by activity.sharedLinkOpened
+    LaunchedEffect(sharedLinkOpened) {
+        if (sharedLinkOpened) {
+            tab = Tab.Watch.ordinal
+            activity.sharedLinkOpened.value = false
+        }
+    }
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
     var equalizerOpen by rememberSaveable { mutableStateOf(false) }

@@ -816,11 +816,11 @@ object WebHost {
         // explicit play selection, unlike restoring a previously paused page.
         // Match native media queue OPEN, which already appends aay=1.
         val destination = withCarPlaybackIntent(normalise(url))
-        val playRoute = uri.path == "/watch" && !uri.getQueryParameter("v").isNullOrBlank()
-        val explicitPaused = uri.getQueryParameter("aay") == "paused"
-        val autoplayUrl = if (playRoute && !explicitPaused &&
-            Uri.parse(destination).getQueryParameter("aay") == null)
-            Uri.parse(destination).buildUpon().appendQueryParameter("aay", "1").build().toString()
+        val target = Uri.parse(destination)
+        val playRoute = target.path == "/watch" && !target.getQueryParameter("v").isNullOrBlank()
+        val explicitPaused = target.getQueryParameter("aay") == "paused"
+        val autoplayUrl = if (playRoute && !explicitPaused && target.getQueryParameter("aay") == null)
+            target.buildUpon().appendQueryParameter("aay", "1").build().toString()
         else destination
         if (playRoute && !explicitPaused) AppLog.add("PLAY", "Selected video: autoplay requested")
         load(autoplayUrl)
@@ -1386,9 +1386,12 @@ object WebHost {
         val u = Uri.parse(url)
         val host = u.host?.lowercase().orEmpty()
         if (host == "youtu.be") {
-            val id = u.lastPathSegment.orEmpty()
-            val t = u.getQueryParameter("t")
-            return "https://m.youtube.com/watch?v=$id" + (if (t != null) "&t=$t" else "")
+            val watch = Uri.parse(HOME_MOBILE).buildUpon().path("/watch")
+                .appendQueryParameter("v", u.lastPathSegment.orEmpty())
+            for (key in listOf("t", "start", "list", "index", "aay")) {
+                u.getQueryParameter(key)?.let { watch.appendQueryParameter(key, it) }
+            }
+            return watch.build().toString()
         }
         return url
     }
