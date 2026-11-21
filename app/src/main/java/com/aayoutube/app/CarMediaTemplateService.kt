@@ -1,5 +1,6 @@
 package com.aayoutube.app
 
+import android.content.Intent
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
@@ -21,7 +22,7 @@ class CarMediaTemplateService : CarAppService() {
             .build()
 
     override fun onCreateSession(): Session = object : Session() {
-        override fun onCreateScreen(): Screen = MediaInfoScreen(carContext)
+        override fun onCreateScreen(intent: Intent): Screen = MediaInfoScreen(carContext)
     }
 
     private class MediaInfoScreen(context: CarContext) : Screen(context) {
