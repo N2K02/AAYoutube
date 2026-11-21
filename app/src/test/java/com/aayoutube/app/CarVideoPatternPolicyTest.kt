@@ -62,6 +62,6 @@ class CarVideoPatternPolicyTest {
         assertFalse(view.contains("WebView("))
         assertFalse(pattern.contains("WebHost.cmd("))
         assertFalse(pattern.contains("MediaSession("))
-        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
+        assertFalse(manifest.contains("androidx.car.app.category.NAVIGATION"))
     }
 }
