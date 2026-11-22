@@ -38,6 +38,21 @@ class PlayerTransitionPolicyTest {
         assertEquals(0 to 0, PlayerTransitionPolicy.captureSize(0, 100))
     }
 
+    @Test fun rapidTransitionPositionsAndCaptureBoundsStayValid() {
+        for (step in -10..110) {
+            val fraction = step / 100f
+            val bounds = PlayerTransitionPolicy.lerp(full, mini, fraction)
+            assertTrue(bounds.width > 0f)
+            assertTrue(bounds.height > 0f)
+            assertTrue(bounds.left >= full.left && bounds.left <= mini.left)
+            assertTrue(bounds.top >= full.top && bounds.top <= mini.top)
+            val corner = PlayerTransitionPolicy.cornerDp(true, fraction)
+            assertTrue(corner in 0f..PlayerTransitionPolicy.MINI_CORNER_DP)
+        }
+        assertEquals(720 to 1280, PlayerTransitionPolicy.captureSize(1080, 1920))
+        assertEquals(0 to 0, PlayerTransitionPolicy.captureSize(-1, 720))
+    }
+
     @Test fun onlyTheVideoBandIsCaptured() {
         assertEquals(PxRect(0f, 0f, 1080f, 607.5f), PlayerTransitionPolicy.videoBand(1080f, 2200f))
         assertEquals(PxRect(0f, 0f, 2200f, 1080f), PlayerTransitionPolicy.videoBand(2200f, 1080f))
