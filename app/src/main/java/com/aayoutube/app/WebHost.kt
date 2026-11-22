@@ -352,7 +352,8 @@ object WebHost {
         s.displayZoomControls = false
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // Refuse HTTP subresources on authenticated HTTPS pages.
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         w.isFocusable = true
         w.isFocusableInTouchMode = true
         w.isClickable = true
