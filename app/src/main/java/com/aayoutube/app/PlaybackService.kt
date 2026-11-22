@@ -710,6 +710,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 AppLog.add("MEDIA", "Foreground media service started; playing=${snapshot.playing}")
             }.onFailure {
                 AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}: ${it.message}")
+                // Never leave a started service running without the foreground
+                // priority Android requires for background media playback.
+                // Pause the WebView and release any playback CPU wake lock.
+                runCatching { WebHost.cmd("pause") }
+                updatePlaybackWakeLock(false)
+                handler.removeCallbacks(healthTick)
+                stopSelf(startId)
+                return START_NOT_STICKY
             }
         }
         when (intent?.action) {
