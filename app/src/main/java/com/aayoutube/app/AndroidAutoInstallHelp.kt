@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 /** Links lead to upstream project/release pages, not unverified direct APK downloads. */
 internal data class AndroidAutoInstaller(val name: String, val description: String, val url: String, val packageName: String)
 
+internal enum class AndroidAutoInstallSource(
+    val status: String,
+    val mayAffectDiscovery: Boolean = false,
+) {
+    PLAY_STORE_RECORDED("Google Play is recorded as the installer"),
+    OTHER_INSTALLER("Another app is recorded as the installer", mayAffectDiscovery = true),
+    NO_INSTALLER_RECORDED("Android has no installer on record", mayAffectDiscovery = true),
+    UNAVAILABLE("Android did not provide installer information");
+
+    companion object {
+        fun fromInstaller(packageName: String?): AndroidAutoInstallSource = when (packageName) {
+            "com.android.vending" -> PLAY_STORE_RECORDED
+            null -> NO_INSTALLER_RECORDED
+            else -> OTHER_INSTALLER
+        }
+    }
+}
+
 internal object AndroidAutoInstallHelp {
     const val RELEASES_URL = "https://github.com/N2K02/AAYoutube/releases"
     val installers = listOf(
@@ -57,6 +76,17 @@ internal object AndroidAutoInstallHelp {
     var packageCheckRevision by mutableIntStateOf(0)
         private set
     fun refreshInstalledApps() { packageCheckRevision++ }
+
+    fun installSource(context: Context): AndroidAutoInstallSource = runCatching {
+        val pm = context.packageManager
+        val installer = if (Build.VERSION.SDK_INT >= 30) {
+            pm.getInstallSourceInfo(context.packageName).installingPackageName
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getInstallerPackageName(context.packageName)
+        }
+        AndroidAutoInstallSource.fromInstaller(installer)
+    }.getOrDefault(AndroidAutoInstallSource.UNAVAILABLE)
 
     fun isInstalled(context: Context, installer: AndroidAutoInstaller): Boolean =
         try {
@@ -125,6 +155,10 @@ internal object AndroidAutoInstallHelp {
 
 @Composable
 fun AndroidAutoFirstLaunchHelp(onDismiss: (Boolean) -> Unit, onOpenGuide: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val source = remember(AndroidAutoInstallHelp.packageCheckRevision) {
+        AndroidAutoInstallHelp.installSource(context)
+    }
     var dontShowAgain by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = { onDismiss(dontShowAgain) },
@@ -132,6 +166,7 @@ fun AndroidAutoFirstLaunchHelp(onDismiss: (Boolean) -> Unit, onOpenGuide: (Boole
         title = { Text("Android Auto installation help") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(source.status)
                 Text("Is AAYT Video missing from Android Auto? Some phones restrict apps installed directly from APK files.")
                 Text("Check Android Auto's Customize launcher and Developer settings → Unknown sources first. If needed, use an alternative installer.")
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -150,8 +185,11 @@ fun AndroidAutoFirstLaunchHelp(onDismiss: (Boolean) -> Unit, onOpenGuide: (Boole
 @Composable
 fun AndroidAutoInstallationPage() {
     val context = LocalContext.current
-    val declared = remember { AndroidAutoInstallHelp.videoServiceDeclaredAndEnabled(context) }
     val packageCheckRevision = AndroidAutoInstallHelp.packageCheckRevision
+    val declared = remember(packageCheckRevision) {
+        AndroidAutoInstallHelp.videoServiceDeclaredAndEnabled(context)
+    }
+    val source = remember(packageCheckRevision) { AndroidAutoInstallHelp.installSource(context) }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -173,6 +211,13 @@ fun AndroidAutoInstallationPage() {
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary,
                 )
+                Text(source.status, style = MaterialTheme.typography.labelLarge)
+                if (source.mayAffectDiscovery) {
+                    Text(
+                        "If AAYT Music appears but AAYT Video is missing, check the installation options below.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 Text(
                     "This phone-side check cannot confirm that Android Auto will show or accept the app.",
                     style = MaterialTheme.typography.bodySmall,

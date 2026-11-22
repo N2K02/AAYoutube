@@ -19,6 +19,7 @@ function playerPage(options = {}) {
   const requests = [];
   const qualityCalls = [];
   const qualityStorage = new Map();
+  const perfReports = [];
   const localStorage = {
     getItem(key) { return qualityStorage.get(key) || null; },
     setItem(key, value) { qualityStorage.set(key, String(value)); },
@@ -31,6 +32,11 @@ function playerPage(options = {}) {
     nextVideo() { nextVideoCalls++; },
     previousVideo() { previousVideoCalls++; },
   };
+  if (options.currentQuality) {
+    let current = options.currentQuality;
+    mockPlayer.getPlaybackQuality = () => current;
+    mockPlayer.setCurrentQuality = (q) => { current = q; };
+  }
   let miniRequests = 0;
   const styleElements = [];
   const seekBar = {
@@ -120,7 +126,9 @@ function playerPage(options = {}) {
       lyricsTime(...args) { lyricReports.push(args); },
       mini() { miniRequests++; },
       quality(choice) { selectedQualities.push(choice); },
+      perf(payload) { perfReports.push(JSON.parse(payload)); },
       state(json) { stateReports.push(JSON.parse(json)); },
+      otherMediaHold() { return !!(options.otherMedia && options.otherMedia.active); },
     },
     addEventListener(type, fn) {
       if (!windowCallbacks.has(type)) windowCallbacks.set(type, []);
@@ -165,7 +173,7 @@ function playerPage(options = {}) {
   return {
     domNodes: dom ? dom.nodes : null,
     MediaSource: FakeMediaSource,
-    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage,
+    window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage, perfReports,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     advance(ms) { clock.t += ms; },
     setRealHidden(on) { pageState.hidden = !!on; },
@@ -173,6 +181,7 @@ function playerPage(options = {}) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
     get miniRequests() { return miniRequests; },
+    player: mockPlayer,
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
     emit(type, event) {
@@ -295,11 +304,115 @@ test('car mini player recovers an unexpected pause but honours explicit pause', 
   // as an audio focus handoff when the browse WebView becomes visible.
   p.video.paused = true;
   p.video.trigger('pause');
+  p.advance(3000); // focus-handoff settle window
   p.runIntervals();
   assert.equal(p.video.paused, false, 'mini player must resume an unsolicited pause');
   p.window.__aay.cmd('pause');
   p.runIntervals();
   assert.equal(p.video.paused, true, 'mini player must honour the user pause');
+});
+
+test('pause caused by another app playing media is not resumed until it stops', () => {
+  const other = { active: false };
+  const p = playerPage({ otherMedia: other });
+  p.flush();
+  p.video.paused = true;          // Chromium paused on audio-focus loss
+  p.video.trigger('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'no instant resume during the focus handoff');
+  other.active = true;            // the other app's audio is now playing
+  p.advance(3000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'must not steal audio focus from another app');
+  p.advance(60000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'held while other media plays');
+  other.active = false;           // native sees quiet audio and ends the hold
+  p.window.__aay.mediaHold(false);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'resumes where it was once other media stopped');
+});
+
+test('other app audio focus immediately pauses an actively playing video without user Pause', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.mediaHold(true);
+  assert.equal(p.video.paused, true, 'yield sound immediately, do not wait for Chromium');
+  p.window.__aay.cmd('play');
+  assert.equal(p.video.paused, true, 'native Play is deferred while another app owns sound');
+  p.video.paused = false; // YouTube emits a delayed Play after focus was taken
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'late page Play cannot steal audio focus');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdogs respect the hold');
+  p.window.__aay.mediaHold(false);
+  p.advance(3500);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'resume only when focus hold is released');
+});
+
+test('user Pause during external focus hold stays paused after the other app stops', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  p.window.__aay.cmd('pause');
+  p.window.__aay.mediaHold(false);
+  p.advance(60000);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'user Pause overrides earlier auto-resume intent');
+});
+
+test('YouTube stale Play icon repair never restarts held audio', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2;
+  player.playVideo = () => { repairs++; };
+  p.window.__aay.mediaHold(true);
+  p.video.paused = false; // stale Chromium playback state before a pause event
+  p.runIntervals();
+  assert.equal(repairs, 0, 'UI state reconciliation must respect focus loss');
+});
+
+test('expired media hold gives up instead of resuming much later', () => {
+  const p = playerPage({ otherMedia: { active: true } });
+  p.flush();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(3000);
+  p.runIntervals();
+  p.window.__aay.mediaHold(false, true);
+  p.runIntervals();
+  assert.equal(p.video.paused, true);
+});
+
+test('PiP caps quality at 720p and restores the saved quality on exit', () => {
+  const p = playerPage({ quality: true });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd1440' });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  p.window.__aay.pip(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'PiP must not decode 1440p');
+  p.window.__aay.pip(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'saved quality returns');
+  p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player must not decode 1440p');
+  p.window.__aay.mini(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+});
+
+test('a wrong play/pause state is reported again without waiting', () => {
+  const p = playerPage();
+  p.flush();
+  p.runIntervals();
+  const n = p.stateReports.length;
+  assert.equal(p.stateReports.at(-1).playing, true);
+  p.video.paused = true;      // a pause the page never announced
+  p.runIntervals();
+  assert.ok(p.stateReports.length > n, 'reconciled on the watchdog tick');
+  assert.equal(p.stateReports.at(-1).playing, false);
 });
 
 test('system PiP changes only its own mode, preserves video-only view until exit', () => {
@@ -403,6 +516,57 @@ test('720p is requested on startup and does not get reset on small-layout toggle
   assert.equal(p.qualityCalls.length, n, 'mode switches must not force a redundant reload');
 });
 
+test('menu pick already applied by YouTube is not re-forced (smooth switch)', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const option = (label) => ({
+    tagName: 'BUTTON', textContent: label,
+    closest(selector) {
+      return selector === 'a[href]' || selector === '[class*="renderer"],[class*="lockup"]' ? null : this;
+    },
+  });
+  const n = p.qualityCalls.length;
+  p.emit('click', { target: option('1080p') });
+  p.player.setCurrentQuality('hd1080'); // YouTube's own handler switched seamlessly
+  p.flush();
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  assert.equal(p.qualityCalls.length, n, 'no second source switch after a menu pick');
+  p.window.__aay.setBg(false);
+  assert.equal(p.qualityCalls.length, n, 'already-applied pick stays without reload');
+});
+
+test('mobile YouTube quality labels and nested menu choices persist', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const option = (label, aria, childLabel) => {
+    const item = {
+      tagName: 'YTM-MENU-ITEM', textContent: label,
+      getAttribute(name) { return name === 'aria-label' ? aria || '' : ''; },
+    };
+    const child = {
+      tagName: 'SPAN', textContent: childLabel === undefined ? label : childLabel,
+      closest(selector) {
+        if (selector.includes('ytm-menu-item')) return item;
+        return null;
+      },
+    };
+    return child;
+  };
+  p.emit('click', { target: option('1080p60 HDR') });
+  assert.deepEqual(p.selectedQualities, ['hd1080']);
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd1080');
+  p.emit('click', { target: option('1080p Premium') });
+  assert.deepEqual(p.selectedQualities, ['hd1080', 'hd1080']);
+  p.emit('click', { target: option('Quality', '720p') });
+  assert.deepEqual(p.selectedQualities.at(-1), 'hd720', 'aria label fallback saves resolution');
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd720');
+  p.emit('click', { target: option('Quality 144p') });
+  assert.equal(p.selectedQualities.length, 3, 'parent quality row must not be saved');
+  p.emit('click', { target: option('Auto (720p)') });
+  assert.equal(p.selectedQualities.at(-1), 'auto');
+  assert.equal(p.qualityStorage.has('yt-player-quality'), false);
+});
+
 test('explicit quality-menu selection is saved; adaptive changes are not', () => {
   const p = playerPage({ quality: true });
   p.flush();
@@ -421,6 +585,8 @@ test('explicit quality-menu selection is saved; adaptive changes are not', () =>
   p.flush();
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
   p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'mini player is capped at 720p');
+  p.window.__aay.mini(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
   p.emit('click', { target: option('Quality 144p') }); // parent menu, not a user pick
   assert.deepEqual(p.selectedQualities, ['hd1080']);
@@ -790,8 +956,35 @@ test('resolution source reset keeps current video at its old position', () => {
   p.video.currentTime = 0;
   p.video.readyState = 1;
   p.video.trigger('loadedmetadata');
+  assert.equal(p.video.currentTime, 0, 'YouTube gets a moment to restore it first (no double seek)');
+  p.flush();
   assert.ok(p.video.currentTime >= 136, 'switching quality must not restart at 0');
   assert.equal(p.location.pathname, '/watch', 'no page navigation is necessary');
+});
+
+test('quality switch: YouTube own position restore is not seeked again', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 137;
+  p.video.trigger('timeupdate');
+  p.video.trigger('emptied');
+  p.video.currentTime = 0;
+  p.video.readyState = 1;
+  p.video.trigger('loadedmetadata');
+  p.video.currentTime = 137.4; // YouTube restored and kept playing
+  p.flush();
+  assert.equal(p.video.currentTime, 137.4, 'no second seek on top of YouTube');
+});
+
+test('saved quality missing on a video: nearest lower tier, preference kept', () => {
+  const p = playerPage({ quality: true });
+  p.player.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'large', 'medium', 'auto'];
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd2160' });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'best available at or below the choice');
+  p.player.getAvailableQualityLevels = () => ['medium', 'small'];
+  p.window.__aay.setBg(true); p.window.__aay.setBg(false); // force re-apply
+  assert.deepEqual(p.qualityCalls.at(-1), ['medium', 'medium']);
 });
 
 test('an intentional seek to zero is never undone by the quality guard', () => {
@@ -944,7 +1137,7 @@ test('only a trusted player Play gesture releases Pause, not an unrelated click'
   p.video.trigger('play');
   assert.equal(p.video.paused, true, 'unrelated click is not Play');
   const playButton = { tagName: 'BUTTON', closest(selector) {
-    return selector.includes('video, .ytp-play-button') ? { tagName: 'VIDEO' } : null;
+    return selector.includes('.ytp-play-button') ? { tagName: 'BUTTON' } : null;
   } };
   p.emit('click', { isTrusted: true, target: playButton });
   p.video.play();
@@ -1002,6 +1195,20 @@ test('native Play before video exists starts it after the player becomes availab
   p.flush();
   p.video.trigger('loadedmetadata');
   assert.equal(p.video.paused, false, 'deferred Play reaches the late video element');
+});
+
+test('mini and PiP recovery never changes accelerated video opacity', () => {
+  assert.equal(source.includes("v.style.setProperty('opacity'"), false,
+    'opacity changes break hardware video overlay composition');
+  assert.match(source, /function repaintVideo\(v\) \{/);
+  assert.match(source, /if \(now - refitAt < 6000\) return/);
+  const p = playerPage({ quality: true });
+  p.window.__aay.mini(true);
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.pip(true);
+  p.flush();
+  assert.equal(p.classNames.has('aay-video-only'), true);
 });
 
 test('mini player watchdog restarts a frozen picture while sound plays', () => {
@@ -1115,35 +1322,300 @@ test('phone center Play resumes after a previous explicit native Pause', () => {
   assert.equal(p.video.paused, false, 'recovery watchdog must honor the resumed playback');
 });
 
-test('video format preference hides unwanted formats from YouTube', () => {
-  const VP9 = 'video/webm; codecs="vp9"', VP09 = 'video/webm; codecs="vp09.00.40.08"';
-  const AV1 = 'video/mp4; codecs="av01.0.08M.08"', AVC = 'video/mp4; codecs="avc1.4d401f"';
-  const AAC = 'audio/mp4; codecs="mp4a.40.2"', OPUS = 'audio/webm; codecs="opus"';
-  const h264 = playerPage({ cfg: { videoCodec: 'h264' } });
-  const ms = h264.MediaSource;
-  assert.equal(ms.isTypeSupported(VP9), false);
-  assert.equal(ms.isTypeSupported(VP09), false);
-  assert.equal(ms.isTypeSupported(AV1), false);
-  assert.equal(ms.isTypeSupported(AVC), true);
-  assert.equal(ms.isTypeSupported(AAC), true, 'audio is never blocked');
-  assert.equal(ms.isTypeSupported(OPUS), true);
-  assert.equal(h264.qualityStorage.get('yt-player-av1-pref'), '-1');
-
-  const vp9 = playerPage({ cfg: { videoCodec: 'vp9' } });
-  assert.equal(vp9.MediaSource.isTypeSupported(AV1), false);
-  assert.equal(vp9.MediaSource.isTypeSupported(VP9), true);
-
-  const av1 = playerPage({ cfg: { videoCodec: 'av1' } });
-  assert.equal(av1.MediaSource.isTypeSupported(AV1), true);
-  assert.equal(av1.MediaSource.isTypeSupported(VP9), true, 'AV1 prefers, never blocks fallbacks');
-  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '8192');
-
-  // A change in Features applies live (next video).
-  av1.window.__aay.config({ videoCodec: 'h264' });
-  assert.equal(av1.MediaSource.isTypeSupported(AV1), false);
-  assert.equal(av1.qualityStorage.get('yt-player-av1-pref'), '-1');
+test('automatic codec selection never forces H.264, VP9 or AV1', () => {
+  const VP9 = 'video/webm; codecs="vp09.00.40.08"';
+  const AV1 = 'video/mp4; codecs="av01.0.08M.08"';
+  const AVC = 'video/mp4; codecs="avc1.4d401f"';
+  for (const old of ['h264', 'vp9', 'av1']) {
+    const p = playerPage({ cfg: { videoCodec: old } });
+    assert.equal(p.MediaSource.isTypeSupported(VP9), true);
+    assert.equal(p.MediaSource.isTypeSupported(AV1), true);
+    assert.equal(p.MediaSource.isTypeSupported(AVC), true);
+    assert.equal(p.qualityStorage.get('yt-player-av1-pref'), undefined);
+  }
 });
 
+
+test('8K stays available through the codec whose hardware decodes it', () => {
+  const sized = (codec, w, h) => codec + '; width=' + w + '; height=' + h + '; framerate=30';
+  const VP9 = 'video/webm; codecs="vp09.00.51.08"', AV1 = 'video/mp4; codecs="av01.0.16M.08"';
+  const AVC = 'video/mp4; codecs="avc1.640033"';
+  // Like this phone: VP9 hardware to 4K, AV1 hardware to 8K, H.264 to 4K.
+  const p = playerPage({ cfg: { decodeCaps: { vp9: 2160, av1: 4320, h264: 2160 } } });
+  const ms = p.MediaSource;
+  assert.equal(ms.isTypeSupported(sized(VP9, 7680, 4320)), false, '8K VP9 froze: hidden');
+  assert.equal(ms.isTypeSupported(sized(AV1, 7680, 4320)), true, '8K offered through AV1');
+  assert.equal(ms.isTypeSupported(sized(VP9, 3840, 2160)), true);
+  assert.equal(ms.isTypeSupported(sized(AVC, 1920, 1080)), true);
+  assert.equal(ms.isTypeSupported(sized(VP9, 2160, 3840)), true, 'vertical 4K counts by its short side');
+  assert.equal(ms.isTypeSupported(VP9), true, 'type without size is never blocked');
+  assert.equal(ms.isTypeSupported('audio/webm; codecs="opus"'), true);
+
+  // No AV1 hardware: software AV1 is hidden where H.264/VP9 hardware can decode.
+  const sw = playerPage({ cfg: { decodeCaps: { vp9: 2160, av1: 0, h264: 1080 } } });
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 1920, 1080)), false);
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AV1, 2560, 1440)), false);
+  assert.equal(sw.MediaSource.isTypeSupported(sized(VP9, 7680, 4320)), false, 'no 8K at all here');
+  assert.equal(sw.MediaSource.isTypeSupported(sized(AVC, 1920, 1080)), true);
+});
+
+test('software VP9 and AV1 are blocked when a hardware fallback exists at the same size', () => {
+  const vp9 = 'video/webm; codecs="vp09.00.40.08"';
+  const av1 = 'video/mp4; codecs="av01.0.08M.08"';
+  const avc = 'video/mp4; codecs="avc1.4d401f"';
+  const sized = (codec, w, h, fps = 30) => codec + '; width=' + w + '; height=' + h + '; framerate=' + fps;
+  const older = playerPage({ cfg: { decodeCaps: { vp9: 0, av1: 0, h264: 1080,
+    vp9_60: 0, av1_60: 0, h264_60: 720 } } });
+  assert.equal(older.MediaSource.isTypeSupported(sized(vp9, 1920, 1080)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(av1, 1920, 1080)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1920, 1080)), true);
+  assert.equal(older.MediaSource.isTypeSupported(sized(vp9, 1280, 720, 60)), false);
+  assert.equal(older.MediaSource.isTypeSupported(sized(avc, 1280, 720, 60)), true);
+  assert.equal(older.MediaSource.isTypeSupported(vp9), false, 'MIME-only VP9 must not offer software when H.264 hardware exists');
+  assert.equal(older.MediaSource.isTypeSupported(av1), false, 'MIME-only AV1 must also avoid software');
+  const softwareOnly = playerPage({ cfg: { decodeCaps: { vp9: 0, av1: 0, h264: 0 } } });
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(vp9), true, 'MIME-only software fallback remains when no hardware available');
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1280, 720)), true,
+    'software fallback allowed when no hardware codec covers the size');
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 1920, 1080)), true);
+  assert.equal(softwareOnly.MediaSource.isTypeSupported(sized(vp9, 2560, 1440)), false);
+});
+
+test('Auto retains adaptive quality under thermal and mini or PiP ceilings', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'auto' } });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  p.window.__aay.thermal(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.mini(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  p.window.__aay.mini(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.thermal(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  p.window.__aay.pip(true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  p.window.__aay.pip(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+});
+
+test('captured media loadstart binds a new video immediately without DOM ticks', () => {
+  const p = playerPage({ noVideo: true });
+  const next = new p.video.constructor();
+  next.tagName = 'VIDEO';
+  assert.equal(next.events.has('play'), false);
+  p.emit('loadstart', { target: next });
+  assert.equal(next.events.has('play'), true);
+  assert.equal(next.events.has('ended'), true);
+  const before = next.events.get('play').length;
+  p.emit('emptied', { target: next });
+  assert.equal(next.events.get('play').length, before, 'same video never double binds');
+  p.emit('play', { target: next });
+  next.trigger('play');
+  assert.ok(p.stateReports.length > 0 || next.events.has('pause'), 'new video is ready to report state');
+});
+
+test('settings button anchors quality choice when YouTube uses unknown sheet markup', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  const button = { tagName: 'BUTTON', textContent: '',
+    closest(sel) { return sel.includes('player-settings-icon') ? this : null; } };
+  const unmarked = label => ({ tagName: 'DIV', textContent: label, parentElement: null,
+    closest: () => null, getAttribute: () => null });
+  p.emit('click', { isTrusted: true, target: unmarked('2160p') });
+  assert.equal(p.selectedQualities.length, 0, 'arbitrary resolution text cannot save quality');
+  p.emit('click', { isTrusted: true, target: button });
+  assert.equal(p.selectedQualities.length, 0, 'settings button is not itself a quality selection');
+  p.emit('click', { isTrusted: true, target: unmarked('2160p') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160');
+  assert.equal(JSON.parse(p.qualityStorage.get('yt-player-quality')).data, 'hd2160');
+  p.emit('click', { isTrusted: true, target: unmarked('1080p') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'settings tap window ends after selection');
+});
+
+function overloadPage(quality, cfg) {
+  const p = playerPage({ quality: true, currentQuality: quality, cfg: cfg || {} });
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: quality });
+  p.flush();
+  return p;
+}
+function badWindow(p, kind) {
+  if (kind === 'stall') { p.video.buffered = { length: 1, end: () => p.video.currentTime + 60 }; }
+  p.advance(9000);
+  p.runIntervals();
+}
+
+test('overload: a sustained decoder stall steps down one tier; one bad window does not', () => {
+  const p = overloadPage('hd2160');
+  p.video.buffered = { length: 1, end: () => 80 };
+  p.runIntervals();                       // first sample
+  badWindow(p, 'stall');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'isolated spike ignored');
+  badWindow(p, 'stall');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'sustained: 4K -> 1440p');
+  assert.equal(p.qualityStorage.get('aay-max-smooth-h'), '1440', 'remembered without native caps');
+});
+
+test('overload: buffering from the network (nothing buffered) never lowers quality', () => {
+  const p = overloadPage('hd2160');
+  p.video.buffered = { length: 1, end: () => p.video.currentTime + 0.5 };
+  p.runIntervals();
+  for (let i = 0; i < 4; i++) { p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+});
+
+test('overload: sustained frame dropping steps down gradually with a cooldown, floor 720p', () => {
+  const p = overloadPage('hd2160');
+  let f = 0, d = 0;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
+  const drop = () => { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); };
+  p.runIntervals();
+  drop(); drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  p.player.setCurrentQuality('hd1440');
+  drop(); drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], 'cooldown: no second step within 60 s');
+  for (let i = 0; i < 6; i++) drop();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'then the next tier');
+  p.player.setCurrentQuality('hd720');
+  for (let i = 0; i < 20; i++) drop();
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['medium', 'medium'], 'never below 720p');
+});
+
+test('overload: stable playback raises the limit again; preference untouched', () => {
+  const p = overloadPage('hd2160', { decodeCaps: { vp9: 4320, av1: 4320, h264: 2160 } });
+  let f = 0, d = 0;
+  p.video.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d });
+  p.runIntervals();
+  for (let i = 0; i < 2; i++) { f += 300; d += 240; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440']);
+  assert.equal(p.qualityStorage.has('aay-max-smooth-h'), false, 'native caps: session only');
+  p.player.setCurrentQuality('hd1440');
+  for (let i = 0; i < 25; i++) { f += 300; p.video.currentTime += 9; p.advance(9000); p.runIntervals(); }
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160'], 'back to the saved 4K after 3 min clean');
+});
+
+test('thermal: severe heat caps at 1080p and cooling restores the saved quality', () => {
+  const p = overloadPage('hd2160');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  p.window.__aay.thermal(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  p.window.__aay.thermal(1);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  const hot = overloadPage('hd2160', { thermal: 4 });
+  assert.deepEqual(hot.qualityCalls.at(-1), ['hd1080', 'hd1080'], 'already hot at page start');
+});
+
+test('decoder gate: 60 fps and HDR use their own hardware limits', () => {
+  const ty = (c, w, h, fps) => c + '; width=' + w + '; height=' + h + '; framerate=' + fps;
+  const VP9 = 'video/webm; codecs="vp09.00.51.08"', VP9HDR = 'video/webm; codecs="vp09.02.51.10.01.09.16.09.00"';
+  const AV1 = 'video/mp4; codecs="av01.0.16M.08"', AV1HDR = 'video/mp4; codecs="av01.0.16M.10.0.110.09.16.09.0"';
+  const p = playerPage({ cfg: { decodeCaps: { vp9: 2160, vp9_60: 1440, vp9_hdr: 0, av1: 4320, av1_60: 2160, av1_hdr: 1, h264: 1080, h264_60: 1080 } } });
+  const ms = p.MediaSource;
+  assert.equal(ms.isTypeSupported(ty(VP9, 3840, 2160, 30)), true);
+  assert.equal(ms.isTypeSupported(ty(VP9, 3840, 2160, 60)), false, '4K60 VP9 above its 60 fps limit');
+  assert.equal(ms.isTypeSupported(ty(AV1, 7680, 4320, 30)), true, '8K30 AV1 kept');
+  assert.equal(ms.isTypeSupported(ty(AV1, 7680, 4320, 60)), false, '8K60 AV1 above its 60 fps limit');
+  assert.equal(ms.isTypeSupported(ty(AV1, 3840, 2160, 60)), true);
+  assert.equal(ms.isTypeSupported(ty(VP9HDR, 1920, 1080, 30)), false, 'no 10-bit VP9 decoder: HDR VP9 hidden');
+  assert.equal(ms.isTypeSupported(ty(AV1HDR, 3840, 2160, 30)), true, 'HDR through AV1 instead');
+});
+
+test('hidden page sends progress less often but play/pause changes at once', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.setBg(true);
+  p.video.trigger('timeupdate'); // first heartbeat
+  p.flush();
+  const n = p.stateReports.length;
+  for (let i = 0; i < 4; i++) { p.advance(1500); p.video.currentTime += 1.5; p.video.trigger('timeupdate'); p.flush(); }
+  assert.equal(p.stateReports.length, n, 'no 1.4 s heartbeat while hidden');
+  p.advance(10000); p.video.trigger('timeupdate'); p.flush();
+  assert.equal(p.stateReports.length, n + 1, '10 s heartbeat');
+  p.video.paused = true; p.video.trigger('timeupdate');
+  assert.equal(p.stateReports.at(-1).playing, false, 'state change is immediate');
+});
+
+function sheetOption(label) {
+  const sheet = { tagName: 'DIV', textContent: 'Quality for current video ' + label, parentElement: null,
+    matches: (sel) => sel.includes('#bottom-sheet'), getAttribute: () => null };
+  const row = { tagName: 'DIV', textContent: label, parentElement: sheet, matches: () => false, getAttribute: () => null };
+  const text = { tagName: 'DIV', textContent: label, parentElement: row, matches: () => false, getAttribute: () => null,
+    closest(sel) { if (sel.includes('#bottom-sheet')) return sheet; return null; } };
+  return text;
+}
+
+test('quality pick in the new mobile bottom sheet (plain divs) is saved', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.emit('click', { target: sheetOption('2160p (4K)') });
+  p.flush();
+  assert.deepEqual(p.selectedQualities.at(-1), 'hd2160');
+});
+
+test('unidentified quality change after a tap never overwrites the saved maximum', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.advance(4000);                        // well after our own last range change
+  const before = p.qualityCalls.length;
+  // An unrecognised quality-sheet row still identifies a deliberate menu tap.
+  p.emit('click', { isTrusted: true, target: sheetOption('Higher picture quality') });
+  assert.equal(p.window.__aay.qualityTapVideo, '86p7SP34qSc');
+  p.player.setCurrentQuality('hd2160');   // YouTube switched after the user's sheet tap
+  p.emit('emptied', { target: p.video });   // capture listeners on document
+  p.emit('loadstart', { target: p.video });
+  assert.equal(p.qualityCalls.length, before, 'do not interrupt an in-progress quality switch');
+  p.flush();
+  assert.equal(p.selectedQualities.length, 0, 'lower or higher observed tier is not explicit user intent');
+  assert.equal(p.window.__aay.__cfg().preferredQuality || 'hd720', 'hd720',
+    'only an exact menu selection is allowed to change the saved maximum');
+});
+
+test('unrelated taps never save adaptive quality changes', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.advance(4000);
+  const n = p.selectedQualities.length;
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', textContent: 'random video tap',
+    getAttribute: () => null, closest: () => null } });
+  p.player.setCurrentQuality('hd2160');
+  p.emit('emptied', { target: p.video });
+  p.flush();
+  assert.equal(p.selectedQualities.length, n, 'adaptive quality change is not a saved manual choice');
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'saved resolution is restored');
+});
+
+test('same-video reload WITHOUT a recent tap still restores the saved quality', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
+  p.flush();
+  p.advance(10000);
+  p.emit('emptied', { target: p.video });
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'YouTube picked 4K on its own: saved 720p restored');
+});
+
+test('YouTube writing its own saved pick is adopted; our own writes are not', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const n = p.selectedQualities.length;
+  p.window.__aay.config && p.window.__aay.config({ preferredQuality: 'hd720' });
+  assert.equal(p.selectedQualities.length, n, 'own config write ignored');
+  if (typeof p.window.Storage === 'function' && p.window.localStorage instanceof p.window.Storage) {
+    p.window.localStorage.setItem('yt-player-quality', JSON.stringify({ data: JSON.stringify({ quality: 1440, previousQuality: 720 }) }));
+    p.flush();
+    assert.equal(p.selectedQualities.at(-1), 'hd1440');
+  }
+});
+
+test('menu labels with suffixes parse', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const opt = (label) => ({ tagName: 'BUTTON', textContent: label, getAttribute: () => null,
+    closest(sel) { return sel.includes('[role="option"]') ? this : null; } });
+  p.emit('click', { target: opt('2160p60 HDR Premium') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160');
+  p.emit('click', { target: opt('Higher picture quality') });
+  assert.equal(p.selectedQualities.at(-1), 'hd2160', 'preset rows are not tiers');
+});
 
 test('navigation diagnostics redact queries, video identifiers and fragments', () => {
   const start = source.indexOf('  function logRoute(url) {');
@@ -1159,4 +1631,230 @@ test('navigation diagnostics redact queries, video identifiers and fragments', (
   assert.match(source, /opening route: ' \+ logRoute\(href\)/);
   assert.match(source, /page change ' \+ logRoute\(url\)/);
   assert.match(source, /link ' \+ logRoute\(a\.getAttribute\('href'\)\)/);
+});
+
+
+test('auto quality obeys thermal cap and returns to adaptive when cooled', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd2160' });
+  p.window.__aay.config({ preferredQuality: 'auto' });
+  p.flush();
+  p.window.__aay.thermal(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080'], 'Auto may adapt below thermal cap');
+  p.window.__aay.thermal(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres'], 'cooling restores the full adaptive quality range');
+});
+
+test('performance diagnostics aggregate playback counters without personal data', () => {
+  const p = playerPage({ quality: true, currentQuality: 'hd720' });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(true); // duplicate must not resize the video surface again
+  p.emit('loadstart', { target: p.video });
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(p.perfReports.length, 1);
+  const perf = p.perfReports[0];
+  assert.equal(perf.sec, 30);
+  assert.equal(perf.layout, 1, 'duplicate mini mode does not trigger surface re-layout');
+  assert.equal(perf.sourceLoads, 1);
+  assert.equal(perf.width, 1920);
+  assert.equal(perf.height, 1080);
+  assert.equal(perf.tier, 'hd720');
+  assert.equal('videoId' in perf, false);
+  assert.equal('url' in perf, false);
+  assert.equal('rendererCpuPct' in perf, false, 'JavaScript cannot claim renderer CPU measurements');
+});
+
+test('paused video produces no periodic performance bridge reports', () => {
+  const p = playerPage({ quality: true });
+  p.video.paused = true;
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(p.perfReports.length, 0);
+});
+
+test('audio DSP reports graph state, not an invented CPU percentage', () => {
+  const eq = fs.readFileSync('app/src/main/assets/aay_eq.js', 'utf8');
+  assert.match(eq, /A\.eqPerf = function \(\)/);
+  assert.match(eq, /needsRoute\(\) \? 'dsp' : 'bypass'/);
+  assert.doesNotMatch(eq, /A\.eqCpuPct/);
+});
+
+test('saved 1080p is a maximum, a 720p-only video plays 720p and next 1080p video restores it', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd1080' } });
+  p.player.getAvailableQualityLevels = () => ['hd720', 'large', 'medium', 'small'];
+  p.window.__aay.applyQuality();
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd1080');
+  assert.equal(p.selectedQualities.length, 0, 'lower offered resolution is never adopted as default');
+  p.player.getAvailableQualityLevels = () => ['hd1080', 'hd720', 'medium'];
+  p.location.search = '?v=anotherVideo';
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd1080', 'hd1080']);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd1080');
+});
+
+test('2160p preference remains the maximum after a lower-only video and PiP cap', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd2160' } });
+  p.player.getAvailableQualityLevels = () => ['hd720', 'large', 'medium'];
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  p.window.__aay.pip(true);
+  assert.equal(p.window.__aay.__cfg().preferredQuality, 'hd2160');
+  p.window.__aay.pip(false);
+  p.player.getAvailableQualityLevels = () => ['hd2160', 'hd1080', 'hd720'];
+  p.location.search = '?v=another4KVideo';
+  p.window.__aay.applyQuality();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd2160', 'hd2160']);
+  assert.equal(p.selectedQualities.length, 0);
+});
+
+test('a stale YouTube Play button pauses genuinely playing video and respects user intent', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.player.getPlayerState = () => 2; // YouTube thinks paused; media still playing
+  const paused = [];
+  p.window.AAYNative.userPause = () => paused.push('pause');
+  const target = { tagName: 'BUTTON', closest(sel) {
+    return sel.includes('.ytp-play-button') ? this : null;
+  } };
+  const calls = [];
+  const e = { target, isTrusted: true,
+    preventDefault() { calls.push('prevent'); },
+    stopImmediatePropagation() { calls.push('stop'); } };
+  p.emit('click', e);
+  assert.equal(p.video.paused, true);
+  assert.deepEqual(calls, ['prevent', 'stop']);
+  assert.equal(paused.length, 1);
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'watchdog never undoes explicit Pause');
+});
+
+test('ordinary player pause gesture is not swallowed when player state is consistent', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.player.getPlayerState = () => 1; // playing
+  const target = { tagName: 'BUTTON', closest(sel) {
+    return sel.includes('.ytp-play-button') ? this : null;
+  } };
+  let swallowed = false;
+  p.emit('click', { target, isTrusted: true,
+    preventDefault() { swallowed = true; },
+    stopImmediatePropagation() { swallowed = true; } });
+  assert.equal(swallowed, false);
+});
+
+test('expanding a playing mini player resumes a pause caused by surface resize', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.mini(false); // intent recorded while still playing
+  p.video.paused = true;      // a Chromium resize interrupted playback
+  p.flush();
+  assert.equal(p.video.paused, false, 'video must continue after mini expands');
+  assert.equal(p.window.__aay.isMini, false);
+});
+
+test('expanding a user-paused mini player must not autoplay', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.cmd('pause');
+  assert.equal(p.video.paused, true);
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(p.video.paused, true, 'explicit Pause is authoritative');
+});
+
+test('user Pause after mini expansion cancels deferred recovery', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.cmd('pause');
+  p.flush();
+  assert.equal(p.video.paused, true);
+});
+
+test('mini expansion respects other-media audio focus hold', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.mediaHold(true);
+  p.video.paused = true;
+  p.flush();
+  assert.equal(p.video.paused, true, 'do not steal focus from another app');
+});
+
+test('re-entering mini cancels outdated full-player recovery callbacks', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.mini(false);
+  p.window.__aay.mini(true);
+  p.video.paused = true;
+  p.flush();
+  assert.equal(p.video.paused, true, 'an old expand callback must not restart mini playback');
+});
+
+test('tapping a playlist video auto-plays the newly navigated watch item', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause'); // previous video had been paused deliberately
+  assert.equal(p.video.paused, true);
+  const link = { href: 'https://m.youtube.com/watch?v=newPlaylistVideo&list=PLtest',
+    getAttribute() { return '/watch?v=newPlaylistVideo&list=PLtest'; } };
+  p.emit('click', { isTrusted: true, target: {
+    tagName: 'A',
+    closest(selector) {
+      if (selector === 'a[href]') return link;
+      if (selector.includes('ytm-playlist-panel-video-renderer')) return {};
+      return null;
+    },
+  } });
+  // A click alone must not restart the previously paused video.
+  assert.equal(p.video.paused, true);
+  p.location.search = '?v=newPlaylistVideo&list=PLtest';
+  p.location.href = 'https://m.youtube.com/watch?v=newPlaylistVideo&list=PLtest';
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, false, 'selected playlist video must play without another tap');
+});
+
+test('playlist selection does not override Pause pressed while next track loads', () => {
+  const p = playerPage();
+  p.flush();
+  const link = { href: 'https://m.youtube.com/watch?v=nextPlaylistItem',
+    getAttribute() { return '/watch?v=nextPlaylistItem'; } };
+  p.emit('click', { isTrusted: true, target: {
+    tagName: 'A', closest(selector) {
+      return selector === 'a[href]' ? link : null;
+    },
+  } });
+  p.window.__aay.cmd('pause');
+  p.location.search = '?v=nextPlaylistItem';
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  p.flush();
+  assert.equal(p.video.paused, true, 'explicit Pause cancels pending playlist autoplay');
+});
+
+test('an unrelated tap or same-video navigation never starts a paused video', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause');
+  p.emit('click', { isTrusted: true, target: { tagName: 'DIV', closest: () => null } });
+  p.emitWindow('yt-navigate-finish', {});
+  p.video.trigger('loadedmetadata');
+  assert.equal(p.video.paused, true);
+  const link = { href: p.location.href, getAttribute() { return '/watch?v=86p7SP34qSc'; } };
+  p.emit('click', { isTrusted: true, target: { tagName: 'A',
+    closest(selector) { return selector === 'a[href]' ? link : null; },
+  } });
+  p.emitWindow('yt-navigate-finish', {});
+  assert.equal(p.video.paused, true, 'reselecting same route is not a new video');
 });

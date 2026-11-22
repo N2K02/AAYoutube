@@ -30,6 +30,61 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val maxPendingCommands = 32
     private val handler = Handler(Looper.getMainLooper())
     private var foreground = false
+    // Phase transitions are logged as states arrive; health is sampled by its own
+    // timer so a WebView that stops reporting is still visible in logcat.
+    private var lastHealthElapsed = 0L
+    private var lastCpuMs = 0L
+    private val recentMediaCpu = ArrayDeque<Long>()
+    private var lastPlaybackPhase = ""
+    private var interruptedSince = 0L
+    private fun tracePlaybackPhase(s: Snap) {
+        val phase = ForegroundDemotePolicy.phase(s, recoveringPlayback)
+        if (phase != lastPlaybackPhase) {
+            AppLog.add("PLAYBACK", "transition $lastPlaybackPhase -> $phase foreground=$foreground bound=$bound")
+            lastPlaybackPhase = phase
+        }
+    }
+    private fun logHealth() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val cpu = android.os.Process.getElapsedCpuTime()
+        // Main process only: the WebView renderer is a separate sandboxed UID.
+        val cpuPercent = ForegroundDemotePolicy.cpuPercent(lastHealthElapsed, lastCpuMs, now, cpu)
+        lastHealthElapsed = now
+        lastCpuMs = cpu
+        if (cpuPercent >= 0 && cpuPercent <= 1000) {
+            recentMediaCpu.addLast(cpuPercent)
+            if (recentMediaCpu.size > 10) recentMediaCpu.removeFirst()
+        }
+        val cpuAverage = if (recentMediaCpu.isEmpty()) -1 else recentMediaCpu.sum() / recentMediaCpu.size
+        val cpuPeak = recentMediaCpu.maxOrNull() ?: -1
+        val audio = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        AppLog.add("HEALTH", "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)} " +
+            "mainCpuPct=$cpuPercent avgCpuPct=$cpuAverage peakCpuPct=$cpuPeak " +
+            "musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
+            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground bound=$bound")
+    }
+    private val healthTick = object : Runnable {
+        override fun run() {
+            if (shuttingDown || !foreground) return
+            logHealth()
+            scheduleDemoteIfNeeded(snapshot) // re-check even if no new state arrived
+            handler.postDelayed(this, 60_000L)
+        }
+    }
+    private fun startHealthTicker() {
+        handler.removeCallbacks(healthTick)
+        handler.postDelayed(healthTick, 60_000L)
+    }
+    private fun scheduleDemoteIfNeeded(s: Snap) {
+        handler.removeCallbacks(demoteForeground)
+        if (!foreground || carAttached || quitRequested) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!ForegroundDemotePolicy.isInterrupted(s, recoveringPlayback)) interruptedSince = 0L
+        else if (interruptedSince == 0L) interruptedSince = now
+        val delay = ForegroundDemotePolicy.delayMs(s, recoveringPlayback, interruptedSince, now) ?: return
+        handler.postDelayed(demoteForeground, delay)
+    }
     private val resumePrefs by lazy {
         getSharedPreferences("background_playback_restore", Context.MODE_PRIVATE)
     }
@@ -97,9 +152,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // Android may throttle/kill the :web process before JS gets a chance to resume.
     private val demoteForeground = Runnable {
         if (foreground && !snapshot.playing && !recoveringPlayback && !carAttached) {
-            AppLog.add("MEDIA", "Foreground grace period expired; playback still paused")
+            AppLog.add("MEDIA", "Foreground grace period expired; playback still paused " +
+                "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)}")
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
+            interruptedSince = 0L
+            handler.removeCallbacks(healthTick)
         }
     }
     private val notifications = CarMediaNotificationManager(this)
@@ -437,7 +495,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
-        updatePlaybackWakeLock(s.playing || recoveringPlayback)
+        updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))
+        tracePlaybackPhase(s)
         if (quitRequested) {
             updateNotification(s)
             return
@@ -459,8 +518,25 @@ class PlaybackService : MediaBrowserServiceCompat() {
         updateNotification(s)
     }
 
+    // Headphones / Bluetooth disconnected: pause like the YouTube app instead of
+    // suddenly playing from the phone speaker. Treated as a deliberate pause.
+    private val noisyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested)) return
+            AppLog.add("MEDIA", "Audio output disconnected (headphones/Bluetooth): pausing")
+            runCatching { session.controller.transportControls.pause() }
+        }
+    }
+    private var noisyRegistered = false
+
     override fun onCreate() {
         super.onCreate()
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(this, noisyReceiver,
+                android.content.IntentFilter(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+            noisyRegistered = true
+        }
         notifications.createChannel()
         Library.init(this)
         session = MediaSessionCompat(this, "AAYoutube").apply {
@@ -627,6 +703,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         artworkLoader.bitmapFor(MediaArtworkLoader.urlFor(snapshot.art, snapshot.id)))
                 } else notifications.placeholder()
                 startForeground(CarMediaNotificationManager.NOTIFICATION_ID, notification)
+                if (!foreground) startHealthTicker()
                 foreground = true
                 lastNotification = null
                 AppLog.add("MEDIA", "Foreground media service started; playing=${snapshot.playing}")
@@ -650,7 +727,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
         }
         if (intent?.action == ACTION_QUIT) requestQuit()
-        if (intent == null && !quitRequested) restoreSystemKilledPlayback()
+        if (intent == null && !quitRequested) {
+            AppLog.add("LIFECYCLE", "sticky service recreated after process/service stop")
+            restoreSystemKilledPlayback()
+        }
         // Publish the initial playing state even when the WebView Messenger has
         // not registered yet; future IPC reports will update position and metadata.
         if (initial != null && !quitRequested) publish(snapshot)
@@ -723,6 +803,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
     }
 
     override fun onDestroy() {
+        if (noisyRegistered) runCatching { unregisterReceiver(noisyReceiver) }
+        noisyRegistered = false
+        AppLog.add("LIFECYCLE", "service destroyed playing=${snapshot.playing} recovering=$recoveringPlayback quit=$quitRequested")
         shuttingDown = true
         handler.removeCallbacksAndMessages(null)
         val activeConnection = connection
@@ -761,15 +844,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     AppLog.add("MEDIA", "Paused notification refresh failed: " + it.javaClass.simpleName)
                 }
             }
-            if (foreground && !recoveringPlayback)
-                handler.postDelayed(demoteForeground, 8_000L)
+            if (!recoveringPlayback) scheduleDemoteIfNeeded(s)
             return
         }
         if (foreground && lastNotification == key) return
         runCatching {
             startForeground(CarMediaNotificationManager.NOTIFICATION_ID,
                 notifications.playback(s, session.sessionToken, artworkLoader.bitmapFor(cover)))
+            if (!foreground) startHealthTicker()
             foreground = true
+            interruptedSince = 0L
             lastNotification = key
             AppLog.add("MEDIA", "Playback notification foreground=true id=${s.id} " +
                 "channel=${notifications.channelStatus()}")

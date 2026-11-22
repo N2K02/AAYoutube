@@ -12,7 +12,7 @@ class LandscapeTransitionContractTest {
     private val host = src("app/src/main/java/com/aayoutube/app/WebHost.kt")
 
     @Test fun transitWindowDropsInvoluntaryPausesOnly() {
-        assertTrue(js.contains("function holding() { return inTransit() ||"))
+        assertTrue(js.contains("function holding() { return !bgWatch.held && (inTransit() ||"))
         assertTrue(js.contains("A.transit = function (ms)"))
         // A real Pause tap during the window is still honoured.
         assertTrue(js.contains("var manual = !allowPause && Date.now() <= userPauseEligibleUntil;"))

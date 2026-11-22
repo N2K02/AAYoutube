@@ -40,7 +40,7 @@ class WebPlaybackPolicyTest {
         assertTrue(web.contains("(w as? BackgroundWebView)?.pauseForIdle()"))
         assertTrue(web.contains("w.pauseTimers()"))
         assertTrue(web.contains("if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()"))
-        assertTrue(web.contains("if (keepRecovering()) return"))
+        assertTrue(web.contains("if (keepRecovering()) {\n            AppLog.add(\"POWER\", \"Idle freeze skipped while playback recovery is requested\")\n            return"))
         assertTrue(web.contains("if (name == \"pause\") {"))
         assertTrue(web.contains("userPausedAt = SystemClock.elapsedRealtime()"))
         assertTrue(web.contains("unexpectedPauseRecoveryUntil = 0L"))

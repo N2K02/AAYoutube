@@ -81,6 +81,8 @@ object WebHost {
     private var lastLinkRequest = 0L
     private var lastRendererCrashAt = 0L
     private var rendererCrashCount = 0
+    private var webResizeCount = 0
+    private var lastWebResizeLogAt = 0L
 
     // What the screens show.
     val progress = MutableStateFlow(100)
@@ -276,6 +278,21 @@ object WebHost {
             " directCarContext=" + inCarDisplay)
         webGeneration++
         w.setBackgroundColor(Color.BLACK)
+        // Actual WebView geometry changes are a cheap proxy for potential
+        // decoder Surface rebinding. Do not confuse them with Codec2 creation.
+        w.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            val width = right - left
+            val height = bottom - top
+            if (width <= 0 || height <= 0 ||
+                (width == oldRight - oldLeft && height == oldBottom - oldTop)) return@addOnLayoutChangeListener
+            webResizeCount++
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastWebResizeLogAt >= 1_000L) {
+                lastWebResizeLogAt = now
+                AppLog.add("VIDEO", "WebView surface geometry=${width}x${height} " +
+                    "resizeCount=$webResizeCount mode=${mode.value} pip=${inPip.value}")
+            }
+        }
         configure(w)
         // WebView.pauseTimers() is process-wide. An older idle/frozen player
         // may have paused Chromium's shared timers before being disposed.
@@ -371,7 +388,10 @@ object WebHost {
     internal fun script(): String {
         val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
             app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
-        return "window.__AAY_CFG=" + Features.current.toJson() + ";window.__AAY_CAR=" + (carDisplay || carShown) +
+        registerThermalWatch()
+        val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
+            .put("thermal", thermalStatus())
+        return "window.__AAY_CFG=" + cfg + ";window.__AAY_CAR=" + (carDisplay || carShown) +
             ";\n" + source
     }
 
@@ -792,7 +812,18 @@ object WebHost {
         }
         unfreeze()
         mode.value = PlayerMode.FULL
-        load(withCarPlaybackIntent(normalise(url)))
+        // Opening a video from the secondary browse/playlist WebView is an
+        // explicit play selection, unlike restoring a previously paused page.
+        // Match native media queue OPEN, which already appends aay=1.
+        val destination = withCarPlaybackIntent(normalise(url))
+        val target = Uri.parse(destination)
+        val playRoute = target.path == "/watch" && !target.getQueryParameter("v").isNullOrBlank()
+        val explicitPaused = target.getQueryParameter("aay") == "paused"
+        val autoplayUrl = if (playRoute && !explicitPaused && target.getQueryParameter("aay") == null)
+            target.buildUpon().appendQueryParameter("aay", "1").build().toString()
+        else destination
+        if (playRoute && !explicitPaused) AppLog.add("PLAY", "Selected video: autoplay requested")
+        load(autoplayUrl)
     }
 
     // ---------------------------------------------------------------- mini player
@@ -808,6 +839,47 @@ object WebHost {
         // The media snapshot is authoritative during that brief navigation gap.
         return route.startsWith("/watch") || route.startsWith("/live/") ||
             onWatchPage.value || (snapshot.value.playing && snapshot.value.id.isNotBlank())
+    }
+
+    // Track the WebView-owning process separately from the media service and
+    // Chromium's sandboxed renderer. Renderer CPU requires external UID/PID ADB
+    // sampling on Android; a JS callback cannot accurately measure that CPU.
+    private var perfElapsed = 0L
+    private var perfCpu = 0L
+    private val recentWebCpu = ArrayDeque<Int>()
+
+    internal fun onJsPerformance(payload: String, generation: Int) {
+        if (payload.length > 1024) return
+        main.post {
+            if (generation != webGeneration || web == null) return@post
+            val d = runCatching { JSONObject(payload) }.getOrNull() ?: return@post
+            val sec = d.optInt("sec", 0)
+            if (sec !in 10..120) return@post
+            fun metric(key: String, max: Int = 100_000): Int = d.optInt(key, 0).coerceIn(0, max)
+            val now = SystemClock.elapsedRealtime()
+            val cpu = android.os.Process.getElapsedCpuTime()
+            val pct = if (perfElapsed > 0 && now > perfElapsed && cpu >= perfCpu)
+                ((cpu - perfCpu) * 100 / (now - perfElapsed)).toInt().coerceIn(0, 1000) else -1
+            perfElapsed = now
+            perfCpu = cpu
+            if (pct >= 0) {
+                recentWebCpu.addLast(pct)
+                if (recentWebCpu.size > 10) recentWebCpu.removeFirst()
+            }
+            val avg = if (recentWebCpu.isEmpty()) -1 else recentWebCpu.sum() / recentWebCpu.size
+            val peak = recentWebCpu.maxOrNull() ?: -1
+            val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
+            val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
+            val eq = d.optString("eq").take(32).filter { it.isLetterOrDigit() || it in ":-" }
+            AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak " +
+                "rendererCpuPct=adb-only domTicks=${metric("ticks")} domMs=${metric("tickMs")} " +
+                "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
+                "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
+                "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
+                "frames=${metric("frames")} droppedPct=${d.optInt("droppedPct", -1).coerceIn(-1,100)} " +
+                "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
+                "codec=${codec.ifEmpty { "unknown" }} eq=$eq thermal=${thermalStatus()}")
+        }
     }
 
     /** Called only for explicit player-quality menu picks, never for adaptive playback changes. */
@@ -1066,7 +1138,10 @@ object WebHost {
         // A previously playing stream may have dropped silently. Leave the
         // watchdog active until Play succeeds, the user pauses, or Stop/Quit.
         // Background play OFF still permits the normal idle freeze offscreen.
-        if (keepRecovering()) return
+        if (keepRecovering()) {
+            AppLog.add("POWER", "Idle freeze skipped while playback recovery is requested")
+            return
+        }
         // Do not pause the WebView's own timers while it is attempting to recover
         // a spontaneous background pause. A deliberate user pause remains fast-idle.
         val recoveryMs = (unexpectedPauseRecoveryUntil - SystemClock.elapsedRealtime())
@@ -1078,7 +1153,7 @@ object WebHost {
         val w = web ?: return
         if (frozen) return
         frozen = true
-        AppLog.add("POWER", "Page frozen")
+        AppLog.add("POWER", "Page frozen playing=${snapshot.value.playing} wanted=$playbackWanted")
         (w as? BackgroundWebView)?.pauseForIdle()
         w.pauseTimers()
     }
@@ -1099,10 +1174,18 @@ object WebHost {
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
+        // Quit, idle shutdown and renderer replacement: no hold, listener, timed wake
+        // lock or delayed resume may outlive (or act on the successor of) this renderer.
+        cancelOtherMediaWork("WebView released")
         exitFullscreen()
         val w = web
         web = null
         webGeneration++ // Ignore already-queued bridge reports from the disposed renderer.
+        perfElapsed = 0L
+        perfCpu = 0L
+        recentWebCpu.clear()
+        webResizeCount = 0
+        lastWebResizeLogAt = 0L
         sameVideoReloadPosition = null
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
@@ -1147,7 +1230,8 @@ object WebHost {
      * paused with no screen open), or by Android if it needs the memory.
      */
     fun onLinkUnbound() {
-        AppLog.add("LINK", "Media service disconnected")
+        AppLog.add("LINK", "Media service disconnected playing=${snapshot.value.playing} wanted=$playbackWanted " +
+            "shown=$shown frozen=$frozen")
         link = null
         linkEpoch = -1
         if (!shown && !snapshot.value.playing) scheduleFreeze()
@@ -1302,9 +1386,12 @@ object WebHost {
         val u = Uri.parse(url)
         val host = u.host?.lowercase().orEmpty()
         if (host == "youtu.be") {
-            val id = u.lastPathSegment.orEmpty()
-            val t = u.getQueryParameter("t")
-            return "https://m.youtube.com/watch?v=$id" + (if (t != null) "&t=$t" else "")
+            val watch = Uri.parse(HOME_MOBILE).buildUpon().path("/watch")
+                .appendQueryParameter("v", u.lastPathSegment.orEmpty())
+            for (key in listOf("t", "start", "list", "index", "aay")) {
+                u.getQueryParameter(key)?.let { watch.appendQueryParameter(key, it) }
+            }
+            return watch.build().toString()
         }
         return url
     }
@@ -1405,7 +1492,7 @@ object WebHost {
     // Bound retries to prevent repeated play requests for an unavailable stream.
     private fun resumeIfDropped(old: Snap, new: Snap) {
         if (!old.playing || new.playing || new.buffering || new.ended ||
-            new.id != old.id || new.id.isBlank()) return
+            new.id != old.id || new.id.isBlank() || otherMediaHeldSince != 0L) return
         val now = SystemClock.elapsedRealtime()
         val background = !shown && !inPip.value && !carShown
         // Background-play OFF is respected when fully hidden. Unexpected pauses
@@ -1424,7 +1511,157 @@ object WebHost {
         }
         resumeTries++
         AppLog.add("PLAY", "Unexpected pause in background=$background mini=$mini: native resume $resumeTries/2")
-        cmd("play")
+        // A focus handoff pauses us before the other app's audio starts: settle first.
+        main.removeCallbacks(droppedResume)
+        main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)
+    }
+
+    private fun cancelOtherMediaWork(reason: String) {
+        main.removeCallbacks(droppedResume)
+        main.removeCallbacks(droppedResumeJudge)
+        endOtherMediaHold(reason)
+        unregisterOtherMediaWatch() // idempotent: also clears a stray timed wake lock
+    }
+
+    // Device heat: above SEVERE the page caps quality at 1080p until it cools.
+    private var thermalRegistered = false
+    private fun registerThermalWatch() {
+        if (thermalRegistered || android.os.Build.VERSION.SDK_INT < 29) return
+        runCatching {
+            val pm = app.getSystemService(android.os.PowerManager::class.java)
+            pm.addThermalStatusListener(app.mainExecutor) { status ->
+                AppLog.add("VIDEO", "Thermal status=$status")
+                js("window.__aay&&window.__aay.thermal&&window.__aay.thermal($status)")
+            }
+            thermalRegistered = true
+        }
+    }
+    private fun thermalStatus(): Int = if (android.os.Build.VERSION.SDK_INT < 29) 0 else
+        runCatching { app.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
+
+    internal fun postOtherMediaHold(generation: Int) {
+        main.post { if (generation == webGeneration) startOtherMediaHold("page watchdog") }
+    }
+
+    private val droppedResume = Runnable {
+        val s = snapshot.value
+        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        // isMusicActive cannot say WHOSE audio is active: first make sure our own
+        // Web Audio equalizer output is closed, then judge what is still playing.
+        js("window.__aay&&window.__aay.eqIdleNow&&window.__aay.eqIdleNow()")
+        main.removeCallbacks(droppedResumeJudge)
+        main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)
+    }
+
+    private val droppedResumeJudge = Runnable {
+        val s = snapshot.value
+        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        if (otherMediaActive()) startOtherMediaHold("native resume") else cmd("play")
+    }
+
+    // ------------------------------------------------- other app's media (audio focus)
+    private var otherMediaHeldSince = 0L
+    private var otherMediaQuietSince = 0L
+
+    internal fun otherMediaActive(): Boolean = runCatching {
+        val am = app.getSystemService(android.media.AudioManager::class.java)
+        OtherMediaHoldPolicy.othersActive(am.isMusicActive, am.mode)
+    }.getOrDefault(false)
+
+    internal fun startOtherMediaHold(reason: String) {
+        if (otherMediaHeldSince != 0L || !playbackWanted) return
+        otherMediaHeldSince = SystemClock.elapsedRealtime()
+        otherMediaQuietSince = 0L
+        main.removeCallbacks(droppedResume)
+        main.removeCallbacks(droppedResumeJudge)
+        AppLog.add("FOCUS", "Another app is playing media; paused until it stops ($reason)")
+        js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(true)")
+        registerOtherMediaWatch()
+        main.removeCallbacks(otherMediaPoll)
+        main.postDelayed(otherMediaPoll, 1_000L)
+        // Yield foreground playback immediately, even if Chromium has not yet
+        // delivered its asynchronous pause event. Preserve playbackWanted so
+        // the other-media watcher can resume after the focus handoff.
+        publish(snapshot.value.copy(playing = false, buffering = false, userPaused = false))
+    }
+
+    // No CPU wake lock while held: Android wakes us when the other app's player
+    // or the call state changes; a short timed wake lock covers the quiet check.
+    private var playbackWatch: android.media.AudioManager.AudioPlaybackCallback? = null
+    private var modeWatch: Any? = null
+    private val holdWake by lazy {
+        app.getSystemService(android.os.PowerManager::class.java)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "AAYoutube:media-hold")
+            .apply { setReferenceCounted(false) }
+    }
+    private fun pokeOtherMediaPoll() {
+        if (otherMediaHeldSince == 0L) return
+        runCatching { holdWake.acquire(OtherMediaHoldPolicy.WAKE_CHECK_MS) }
+        main.removeCallbacks(otherMediaPoll)
+        main.post(otherMediaPoll)
+    }
+    private fun registerOtherMediaWatch() {
+        val am = runCatching { app.getSystemService(android.media.AudioManager::class.java) }.getOrNull() ?: return
+        if (playbackWatch == null) {
+            val cb = object : android.media.AudioManager.AudioPlaybackCallback() {
+                override fun onPlaybackConfigChanged(configs: MutableList<android.media.AudioPlaybackConfiguration>?) {
+                    pokeOtherMediaPoll()
+                }
+            }
+            runCatching { am.registerAudioPlaybackCallback(cb, main) }.onSuccess { playbackWatch = cb }
+        }
+        if (modeWatch == null && android.os.Build.VERSION.SDK_INT >= 31) {
+            val l = android.media.AudioManager.OnModeChangedListener { main.post { pokeOtherMediaPoll() } }
+            runCatching { am.addOnModeChangedListener(app.mainExecutor, l) }.onSuccess { modeWatch = l }
+        }
+    }
+    private fun unregisterOtherMediaWatch() {
+        val am = runCatching { app.getSystemService(android.media.AudioManager::class.java) }.getOrNull()
+        playbackWatch?.let { cb -> runCatching { am?.unregisterAudioPlaybackCallback(cb) } }
+        playbackWatch = null
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            (modeWatch as? android.media.AudioManager.OnModeChangedListener)?.let { l ->
+                runCatching { am?.removeOnModeChangedListener(l) }
+            }
+        }
+        modeWatch = null
+        runCatching { if (holdWake.isHeld) holdWake.release() }
+    }
+
+    private fun endOtherMediaHold(reason: String, giveUp: Boolean = false) {
+        if (otherMediaHeldSince == 0L) return
+        otherMediaHeldSince = 0L
+        otherMediaQuietSince = 0L
+        main.removeCallbacks(otherMediaPoll)
+        unregisterOtherMediaWatch()
+        js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(false,$giveUp)")
+        AppLog.add("FOCUS", "Media hold ended: $reason")
+    }
+
+    // Runs while held; the media service keeps a CPU wake lock because the
+    // snapshot stays `recovering` (playback still wanted), so this works screen-off.
+    private val otherMediaPoll = object : Runnable {
+        override fun run() {
+            if (otherMediaHeldSince == 0L) return
+            if (!playbackWanted) { endOtherMediaHold("playback no longer wanted"); return }
+            val now = SystemClock.elapsedRealtime()
+            val active = otherMediaActive()
+            otherMediaQuietSince = OtherMediaHoldPolicy.quietSince(otherMediaQuietSince, active, now)
+            when (OtherMediaHoldPolicy.step(active, otherMediaHeldSince, otherMediaQuietSince, now)) {
+                // Screen off, this delay may stretch while the CPU sleeps; the
+                // playback/mode callbacks wake it on the change that matters.
+                OtherMediaHoldPolicy.Step.KEEP_HOLDING -> main.postDelayed(this, 1_000L)
+                OtherMediaHoldPolicy.Step.RESUME -> {
+                    endOtherMediaHold("other media stopped")
+                    if (keepRecovering()) cmd("play")
+                }
+                OtherMediaHoldPolicy.Step.GIVE_UP -> {
+                    endOtherMediaHold("hold expired", giveUp = true)
+                    playbackWanted = false
+                    publish(snapshot.value) // drop `recovering`: release wake lock/foreground
+                }
+            }
+        }
     }
 
     private var lastPlaybackServiceStartAt = 0L
@@ -1463,10 +1700,18 @@ object WebHost {
             userPausedAt = SystemClock.elapsedRealtime()
         } else if (incoming.playing) playbackWanted = true
         if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
+        if (incoming.playing || !playbackWanted) {
+            // A resume/hold decision still pending from an earlier pause is obsolete.
+            main.removeCallbacks(droppedResume)
+            main.removeCallbacks(droppedResumeJudge)
+        }
+        if (otherMediaHeldSince != 0L && (incoming.playing || !playbackWanted))
+            endOtherMediaHold(if (incoming.playing) "playing again" else "paused or ended")
         // Keep foreground media priority while the active watchdog retries a
         // spontaneous pause. Never preserve this for explicit Pause or ending.
         val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
-            !incoming.ended && incoming.id.isNotBlank() && keepRecovering())
+            !incoming.ended && incoming.id.isNotBlank() && keepRecovering(),
+            held = otherMediaHeldSince != 0L && !incoming.playing)
         resumeIfDropped(previous, s)
         ensurePlaybackService(previous, s)
         val key = "${s.id}|${s.playing}|${s.buffering}|${s.ad}|${s.ended}|${s.live}"
@@ -1760,6 +2005,12 @@ class WebBridge(private val generation: Int) {
         WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
     }
 
+    /** Aggregated metrics; never URLs, tokens or video IDs. */
+    @JavascriptInterface
+    fun perf(payload: String) {
+        WebHost.onJsPerformance(payload, generation)
+    }
+
     /** Persist only explicit quality menu selections (not YouTube's adaptive downgrades). */
     @JavascriptInterface
     fun quality(value: String) {
@@ -1776,6 +2027,14 @@ class WebBridge(private val generation: Int) {
     @JavascriptInterface
     fun speed(rate: Double) {
         WebHost.requestSpeedFromBridge(rate, generation)
+    }
+
+    /** True when another app is playing media; also starts the native hold that resumes us later. */
+    @JavascriptInterface
+    fun otherMediaHold(): Boolean {
+        val active = WebHost.otherMediaActive()
+        if (active) WebHost.postOtherMediaHold(generation)
+        return active
     }
 
     /** Swipe down on the playing video. */

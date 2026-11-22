@@ -55,6 +55,19 @@ class AndroidAutoInstallHelpContractTest {
         assertTrue(manifest.contains("android:name=\".PlaybackService\""))
     }
 
+    @Test fun recordedInstallerIsSeparateFromProjectionVisibility() {
+        val playStore = AndroidAutoInstallSource.fromInstaller("com.android.vending")
+        val otherInstaller = AndroidAutoInstallSource.fromInstaller("com.android.packageinstaller")
+        val noRecord = AndroidAutoInstallSource.fromInstaller(null)
+        assertEquals(AndroidAutoInstallSource.PLAY_STORE_RECORDED, playStore)
+        assertEquals(AndroidAutoInstallSource.OTHER_INSTALLER, otherInstaller)
+        assertEquals(AndroidAutoInstallSource.NO_INSTALLER_RECORDED, noRecord)
+        assertFalse(playStore.mayAffectDiscovery)
+        assertTrue(otherInstaller.mayAffectDiscovery)
+        assertTrue(noRecord.mayAffectDiscovery)
+        assertFalse(AndroidAutoInstallSource.UNAVAILABLE.mayAffectDiscovery)
+    }
+
     @Test fun updatesRetainExistingUpdaterAndOfferInstallerGuidance() {
         assertFalse(help.contains("Updating AAYouTube"))
         assertFalse(help.contains("Download the signed APK from the existing updater/release"))

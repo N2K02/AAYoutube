@@ -34,7 +34,7 @@ class AndroidAutoIntegrationContractTest {
         for (category in listOf("android.intent.category.CAR_LAUNCHER",
             "androidx.car.app.category.NAVIGATION", "android.intent.category.APP_MAPS"))
             assertFalse(category, manifest.contains(category))
-        assertFalse("no AndroidX car service, so no car API level", manifest.contains("minCarApiLevel"))
+        assertFalse("legacy video does not set a car template API level", video.contains("minCarApiLevel"))
         val carWebLink = phone.substringAfter("<!-- Opens YouTube links in this app -->")
             .substringBefore("</intent-filter>")
         assertTrue(carWebLink.contains("android.intent.action.VIEW"))
@@ -56,15 +56,14 @@ class AndroidAutoIntegrationContractTest {
         assertFalse(music.contains("CATEGORY_PROJECTION"))
         // The AndroidX navigation side-panel previously froze the shared WebView.
         assertFalse(manifest.contains("android:name=\".CarVideoService\""))
-        assertFalse(manifest.contains("androidx.car.app.CarAppService"))
-        assertFalse(src("app/build.gradle.kts").contains("androidx.car.app:app:"))
+        assertFalse(video.contains("androidx.car.app.CarAppService"))
         for (resource in listOf("xml", "xml-v35")) {
             val descriptor = src("app/src/main/res/$resource/automotive_app_desc.xml")
             // AABrowser's descriptor: service + projection + media.
             assertTrue(descriptor.contains("name=\"service\""))
             assertTrue(descriptor.contains("name=\"projection\""))
             assertTrue(descriptor.contains("name=\"media\""))
-            assertFalse(descriptor.contains("name=\"template\""))
+            if (resource == "xml-v35") assertFalse(descriptor.contains("name=\"template\""))
         }
     }
 

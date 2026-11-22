@@ -20,7 +20,7 @@ class ScreenOffPlaybackContractTest {
         val service = app("PlaybackService.kt")
         assertTrue(service.contains("PowerManager.PARTIAL_WAKE_LOCK"))
         assertTrue(service.contains("setReferenceCounted(false)"))
-        assertTrue(service.contains("updatePlaybackWakeLock(s.playing || recoveringPlayback)"))
+        assertTrue(service.contains("updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))"))
         assertTrue(service.contains("if (!active || quitRequested || shuttingDown)"))
         assertTrue(service.contains("if (lock.isHeld) lock.release()"))
         val destruction = service.substringAfter("override fun onDestroy() {")
@@ -40,7 +40,7 @@ class ScreenOffPlaybackContractTest {
         assertFalse(task.contains("stopSelf()"))
         assertTrue(task.contains("super.onTaskRemoved(rootIntent)"))
         assertTrue(service.contains("return START_STICKY"))
-        assertTrue(service.contains("if (intent == null && !quitRequested) restoreSystemKilledPlayback()"))
+        assertTrue(service.contains("if (intent == null && !quitRequested) {\n            AppLog.add(\"LIFECYCLE\", \"sticky service recreated after process/service stop\")\n            restoreSystemKilledPlayback()"))
     }
 
     @Test fun systemRestartRecordIsRecentAndNeverOverridesPauseQuitOrDisabledPlayback() {

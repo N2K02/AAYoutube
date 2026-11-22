@@ -9,10 +9,12 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.mutableStateOf
 
 /**
  * The screen. Runs in the ":web" process, next to the WebView. It also tells the media service
@@ -34,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     private var compatConnection: CompatMediaConnection? = null
     private var watchTabVisible = true
+    internal val sharedLinkOpened = mutableStateOf(false)
     private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
     private val quitPhone: () -> Unit = { runOnUiThread { closeEverything() } }
 
@@ -56,7 +59,7 @@ class MainActivity : ComponentActivity() {
         }
         // Opened from the icon (not a link, not after rotation): start on YouTube Home.
         if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) WebHost.goHomeIfIdle()
-        handleIntent(intent)
+        if (savedInstanceState == null || intent?.action != Intent.ACTION_SEND) handleIntent(intent)
         WebHost.onQuit = quitPhone
         setContent { AAYoutubeTheme { AppRoot(this) } }
     }
@@ -81,6 +84,15 @@ class MainActivity : ComponentActivity() {
     private fun handleIntent(intent: Intent?) {
         when (intent?.action) {
             Intent.ACTION_VIEW -> intent.dataString?.let { WebHost.openUrl(it) }
+            Intent.ACTION_SEND -> {
+                val url = YouTubeSharedLink.find(intent.getCharSequenceExtra(Intent.EXTRA_TEXT))
+                if (url == null) {
+                    Toast.makeText(this, "Share a YouTube video or playlist link", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                WebHost.openUrl(url)
+                sharedLinkOpened.value = true
+            }
             "android.media.action.MEDIA_PLAY_FROM_SEARCH" -> {
                 val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty()
                 AppLog.add("CAR", "Assistant media search received")

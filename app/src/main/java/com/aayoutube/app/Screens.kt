@@ -55,6 +55,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -238,6 +241,13 @@ fun AppRoot(activity: MainActivity) {
         activity.intent?.getBooleanExtra("com.aayoutube.app.EXTRA_CAR_PREVIEW", false) == true
     var tab by rememberSaveable {
         mutableIntStateOf(if (openCarPreview) Tab.ExperimentalVideo.ordinal else 0)
+    }
+    val sharedLinkOpened by activity.sharedLinkOpened
+    LaunchedEffect(sharedLinkOpened) {
+        if (sharedLinkOpened) {
+            tab = Tab.Watch.ordinal
+            activity.sharedLinkOpened.value = false
+        }
     }
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
@@ -710,7 +720,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         val density = LocalDensity.current
         var mx by remember { mutableStateOf(prefs.getFloat("miniX", 1f)) }
         var my by remember { mutableStateOf(prefs.getFloat("miniY", 1f)) }
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        // Window position of this box, for capturing the video frame during transitions.
+        var hostOrigin by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned {
+            hostOrigin = it.boundsInWindow().topLeft
+        }) {
             val miniW = minOf(224.dp, (maxWidth - 24.dp) * 0.8f)
             val miniH = miniW * (9f / 16f)
             val edge = with(density) { 12.dp.toPx() }
@@ -727,26 +741,74 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             val py = minY + (maxY - minY) * my
             val miniMod = Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH)
 
+            // Full <-> mini transition: the WebView follows `layoutSmall` (resized once);
+            // a captured frame animates between the old and new bounds above it.
+            var layoutSmall by remember { mutableStateOf(small) }
+            var ghost by remember { mutableStateOf<Triple<androidx.compose.ui.graphics.ImageBitmap?, PxRect, PxRect>?>(null) }
+            var ghostToMini by remember { mutableStateOf(false) }
+            val ghostMove = remember { Animatable(1f) }
+            val ghostAlpha = remember { Animatable(0f) }
+            // Only the video area travels (portrait watch page: the 16:9 band at the top),
+            // not the whole page: smaller capture, and it looks like the YouTube app.
+            val fullRect = PlayerTransitionPolicy.videoBand(
+                constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
+            val miniRect = PxRect(px, py, wPx, hPx)
+            LaunchedEffect(small) {
+                if (small == layoutSmall) return@LaunchedEffect
+                if (!PlayerTransitionPolicy.animates(inPip, onCar, projectedToCar, hidden)) {
+                    layoutSmall = small
+                    return@LaunchedEffect
+                }
+                val from = if (layoutSmall) miniRect else fullRect
+                val to = if (small) miniRect else fullRect
+                val window = context.findActivity()?.window
+                val frame = window?.let {
+                    captureWindowRegion(it, android.graphics.Rect(
+                        (hostOrigin.x + from.left).roundToInt(), (hostOrigin.y + from.top).roundToInt(),
+                        (hostOrigin.x + from.left + from.width).roundToInt(),
+                        (hostOrigin.y + from.top + from.height).roundToInt()))
+                }
+                if (frame == null) {
+                    // Capture failed (protected video, timeout): never animate a black box;
+                    // the plain scrim fade below handles this transition instead.
+                    layoutSmall = small
+                    return@LaunchedEffect
+                }
+                ghostToMini = small
+                ghost = Triple(frame.asImageBitmap(), from, to)
+                ghostMove.snapTo(0f)
+                ghostAlpha.snapTo(1f)
+                layoutSmall = small // the single WebView resize happens under the ghost
+                try {
+                    ghostMove.animateTo(1f, tween(PlayerTransitionPolicy.MOVE_MS,
+                        easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                    ghostAlpha.animateTo(0f, tween(PlayerTransitionPolicy.FADE_MS))
+                } finally {
+                    ghost = null
+                }
+            }
+
             // Resize the Android WebView itself. Scaling a graphicsLayer changes
             // the Compose container, but can leave Chromium's video Surface
             // at the old fullscreen dimensions (grey frames/letterboxing).
             val playerMod = when {
                 inPip -> Modifier.fillMaxSize()
                 hidden -> Modifier.size(1.dp)
-                small -> Modifier.offset {
+                layoutSmall -> Modifier.offset {
                     IntOffset(px.roundToInt(), py.roundToInt())
-                }.size(miniW, miniH).clip(RoundedCornerShape(12.dp))
+                }.size(miniW, miniH) // Do not clip a decoder-backed SurfaceView: some devices paint black.
                 else -> Modifier.fillMaxSize()
-            }.then(if (!small && !inPip && onCar) carSwipeDown else Modifier)
+            }.then(if (!layoutSmall && !inPip && onCar) carSwipeDown else Modifier)
             // Smooth mode changes (mini, expand, landscape fill): a scrim over the video
             // fades out. The WebView itself is never made translucent (that drops Chromium
             // off its video overlay path: more GPU, possible black frames) and is resized
             // once, never per frame (that stalls the decoder).
             val scrim = remember { Animatable(0f) }
             var fadeArmed by remember { mutableStateOf(false) }
-            LaunchedEffect(small, hidden, landFill) {
+            LaunchedEffect(layoutSmall, hidden, landFill) {
                 if (!fadeArmed) { fadeArmed = true; return@LaunchedEffect }
                 if (inPip || onCar || projectedToCar) return@LaunchedEffect
+                if (ghost != null) return@LaunchedEffect // the frame animation covers it
                 scrim.snapTo(0.7f)
                 scrim.animateTo(0f, tween(240))
             }
@@ -768,9 +830,27 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                 playerMod.graphicsLayer { alpha = scrim.value }.background(Color.Black),
             )
 
+            ghost?.let { (frame, from, to) ->
+                val r = PlayerTransitionPolicy.lerp(from, to, ghostMove.value)
+                val corner = PlayerTransitionPolicy.cornerDp(ghostToMini, ghostMove.value).dp
+                Box(
+                    Modifier
+                        .offset { IntOffset(r.left.roundToInt(), r.top.roundToInt()) }
+                        .size(with(density) { r.width.toDp() }, with(density) { r.height.toDp() })
+                        .graphicsLayer { alpha = ghostAlpha.value }
+                        .clip(RoundedCornerShape(corner))
+                        .background(Color.Black),
+                ) {
+                    if (frame != null) androidx.compose.foundation.Image(
+                        frame, contentDescription = null, modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    )
+                }
+            }
+
             // Mini player controls (like the YouTube app): play/pause top left, close top right,
             // red progress line at the bottom. Tap to open it again, drag to move it.
-            if (small) {
+            if (layoutSmall) {
                 // Progress: the page reports now and then; move it along in between.
                 var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
                 LaunchedEffect(snap) {
@@ -939,38 +1019,6 @@ fun FeaturesPage() {
         }
     }
 
-    @Composable
-    fun CodecPicker(selected: String, pick: (String) -> Unit) {
-        var open by remember { mutableStateOf(false) }
-        Box {
-            ListItem(
-                headlineContent = { Text("Video format") },
-                supportingContent = {
-                    Text("AV1 uses the least data (less battery on Wi-Fi and mobile data). " +
-                        "H.264 works best everywhere. Applies from the next video.")
-                },
-                trailingContent = {
-                    OutlinedButton(onClick = { open = true }) { Text(VideoCodecPolicy.label(selected) + "  ▾") }
-                },
-                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-            )
-            androidx.compose.material3.DropdownMenu(
-                expanded = open,
-                onDismissRequest = { open = false },
-                modifier = Modifier.align(Alignment.TopEnd),
-            ) {
-                VideoCodecPolicy.options.forEach { option ->
-                    androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(VideoCodecPolicy.label(option)) },
-                        onClick = { open = false; pick(option) },
-                        trailingIcon = if (option == selected) {
-                            { Icon(Icons.Filled.Check, contentDescription = null) }
-                        } else null,
-                    )
-                }
-            }
-        }
-    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -1009,7 +1057,6 @@ fun FeaturesPage() {
                 PlayerPrefsPolicy.captions, f.captions, { o -> o.replaceFirstChar { c -> c.uppercase() } }) { v ->
                 Features.update { it.copy(captions = v) }
             }
-            CodecPicker(f.videoCodec) { v -> Features.update { it.copy(videoCodec = v) } }
             Toggle("Loop video", "Repeats the current video instead of playing the next one.", f.loopVideo) { s, v -> s.copy(loopVideo = v) }
             Toggle("Skip buttons seek 10 seconds", "Next and Previous on Android Auto's player, the notification and headsets jump 10 seconds inside the video instead of changing video.", f.skipSeeks) { s, v -> s.copy(skipSeeks = v) }
             Toggle("Hide comments", "Removes the comments section from video pages.", f.hideComments) { s, v -> s.copy(hideComments = v) }
