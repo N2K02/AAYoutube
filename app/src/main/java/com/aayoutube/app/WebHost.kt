@@ -1762,7 +1762,7 @@ object WebHost {
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
-            AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} path=${uri.path.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
+            AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
             if (scheme != "http" && scheme != "https") return true
             val host = uri.host.orEmpty()
