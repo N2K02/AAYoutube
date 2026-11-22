@@ -14,6 +14,15 @@ class PlaybackHardeningContractTest {
         val source = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(source.contains("s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW"))
         assertFalse(source.contains("s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE"))
+        assertTrue(source.contains("s.allowFileAccess = false"))
+        assertTrue(source.contains("s.allowContentAccess = false"))
+    }
+
+    @Test fun navigationLogsDoNotExposeRawUrls() {
+        val source = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertFalse(source.contains("Navigate \${uri}"))
+        assertFalse(source.contains("for \${request.url}"))
+        assertFalse(source.contains("Refused to open \$url"))
     }
 
     @Test fun failedAndLatePixelCopiesReleaseTheirBitmap() {
