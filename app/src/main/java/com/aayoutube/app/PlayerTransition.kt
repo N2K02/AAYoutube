@@ -63,9 +63,17 @@ internal suspend fun captureWindowRegion(window: Window, rect: android.graphics.
             if (bmp == null) { cont.resume(null); return@suspendCancellableCoroutine }
             runCatching {
                 PixelCopy.request(window, rect, bmp, { result ->
-                    if (cont.isActive) cont.resume(if (result == PixelCopy.SUCCESS) bmp else null)
+                    if (result == PixelCopy.SUCCESS && cont.isActive) {
+                        cont.resume(bmp)
+                    } else {
+                        bmp.recycle()
+                        if (cont.isActive) cont.resume(null)
+                    }
                 }, Handler(Looper.getMainLooper()))
-            }.onFailure { if (cont.isActive) cont.resume(null) }
+            }.onFailure {
+                bmp.recycle()
+                if (cont.isActive) cont.resume(null)
+            }
         }
     }
 }
