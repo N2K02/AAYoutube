@@ -345,8 +345,8 @@ object WebHost {
         // Same WebView settings as AABrowser's browser page.
         @Suppress("DEPRECATION")
         s.databaseEnabled = true
-        s.allowFileAccess = true
-        s.allowContentAccess = true
+        s.allowFileAccess = false
+        s.allowContentAccess = false
         s.setSupportZoom(true)
         s.builtInZoomControls = true
         s.displayZoomControls = false
@@ -808,7 +808,7 @@ object WebHost {
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
         if (uri == null || (scheme != "https" && scheme != "http") || !allowedHost(uri.host)) {
-            AppLog.add("NAV", "Refused to open $url in the player: not a YouTube link")
+            AppLog.add("NAV", "Refused to open external or unsupported player link")
             return
         }
         unfreeze()
@@ -1762,7 +1762,7 @@ object WebHost {
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
-            AppLog.add("NAV", "Navigate ${uri} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
+            AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} path=${uri.path.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
             if (scheme != "http" && scheme != "https") return true
             val host = uri.host.orEmpty()
@@ -1894,7 +1894,7 @@ object WebHost {
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            AppLog.add("NET", "Error ${error.errorCode} ${error.description} for ${request.url} main=${request.isForMainFrame}")
+            AppLog.add("NET", "Error ${error.errorCode} host=${request.url.host.orEmpty()} main=${request.isForMainFrame}")
             if (request.isForMainFrame) offline.value = true
         }
 
