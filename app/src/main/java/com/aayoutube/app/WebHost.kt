@@ -266,6 +266,8 @@ object WebHost {
             uri.userInfo == null && uri.port == -1
     }
 
+    private var bridgeToken = ""
+
     private fun displayId(context: Context): Int? =
         runCatching { context.display?.displayId }.getOrNull()
 
@@ -286,6 +288,7 @@ object WebHost {
         AppLog.add("VIEW", "WebView created display=" + webDisplayId +
             " directCarContext=" + inCarDisplay)
         webGeneration++
+        bridgeToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         // Actual WebView geometry changes are a cheap proxy for potential
         // decoder Surface rebinding. Do not confuse them with Codec2 creation.
@@ -379,7 +382,7 @@ object WebHost {
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(w, true)
 
-        w.addJavascriptInterface(WebBridge(webGeneration), "AAYNative")
+        w.addJavascriptInterface(WebBridge(webGeneration, bridgeToken), "AAYNative")
         w.webViewClient = client
         w.webChromeClient = chrome
     }
@@ -401,8 +404,9 @@ object WebHost {
         registerThermalWatch()
         val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
             .put("thermal", thermalStatus())
-        return "window.__AAY_CFG=" + cfg + ";window.__AAY_CAR=" + (carDisplay || carShown) +
-            ";\n" + source
+        return "if(window.top===window.self)window.__AAY_BRIDGE_TOKEN=" +
+            JSONObject.quote(bridgeToken) + ";window.__AAY_CFG=" + cfg +
+            ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
     }
 
     /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
@@ -1991,61 +1995,73 @@ object WebHost {
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
-class WebBridge(private val generation: Int) {
+class WebBridge(private val generation: Int, private val bridgeToken: String) {
+    private fun authorized(token: String?): Boolean = token == bridgeToken
+
     @JavascriptInterface
-    fun state(json: String) {
+    fun state(json: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsState(json, generation)
     }
 
     /** YouTube's fullscreen / minimise button where the app fills the screen itself. */
     @JavascriptInterface
-    fun fsToggle() {
+    fun fsToggle(token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsFullscreenButton(generation)
     }
 
     @JavascriptInterface
-    fun userPause() {
+    fun userPause(token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsUserPause(generation)
     }
 
     @JavascriptInterface
-    fun account(status: String) {
+    fun account(status: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.reportAccountStatus(status, generation)
     }
 
     /** Real HTMLVideoElement position, sampled only while timed lyrics are displayed. */
     @JavascriptInterface
-    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
     }
 
     /** Aggregated metrics; never URLs, tokens or video IDs. */
     @JavascriptInterface
-    fun perf(payload: String) {
+    fun perf(payload: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsPerformance(payload, generation)
     }
 
     /** Persist only explicit quality menu selections (not YouTube's adaptive downgrades). */
     @JavascriptInterface
-    fun quality(value: String) {
+    fun quality(value: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.requestQualityFromBridge(value, generation)
     }
 
     /** In-player Web Audio equalizer state: off, waiting, active or unsupported. */
     @JavascriptInterface
-    fun eqStatus(status: String) {
+    fun eqStatus(status: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsEqStatus(status, generation)
     }
 
     /** Persist only speeds picked by the user in YouTube's menu. */
     @JavascriptInterface
-    fun speed(rate: Double) {
+    fun speed(rate: Double, token: String?) {
+        if (!authorized(token)) return
         WebHost.requestSpeedFromBridge(rate, generation)
     }
 
     /** True when another app is playing media; also starts the native hold that resumes us later. */
     @JavascriptInterface
-    fun otherMediaHold(): Boolean {
+    fun otherMediaHold(token: String?): Boolean {
+        if (!authorized(token)) return false
         val active = WebHost.otherMediaActive()
         if (active) WebHost.postOtherMediaHold(generation)
         return active
@@ -2053,7 +2069,8 @@ class WebBridge(private val generation: Int) {
 
     /** Swipe down on the playing video. */
     @JavascriptInterface
-    fun mini() {
+    fun mini(token: String?) {
+        if (!authorized(token)) return
         WebHost.requestMiniFromBridge(generation)
     }
 }
