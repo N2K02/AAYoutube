@@ -257,6 +257,15 @@ object WebHost {
 
     internal fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
 
+    /** Validate explicit loads as WebView.loadUrl does not invoke navigation override. */
+    internal fun isSafePageUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        return uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host != null && allowedHost(uri.host) &&
+            uri.userInfo == null && uri.port == -1
+    }
+
     private fun displayId(context: Context): Int? =
         runCatching { context.display?.displayId }.getOrNull()
 
@@ -300,7 +309,7 @@ object WebHost {
         w.resumeTimers()
         web = w
         installScript(w)
-        var url = pendingUrl ?: savedUrl() ?: home()
+        var url = (pendingUrl ?: savedUrl())?.takeIf(::isSafePageUrl) ?: home()
         // Reopening on the video we left: show it paused. Playing on its own is for Android Auto
         // and for videos you pick (those load with aay=1).
         // Only when the phone screen opens it: Android Auto (car display, media player) plays.
@@ -321,12 +330,12 @@ object WebHost {
         if (!Features.current.resumeLast) return null
         val u = webPrefs.getString("lastUrl", null) ?: return null
         val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return null
-        return u.takeIf { uri.scheme == "https" && isYouTubeHost(uri.host) }
+        return u.takeIf { isSafePageUrl(it) && isYouTubeHost(uri.host) }
     }
 
     private fun saveUrl(url: String) {
         val u = Uri.parse(url)
-        if (u.scheme != "https" || !isYouTubeHost(u.host)) return
+        if (!isSafePageUrl(url) || !isYouTubeHost(u.host)) return
         // Without our autoplay flags: opening the app should not start a video on its own.
         val clean = u.buildUpon().clearQuery().apply {
             u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
@@ -807,7 +816,7 @@ object WebHost {
         // shouldOverrideUrlLoading, so check them here: only YouTube/Google pages, over http(s).
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
-        if (uri == null || (scheme != "https" && scheme != "http") || !allowedHost(uri.host)) {
+        if (uri == null || scheme != "https" || !isSafePageUrl(url)) {
             AppLog.add("NAV", "Refused to open external or unsupported player link")
             return
         }
@@ -1362,6 +1371,10 @@ object WebHost {
     }
 
     private fun load(url: String) {
+        if (!isSafePageUrl(url)) {
+            AppLog.add("NAV", "Ignored unsafe direct WebView load")
+            return
+        }
         noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())
         val w = web
         if (w == null) {
