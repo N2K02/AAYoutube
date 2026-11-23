@@ -48,6 +48,6 @@ class AdditionalWebHardeningContractTest {
         assertTrue(js.contains("N.otherMediaHold(BRIDGE_TOKEN)"))
         assertTrue(js.contains("window.__AAY_BROWSE_TOKEN"))
         assertTrue(eq.contains("window.__AAY_BRIDGE_TOKEN"))
-        assertFalse(browse.contains("Ignored a request to open a non-video link: $url"))
+        assertFalse(browse.contains("Ignored a request to open a non-video link: \$url"))
     }
 }
