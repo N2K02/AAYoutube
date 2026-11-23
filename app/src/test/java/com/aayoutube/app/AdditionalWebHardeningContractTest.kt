@@ -36,6 +36,17 @@ class AdditionalWebHardeningContractTest {
         assertTrue(screens.contains("if (!frame.isRecycled) frame.recycle()"))
     }
 
+    @Test fun invalidTokensCannotInvokePrivilegedBridgeActions() {
+        val player = WebBridge(generation = -1, bridgeToken = "valid-token")
+        assertFalse(player.otherMediaHold("wrong-token"))
+        assertFalse(player.otherMediaHold(null))
+        player.userPause("wrong-token")
+        player.fsToggle("wrong-token")
+        player.state("{}", "wrong-token")
+        player.quality("hd1080", "wrong-token")
+        BrowseBridge("valid-token").open("https://m.youtube.com/watch?v=aaaaaaaaaaa", "wrong-token")
+    }
+
     @Test fun bridgeCallbacksRequirePerRendererTokens() {
         val player = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val browse = read("app/src/main/java/com/aayoutube/app/BrowseHost.kt")
