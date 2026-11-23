@@ -37,7 +37,7 @@ function playerPage(options = {}) {
     mockPlayer.getPlaybackQuality = () => current;
     mockPlayer.setCurrentQuality = (q) => { current = q; };
   }
-  let miniRequests = 0;
+  let miniRequests = 0, resizeEvents = 0;
   const styleElements = [];
   const seekBar = {
     contains(target) { return target === this; },
@@ -134,7 +134,7 @@ function playerPage(options = {}) {
       if (!windowCallbacks.has(type)) windowCallbacks.set(type, []);
       windowCallbacks.get(type).push(fn);
     },
-    dispatchEvent() {},
+    dispatchEvent(event) { if (event && event.type === 'resize') resizeEvents++; },
   };
   window.top = window;
   window.self = window;
@@ -181,6 +181,7 @@ function playerPage(options = {}) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
     get miniRequests() { return miniRequests; },
+    get resizeEvents() { return resizeEvents; },
     player: mockPlayer,
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
@@ -1238,6 +1239,25 @@ test('mini player re-fits a video YouTube moved outside the small window', () =>
   p.video.getBoundingClientRect = () => ({ left: 0, top: 132, width: 290, height: 163 });
   p.runIntervals();
   assert.equal(p.classNames.has('aay-video-only'), true, 'small-window layout is reapplied');
+});
+
+test('Next rebinds the small video surface without resetting playback or the WebView', () => {
+  for (const mode of ['mini', 'pip']) {
+    const p = playerPage();
+    p.window.__aay[mode](true);
+    p.flush();
+    const before = p.resizeEvents;
+    p.video.paused = false;
+    p.location.search = '?v=newTrack987';
+    p.location.href = 'https://m.youtube.com/watch?v=newTrack987';
+    p.runIntervals();
+    assert.ok(p.resizeEvents > before, mode + ' track switch re-fits the decoder viewport');
+    assert.equal(p.classNames.has('aay-video-only'), true);
+    assert.equal(p.video.paused, false, 'do not pause or recreate audio to recover the picture');
+    const next = p.resizeEvents;
+    p.runIntervals();
+    assert.equal(p.resizeEvents, next, 'do not repeatedly resize when track and video are unchanged');
+  }
 });
 
 test('phone landscape fills the screen with the video without car behaviour', () => {
