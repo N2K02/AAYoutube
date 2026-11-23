@@ -817,7 +817,7 @@ object WebHost {
 
     fun openUrl(url: String) {
         // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
-        // shouldOverrideUrlLoading, so check them here: only YouTube/Google pages, over http(s).
+        // shouldOverrideUrlLoading, so validate HTTPS and trusted destinations directly.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
         if (uri == null || scheme != "https" || !isSafePageUrl(url)) {
@@ -1781,13 +1781,13 @@ object WebHost {
             val uri = request.url
             AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
-            if (scheme != "http" && scheme != "https") return true
+            if (scheme != "https") return true
             val host = uri.host.orEmpty()
             if (host.equals("youtu.be", true)) {
                 view.loadUrl(normalise(uri.toString()))
                 return true
             }
-            if (!allowedHost(host)) {
+            if (!isSafePageUrl(uri.toString())) {
                 AppLog.add("NAV", "Blocked host $host, opening outside the app=${request.isForMainFrame}")
                 if (request.isForMainFrame) {
                     runCatching {
@@ -1869,7 +1869,7 @@ object WebHost {
                 }
             }
             sameVideoReloadPosition = null
-            AppLog.add("PAGE", "Finished $url")
+            AppLog.add("PAGE", "Finished host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}")
             progress.value = 100
             CookieManager.getInstance().flush()
             canGoBack.value = view.canGoBack()
@@ -1951,7 +1951,7 @@ object WebHost {
     private val chrome = object : WebChromeClient() {
         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
             val cleaned = WebConsolePolicy.clean(m.message()) ?: return true
-            AppLog.add("JS", "${m.messageLevel()} $cleaned (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
+            AppLog.add("JS", "${m.messageLevel()} $cleaned (script:${m.lineNumber()})")
             return true
         }
 
