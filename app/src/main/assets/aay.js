@@ -2088,7 +2088,10 @@
     if (!v) return;
     // Hidden (Home, screen off): Chromium stops decoding frames on purpose. Restarting
     // the picture there would only interrupt background audio every few seconds.
-    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) {
+    // PiP remains visible even when Chromium reports the document hidden
+    // because the Activity is not full-screen. Keep checking its video frames.
+    // Ordinary background playback must remain untouched for battery/audio safety.
+    if (realHidden() && !A.inPip) {
       pipLast = null;
       return;
     }
