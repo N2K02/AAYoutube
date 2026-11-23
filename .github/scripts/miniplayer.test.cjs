@@ -1280,6 +1280,21 @@ test('Next rebinds a replacement video element in mini-player and PiP', () => {
   }
 });
 
+test('PiP Next repairs the picture even if Chromium marks the page hidden', () => {
+  const p = playerPage({ quality: true });
+  let id = '86p7SP34qSc';
+  p.player.getVideoData = () => ({ video_id: id });
+  p.window.__aay.pip(true);
+  p.flush();
+  p.runIntervals();
+  p.setRealHidden(true);
+  id = 'newTrack987';
+  const before = p.resizeEvents;
+  p.runIntervals();
+  assert.ok(p.resizeEvents > before, 'visible PiP cannot lose its surface watchdog');
+  assert.equal(p.video.paused, false);
+});
+
 test('phone landscape fills the screen with the video without car behaviour', () => {
   const p = playerPage({ dom: watchPageDom() });
   p.window.__aay.land(true);
