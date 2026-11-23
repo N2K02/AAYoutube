@@ -11,6 +11,6 @@ internal object WebConsolePolicy {
         if (message.contains("blocked by CORS policy", ignoreCase = true) &&
             listOf("doubleclick.net", "/ptracking", "/pagead/", "googleads.g.doubleclick.net")
                 .any { message.contains(it, ignoreCase = true) }) return null
-        return inlineImage.replace(message, "[INLINE_IMAGE]").take(600)
+        return AppLog.redact(inlineImage.replace(message, "[INLINE_IMAGE]")).take(600)
     }
 }
