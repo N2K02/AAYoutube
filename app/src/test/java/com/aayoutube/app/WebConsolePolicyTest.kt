@@ -19,7 +19,15 @@ class WebConsolePolicyTest {
             "Access to XMLHttpRequest at https://googleads.g.doubleclick.net/pagead/id blocked by CORS policy"
         ))
         val genuine = "Access to XMLHttpRequest at https://m.youtube.com/youtubei/v1/player blocked by CORS policy"
-        assertEquals(genuine, WebConsolePolicy.clean(genuine))
+        assertEquals("Access to XMLHttpRequest at [URL] blocked by CORS policy", WebConsolePolicy.clean(genuine))
+    }
+    @Test fun consoleNeverRetainsSecretsOrPersonalUrls() {
+        val message = "GET https://example.org/private?token=abc123 authorization=secret person@example.com"
+        val redacted = WebConsolePolicy.clean(message)!!
+        assertFalse(redacted.contains("abc123"))
+        assertFalse(redacted.contains("secret"))
+        assertFalse(redacted.contains("person@example.com"))
+        assertTrue(redacted.contains("[URL]"))
     }
     @Test fun preservePlaybackAndNetworkDiagnostics() {
         assertEquals("net::ERR_NAME_NOT_RESOLVED", WebConsolePolicy.clean("net::ERR_NAME_NOT_RESOLVED"))
