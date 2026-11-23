@@ -221,7 +221,8 @@ object BrowseHost {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
-                if (handler == null) view.evaluateJavascript(browseScript(), null)
+                if (handler == null && WebHost.isYouTubeHost(adPageHost))
+                    view.evaluateJavascript(browseScript(), null)
             }
         }
         web = w
