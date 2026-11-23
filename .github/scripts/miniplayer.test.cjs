@@ -77,7 +77,7 @@ function playerPage(options = {}) {
     querySelector(selector) {
       if (selector.includes('ProgressBarDragContainer')) return seekBar;
       if (selector === 'video.html5-main-video' || selector === 'video')
-        return options.noVideo ? null : video;
+        return options.noVideo ? null : activeVideo;
       return dom ? dom.querySelectorAll(selector)[0] || null : null;
     }
     querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
@@ -98,6 +98,7 @@ function playerPage(options = {}) {
   Object.defineProperty(Doc.prototype, 'hidden', { configurable: true, get() { return pageState.hidden; } });
 
   const video = new Media();
+  let activeVideo = video;
   const dom = options.dom ? options.dom(video) : null;
   const document = new Doc();
   document.title = 'Test video - YouTube';
@@ -182,6 +183,7 @@ function playerPage(options = {}) {
     },
     get miniRequests() { return miniRequests; },
     get resizeEvents() { return resizeEvents; },
+    replaceVideo() { activeVideo = new Media(); return activeVideo; },
     player: mockPlayer,
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
@@ -1260,6 +1262,21 @@ test('Next rebinds the small video surface without resetting playback or the Web
     const next = p.resizeEvents;
     p.runIntervals();
     assert.equal(p.resizeEvents, next, 'do not repeatedly resize when track and video are unchanged');
+  }
+});
+
+test('Next rebinds a replacement video element in mini-player and PiP', () => {
+  for (const mode of ['mini', 'pip']) {
+    const p = playerPage();
+    p.window.__aay[mode](true);
+    p.flush();
+    p.runIntervals();
+    const before = p.resizeEvents;
+    const nextVideo = p.replaceVideo();
+    p.runIntervals();
+    assert.ok(p.resizeEvents > before, mode + ' must refresh a replacement decoder element');
+    assert.equal(nextVideo.paused, false, 'new track continues playing without an artificial pause');
+    assert.equal(p.classNames.has('aay-video-only'), true);
   }
 });
 
