@@ -154,6 +154,7 @@
 
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
+  var BRIDGE_TOKEN = window.__AAY_BRIDGE_TOKEN || '';
   var BROWSE = !!window.__AAY_BROWSE;
   // YouTube reads this preference during player creation. Persist it before
   // its scripts run so initial playback need not start at adaptive 144p.
@@ -241,7 +242,7 @@
       var status = signedIn ? 'signed_in' : 'signed_out';
       if (status !== lastAccountReport) {
         lastAccountReport = status;
-        N.account(status);
+        N.account(status, BRIDGE_TOKEN);
       }
     } catch (e) {}
   }
@@ -383,7 +384,7 @@
     bgWatch.wanted = false;
     bgWatch.attempts = 0;
     userPauseEligibleUntil = 0;
-    try { if (N && typeof N.userPause === 'function') N.userPause(); } catch (e) {}
+    try { if (N && typeof N.userPause === 'function') N.userPause(BRIDGE_TOKEN); } catch (e) {}
     console.log('[aay] intentional YouTube player pause');
   }
   try {
@@ -488,7 +489,7 @@
       // Browse page (under the mini player): a video opens in the player, not here.
       if (BROWSE && /\/watch\?|\/shorts\/|\/live\/|youtu\.be\//.test(href)) {
         e.preventDefault(); e.stopImmediatePropagation();
-        try { window.AAYBrowse.open(href); } catch (x) {}
+        try { window.AAYBrowse.open(href, window.__AAY_BROWSE_TOKEN || ''); } catch (x) {}
         return;
       }
       // A video or mix link that YouTube's page ignored (seen with Mix playlists): open it ourselves.
@@ -591,7 +592,7 @@
         return;
       }
       console.log('[aay] player swipe down -> mini');
-      try { if (window.AAYNative) window.AAYNative.mini(); }
+      try { if (window.AAYNative) window.AAYNative.mini(BRIDGE_TOKEN); }
       catch (err) { console.warn('[aay] mini bridge failed', err); }
     }, { capture: true, passive: true });
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
@@ -1124,7 +1125,7 @@
       if (lastSent && lastSent.id) {
         lastSent = { id: '', playing: false, userPaused: false, buffering: false,
           ended: false, queue: [], pos: 0, dur: 0 };
-        N.state(JSON.stringify(lastSent));
+        N.state(JSON.stringify(lastSent), BRIDGE_TOKEN);
       }
       return;
     }
@@ -1154,7 +1155,7 @@
       rate: v.playbackRate || 1,
       next: !!H.nexttrack,
       prev: !!H.previoustrack
-    }));
+    }), BRIDGE_TOKEN);
   }
 
   /* ---------- 6. SponsorBlock ---------- */
@@ -1411,7 +1412,7 @@
       var rate = v.playbackRate;
       if (!isFinite(rate) || Math.abs(rate - (Number(CFG.speed) || 1)) < 0.01) return;
       CFG.speed = rate;
-      try { if (N && typeof N.speed === 'function') N.speed(rate); } catch (err) {}
+      try { if (N && typeof N.speed === 'function') N.speed(rate, BRIDGE_TOKEN); } catch (err) {}
     }, true);
 
     // Double-tap seek with a custom length. At YouTube's own 10 s nothing is intercepted.
@@ -1618,7 +1619,7 @@
     // after Chromium pauses us, so an instant resume would steal focus back.
     if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
     try {
-      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold()) {
+      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold(BRIDGE_TOKEN)) {
         bgWatch.held = true;
         console.log('[aay] another app is playing media: not resuming');
         return;
@@ -1816,7 +1817,7 @@
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }));
+          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
@@ -1851,7 +1852,7 @@
     var id = (pv && pv.video_id) || urlId();
     if (!v || !id || !isFinite(v.currentTime) || isAd()) return;
     N.lyricsTime(id, v.currentTime, !v.paused && !v.ended,
-      v.readyState < 3, v.playbackRate || 1);
+      v.readyState < 3, v.playbackRate || 1, BRIDGE_TOKEN);
   }
   A.lyricsSync = function (on) {
     if (BROWSE) return;
@@ -2249,7 +2250,7 @@
       if (!fsButton(e) || !owned()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (N && typeof N.fsToggle === 'function') N.fsToggle();
+      if (N && typeof N.fsToggle === 'function') N.fsToggle(BRIDGE_TOKEN);
     }, true);
   })();
 
@@ -2648,7 +2649,7 @@
     CFG.preferredQuality = q;
     writeYouTubeQuality(q);
     if (N && typeof N.quality === 'function') { // explicit pick: always persisted natively
-      try { N.quality(q); } catch (e) {}
+      try { N.quality(q, BRIDGE_TOKEN); } catch (e) {}
     }
     // Log every explicit choice, including picking the same resolution again.
     console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
