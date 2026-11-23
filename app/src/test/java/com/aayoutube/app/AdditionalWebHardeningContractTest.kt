@@ -23,6 +23,17 @@ class AdditionalWebHardeningContractTest {
         assertTrue(browse.contains("!WebHost.isSafePageUrl(url) || !isVideo(uri)"))
     }
 
+    @Test fun bothNavigationClientsRequireTrustedHttps() {
+        val player = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        val browse = read("app/src/main/java/com/aayoutube/app/BrowseHost.kt")
+        assertTrue(player.contains("if (scheme != \"https\") return true"))
+        assertTrue(player.contains("if (!isSafePageUrl(uri.toString()))"))
+        assertTrue(browse.contains("if (uri.scheme != \"https\") return true"))
+        assertTrue(browse.contains("return !WebHost.isSafePageUrl(uri.toString())"))
+        assertFalse(player.contains("AppLog.add(\"PAGE\", \"Finished \$url\")"))
+        assertFalse(player.contains("m.sourceId().orEmpty().substringAfterLast"))
+    }
+
     @Test fun browserRendererRestartsAreBounded() {
         val browse = read("app/src/main/java/com/aayoutube/app/BrowseHost.kt")
         assertTrue(browse.contains("rendererCrashCount <= 2"))
