@@ -17,15 +17,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderState
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -175,11 +172,8 @@ private fun EqSlider(
     onChange: (Float) -> Unit,
     steps: Int = 0,
 ) {
-    val sliderState = remember(steps, range.start, range.endInclusive) {
-        SliderState(value = value, steps = steps, valueRange = range)
-    }
-    // Reset/preset changes must update the thumb, not only its description.
-    LaunchedEffect(value) { sliderState.value = value }
+    // Keep the established controlled slider overload for this Material3 version.
+    // Settings updates, presets and Reset flow through value on every recomposition.
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),
@@ -189,8 +183,10 @@ private fun EqSlider(
             modifier = Modifier.width(76.dp),
         )
         Slider(
-            state = sliderState,
+            value = value,
             onValueChange = onChange,
+            valueRange = range,
+            steps = steps,
             modifier = Modifier.weight(1f).semantics {
                 contentDescription = label
                 stateDescription = valueText
