@@ -195,12 +195,12 @@ object BrowseHost {
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
-                if (uri.scheme != "https" && uri.scheme != "http") return true
+                if (uri.scheme != "https") return true
                 if (isVideo(uri)) {
                     openInPlayer(uri.toString())
                     return true
                 }
-                return !WebHost.allowedHost(uri.host)
+                return !WebHost.isSafePageUrl(uri.toString())
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
