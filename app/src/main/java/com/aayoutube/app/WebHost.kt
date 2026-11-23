@@ -1840,14 +1840,15 @@ object WebHost {
             sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
                 incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
                 incomingId to previous.posMs else null
-            AppLog.add("PAGE", "Started $url" +
+            AppLog.add("PAGE", "Started host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}" +
                 if (sameVideoReloadPosition != null) " (same-video position retained)" else "")
             lyricsClock.value = LyricsClock()
             youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
             offline.value = false
             // Older WebViews cannot run a script before the page: inject as early as possible instead.
-            if (scriptHandler == null) view.evaluateJavascript(script(), null)
+            if (scriptHandler == null && isYouTubeHost(runCatching { Uri.parse(url).host }.getOrNull()))
+                view.evaluateJavascript(script(), null)
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
