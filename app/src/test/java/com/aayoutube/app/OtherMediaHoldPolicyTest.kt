@@ -40,7 +40,7 @@ class OtherMediaHoldPolicyTest {
         assertTrue(web.contains("if (otherMediaActive()) startOtherMediaHold(\"native resume\") else cmd(\"play\")"))
         assertTrue(web.contains("fun otherMediaHold(): Boolean"))
         val js = read("app/src/main/assets/aay.js")
-        assertTrue(js.contains("N.otherMediaHold()"))
+        assertTrue(js.contains("N.otherMediaHold(BRIDGE_TOKEN)"))
         assertTrue(js.contains("if (bgWatch.held) return;"))
         assertTrue(js.contains("A.mediaHold = function (on, giveUp)"))
     }
