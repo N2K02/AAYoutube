@@ -34,8 +34,8 @@ class FilledVideoToggleTest {
             guard.contains("if (document.fullscreenElement || document.webkitFullscreenElement) return false;"))
         assertTrue(guard.contains("return !!A.isCar || window.innerWidth > window.innerHeight;"))
         assertTrue("YouTube never sees the press", guard.contains("e.stopImmediatePropagation();"))
-        assertTrue(guard.contains("N.fsToggle()"))
-        assertTrue(host.contains("fun fsToggle() {"))
+        assertTrue(guard.contains("N.fsToggle(BRIDGE_TOKEN)"))
+        assertTrue(host.contains("fun fsToggle(token: String?) {"))
         assertTrue(js.contains("var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini"))
     }
 
