@@ -2092,6 +2092,10 @@
       return;
     }
     refreshSmallVideo(v);
+    // YouTube can toggle our root classes during SPA navigation. Restore CSS
+    // immediately even when the throttled geometry refit is on cooldown.
+    if ((A.isMini || A.inPip) && !document.documentElement.classList.contains('aay-video-only'))
+      document.documentElement.classList.add('aay-video-only');
     if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
     syncPlayerState();
     var i = videoInfo(v);
