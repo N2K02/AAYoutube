@@ -268,12 +268,18 @@ test('active preset ramps reserve headroom before boosts, including rapid retarg
     [1.0, { ...BASE, bands: [0, 0, -0.1, 0, 0] }],
   ];
   let result;
-  const pauses = changes.map(([time, cfg]) => p.offline.suspend(time).then(() => {
-    p.eq(cfg);
-    return p.offline.resume();
-  }));
+  // node-web-audio-api's native renderer can panic when several future
+  // suspend() calls are registered concurrently. Queue one at a time while
+  // retaining all the same sample-accurate transition assertions.
+  const pauses = (async () => {
+    for (const [time, cfg] of changes) {
+      await p.offline.suspend(time);
+      p.eq(cfg);
+      await p.offline.resume();
+    }
+  })();
   result = await p.render();
-  await Promise.all(pauses);
+  await pauses;
   const signal = result.left.subarray(RATE / 2);
   const peak = signal.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
   assert.ok(peak <= 0.981, `no overload without the limiter, peak=${peak}`);
@@ -292,12 +298,15 @@ for (const hz of [60, 1000, 14000]) {
     assert.equal(presets.length, 10);
     const p = page({ hz, amp: 0.95 });
     p.eq({ ...presets[0].params, limiter: false });
-    const changes = presets.slice(1).map((x, i) => p.offline.suspend(0.3 + i * 0.08).then(() => {
-      p.eq({ ...x.params, limiter: false });
-      return p.offline.resume();
-    }));
+    const changes = (async () => {
+      for (const [i, x] of presets.slice(1).entries()) {
+        await p.offline.suspend(0.3 + i * 0.08);
+        p.eq({ ...x.params, limiter: false });
+        await p.offline.resume();
+      }
+    })();
     const result = await p.render();
-    await Promise.all(changes);
+    await changes;
     const peak = result.left.reduce((peak, x) => Math.max(peak, Math.abs(x)), 0);
     assert.ok(peak <= 0.981, `peak=${peak} without limiter repair`);
   });
