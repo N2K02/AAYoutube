@@ -1243,13 +1243,16 @@ test('mini player re-fits a video YouTube moved outside the small window', () =>
 
 test('Next rebinds the small video surface without resetting playback or the WebView', () => {
   for (const mode of ['mini', 'pip']) {
-    const p = playerPage();
+    const p = playerPage({ quality: true });
+    let activeVideoId = '86p7SP34qSc';
+    p.player.getVideoData = () => ({ video_id: activeVideoId });
     p.window.__aay[mode](true);
     p.flush();
     const before = p.resizeEvents;
     p.video.paused = false;
-    p.location.search = '?v=newTrack987';
-    p.location.href = 'https://m.youtube.com/watch?v=newTrack987';
+    // YouTube's media-session Next can replace the current stream before the
+    // browser URL changes; trust the player identity, not the stale route.
+    activeVideoId = 'newTrack987';
     p.runIntervals();
     assert.ok(p.resizeEvents > before, mode + ' track switch re-fits the decoder viewport');
     assert.equal(p.classNames.has('aay-video-only'), true);
