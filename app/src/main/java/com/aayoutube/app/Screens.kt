@@ -785,6 +785,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     ghostAlpha.animateTo(0f, tween(PlayerTransitionPolicy.FADE_MS))
                 } finally {
                     ghost = null
+                    // Compose may still draw the old frame during state disposal.
+                    // Recycle after the transition has left the render pipeline.
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        if (!frame.isRecycled) frame.recycle()
+                    }, 250L)
                 }
             }
 
