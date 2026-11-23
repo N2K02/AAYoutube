@@ -2029,7 +2029,8 @@
   // A new decoder needs the same viewport treatment as the original one.
   function refreshSmallVideo(v) {
     if (!(A.isMini || A.inPip) || !v) return;
-    var id = urlId() || (playerVideo() && playerVideo().video_id) || '';
+    var pv = playerVideo();
+    var id = (pv && pv.video_id) || urlId() || '';
     if (smallVideo === v && smallRoute === id) return;
     smallVideo = v;
     smallRoute = id;
