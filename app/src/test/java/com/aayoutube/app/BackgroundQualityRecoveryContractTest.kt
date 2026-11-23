@@ -37,7 +37,7 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(js.contains("if (!allowPause && !manual && holding() && !this.ended)"))
         assertTrue(js.contains("if (manual) noteManualPause()"))
         assertTrue(js.contains("if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause()"))
-        assertTrue(js.contains("N.userPause()"))
+        assertTrue(js.contains("N.userPause(BRIDGE_TOKEN)"))
         assertTrue(js.contains("case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true"))
         assertTrue(web.contains("fun onJsUserPause(generation: Int)"))
         assertTrue(web.contains("WebHost.onJsUserPause(generation)"))
@@ -137,8 +137,8 @@ class BackgroundQualityRecoveryContractTest {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("internal fun isYouTubeHost(host: String?)"))
         assertTrue(web.contains("YouTubeSavedHostPolicy.matches(host)"))
-        assertTrue(web.contains("uri.scheme == \"https\" && isYouTubeHost(uri.host)"))
-        assertTrue(web.contains("u.scheme != \"https\" || !isYouTubeHost(u.host)"))
+        assertTrue(web.contains("isSafePageUrl(it) && isYouTubeHost(uri.host)"))
+        assertTrue(web.contains("!isSafePageUrl(url) || !isYouTubeHost(u.host)"))
     }
 
     @Test fun delayedLogoutCannotReloadReplacementOrQuitWebView() {
