@@ -1311,6 +1311,7 @@
   }
 
   function onLoaded(v) {
+    refreshSmallVideo(v);
     applySelectedWatchPlayback();
     var id = urlId();
     sbLoad(id);
@@ -1661,6 +1662,7 @@
       bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
     }
     v.__aay = 1;
+    refreshSmallVideo(v);
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
       'durationchange', 'emptied', 'loadstart'].forEach(function (ev) {
       v.addEventListener(ev, function () {
@@ -2022,6 +2024,29 @@
   // plays but the picture is stuck (black), seek to the current position: that restarts the
   // video decoder without stopping the sound for more than a moment.
   var pipTimer = 0, pipLast = null, pipFixAt = 0;
+  var smallVideo = null, smallRoute = '';
+  // YouTube may replace the video/decoder on Next without leaving mini or PiP.
+  // A new decoder needs the same viewport treatment as the original one.
+  function refreshSmallVideo(v) {
+    if (!(A.isMini || A.inPip) || !v) return;
+    var id = urlId() || (playerVideo() && playerVideo().video_id) || '';
+    if (smallVideo === v && smallRoute === id) return;
+    smallVideo = v;
+    smallRoute = id;
+    pipLast = null;
+    pipFixAt = 0;
+    refitAt = 0;
+    liftAncestors(v, true);
+    document.documentElement.classList.add('aay-video-only');
+    // Never recreate the WebView or restart audio during a playlist transition.
+    repaintVideo(v);
+    later(function () {
+      if ((A.isMini || A.inPip) && getVideo() === v) {
+        refitAt = 0;
+        refitSmall(v);
+      }
+    }, 350);
+  }
   function videoInfo(v) {
     var q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
     var r = v.getBoundingClientRect();
@@ -2066,6 +2091,7 @@
       pipLast = null;
       return;
     }
+    refreshSmallVideo(v);
     if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
     syncPlayerState();
     var i = videoInfo(v);
@@ -2313,6 +2339,7 @@
     perf.layoutChanges++;
     var revision = ++layoutRevision;
     liftAncestors(getVideo(), on);
+    if (!on) { smallVideo = null; smallRoute = ''; }
     document.documentElement.classList.toggle('aay-video-only', on);
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
