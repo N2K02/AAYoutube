@@ -41,6 +41,11 @@ object BrowseHost {
     private val main = Handler(Looper.getMainLooper())
     private var lastRendererCrashAt = 0L
     private var rendererCrashCount = 0
+    private var browseToken = ""
+
+    private fun browseScript(): String =
+        "if(window.top===window.self)window.__AAY_BROWSE_TOKEN=" +
+            org.json.JSONObject.quote(browseToken) + ";window.__AAY_BROWSE=true;\n" + WebHost.script()
 
     val created = MutableStateFlow(false)
     val revision = MutableStateFlow(0)
@@ -105,7 +110,7 @@ object BrowseHost {
             handler = null
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 handler = WebViewCompat.addDocumentStartJavaScript(
-                    w, "window.__AAY_BROWSE=true;\n" + WebHost.script(), setOf("https://*.youtube.com"),
+                    w, browseScript(), setOf("https://*.youtube.com"),
                 )
             }
             w.loadUrl(WebHost.home())
@@ -142,6 +147,7 @@ object BrowseHost {
         val c = MutableContextWrapper(app)
         wrapper = c
         val w = WebView(c)
+        browseToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         val s = w.settings
         s.javaScriptEnabled = true
@@ -158,10 +164,10 @@ object BrowseHost {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
-        w.addJavascriptInterface(BrowseBridge(), "AAYBrowse")
+        w.addJavascriptInterface(BrowseBridge(browseToken), "AAYBrowse")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(
-                w, "window.__AAY_BROWSE=true;\n" + WebHost.script(), setOf("https://*.youtube.com"),
+                w, browseScript(), setOf("https://*.youtube.com"),
             )
         }
         w.webViewClient = object : WebViewClient() {
@@ -215,7 +221,7 @@ object BrowseHost {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
-                if (handler == null) view.evaluateJavascript("window.__AAY_BROWSE=true;\n" + WebHost.script(), null)
+                if (handler == null) view.evaluateJavascript(browseScript(), null)
             }
         }
         web = w
@@ -248,7 +254,9 @@ object BrowseHost {
 }
 
 /** What the browse page script can call. */
-class BrowseBridge {
+class BrowseBridge(private val token: String) {
     @JavascriptInterface
-    fun open(url: String) = BrowseHost.openInPlayer(url)
+    fun open(url: String, providedToken: String?) {
+        if (providedToken == token) BrowseHost.openInPlayer(url)
+    }
 }
