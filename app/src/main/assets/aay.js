@@ -2187,11 +2187,11 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
-    // Mini-player is a phone-only concept: even if the phone is in mini mode, the
-    // VirtualDisplay (car screen) should still show the fullscreen car layout so the
-    // head-unit doesn't see a black screen. isMini therefore only blocks the car layout
-    // when there is no active car projection (i.e., phone landscape + mini).
-    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !(A.isMini && !A.isCar) && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    // Mini-player is always a phone-screen concept: the VirtualDisplay (car screen) has its
+    // own WebView (FullscreenCarPresentation) that is never in mini mode. So when the phone
+    // WebView enters mini mode we always suppress the car layout here, even if A.isCar=true,
+    // so the phone doesn't apply fullscreen hit targets while showing the mini player.
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
