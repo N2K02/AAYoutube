@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -100,8 +102,12 @@ internal fun FloatingVideoBar(
         }
     }
     val transportEnabled = transportReady && pending == null
+    // In landscape the pill is horizontal. Constrain its width so the scroll
+    // activates instead of the pill growing wider than the screen and clipping.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
+    val surfaceModifier = if (!vertical) modifier.widthIn(max = screenWidthDp - 16.dp) else modifier
     Surface(
-        modifier = modifier,
+        modifier = surfaceModifier,
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
         contentColor = MaterialTheme.colorScheme.onSurface,
