@@ -426,7 +426,10 @@ fun AppRoot(activity: MainActivity) {
                 WebHost.exitFullscreen()
                 homeHandler.post { WebHost.enterMini() }
             }
-            PlayerNavigationPolicy.Home.Mini -> WebHost.enterMini()
+            // On the phone while AA is active, the WebView is on the car screen — go to background.
+            PlayerNavigationPolicy.Home.Mini ->
+                if (projectedToCar && !onCar) activity.moveTaskToBack(true)
+                else WebHost.enterMini()
             PlayerNavigationPolicy.Home.BrowseHome -> BrowseHost.navigate(WebHost.home())
             PlayerNavigationPolicy.Home.OpenHome -> WebHost.openUrl(WebHost.home())
         }
@@ -450,8 +453,11 @@ fun AppRoot(activity: MainActivity) {
             // Browsing under the mini player (or after closing it). On the car screen stay put.
             PlayerNavigationPolicy.Back.BrowseBack ->
                 if (!BrowseHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
-            // Playing or paused, phone or car: a video shrinks to the mini player.
-            PlayerNavigationPolicy.Back.Mini -> WebHost.enterMini()
+            // Playing or paused on the phone: shrink to mini. But when the WebView is on
+            // the car's VirtualDisplay the phone has nothing to mini-ize — go to background.
+            PlayerNavigationPolicy.Back.Mini ->
+                if (projectedToCar && !onCar) activity.moveTaskToBack(true)
+                else WebHost.enterMini()
             PlayerNavigationPolicy.Back.PageBack ->
                 if (!WebHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
         }
