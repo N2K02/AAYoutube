@@ -561,11 +561,11 @@ fun AppRoot(activity: MainActivity) {
                     onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
                     vertical = ControlsSidePolicy.vertical(phoneLandscape),
-                ) {
+                ) { size ->
                     BarIcon(
                         Icons.Filled.MusicNote,
                         if (canLyrics) { if (lyricsShown) "Hide lyrics" else "Show lyrics" } else "Lyrics unavailable",
-                        BarSize.Phone,
+                        size,
                         onClick = {
                             if (lyricsAvailable) {
                                 lyricsOpenedForVideo = !lyricsOpenedForVideo
@@ -577,14 +577,14 @@ fun AppRoot(activity: MainActivity) {
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
                     if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))
-                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Phone,
+                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), size,
                         onClick = {
                             Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
                             topMenuEpoch++
                         },
                         tint = if (VideoFitPolicy.normalize(flags.videoFit) != "fit") MaterialTheme.colorScheme.primary else null)
                     Box {
-                        BarIcon(Icons.Filled.Settings, "Settings", BarSize.Phone,
+                        BarIcon(Icons.Filled.Settings, "Settings", size,
                             onClick = { tab = Tab.Settings.ordinal })
                         dev.n2k02.updater.N2K02UpdateBadge(
                             updateStatus,
@@ -592,7 +592,7 @@ fun AppRoot(activity: MainActivity) {
                         )
                     }
                     // Quit stops playback, services and the WebViews, then closes AAYoutube.
-                    BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", BarSize.Phone,
+                    BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", size,
                         onClick = { activity.quit() })
                 }
             }

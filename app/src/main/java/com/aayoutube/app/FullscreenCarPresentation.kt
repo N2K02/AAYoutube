@@ -361,7 +361,7 @@ internal class FullscreenCarPresentation(
                     },
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
-                ) {
+                } { size ->
                     if (VideoFitPolicy.buttonShown(
                             filled = !mini && !carWatchPage,
                             playing = playing.playing
@@ -369,14 +369,14 @@ internal class FullscreenCarPresentation(
                     ) BarIcon(
                         Icons.Filled.AspectRatio,
                         VideoFitPolicy.label(flags.videoFit),
-                        BarSize.Car,
+                        size,
                         onClick = {
                             Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
                             controlsVersion++
                         })
                     BarIcon(
                         Icons.Rounded.PowerSettingsNew,
-                        "Quit AAYoutube", BarSize.Car,
+                        "Quit AAYoutube", size,
                         onClick = { onQuit() },
                     )
                 }

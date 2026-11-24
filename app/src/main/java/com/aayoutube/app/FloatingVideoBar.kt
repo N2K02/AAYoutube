@@ -84,7 +84,7 @@ internal fun FloatingVideoBar(
     modifier: Modifier = Modifier,
     car: Boolean = false,
     vertical: Boolean = true,
-    extra: @Composable () -> Unit = {},
+    extra: @Composable (size: BarSize) -> Unit = {},
 ) {
     // In landscape (horizontal pill) use compact icons so all fit without scrolling.
     val size = when {
@@ -146,7 +146,7 @@ internal fun FloatingVideoBar(
                     onNext()
                 }
             }, enabled = transportEnabled)
-            extra()
+            extra(size)
         }
         if (vertical) {
             Column(
