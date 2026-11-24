@@ -361,7 +361,7 @@ internal class FullscreenCarPresentation(
                     },
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
-                } { size ->
+                ) { size ->
                     if (VideoFitPolicy.buttonShown(
                             filled = !mini && !carWatchPage,
                             playing = playing.playing
