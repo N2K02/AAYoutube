@@ -4,9 +4,12 @@ import android.app.Presentation
 import android.content.Context
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.FrameLayout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -40,6 +43,8 @@ internal class FullscreenCarPresentation(
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateController = SavedStateRegistryController.create(this)
     private val hostViewModelStore = ViewModelStore()
+    private val handler = Handler(Looper.getMainLooper())
+
     private var playerFrame: CarFrameLayout? = null
     private var contentRoot: View? = null
     private var isDestroyed = false
