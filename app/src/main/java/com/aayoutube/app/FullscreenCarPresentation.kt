@@ -244,7 +244,7 @@ internal class FullscreenCarPresentation(
                     factory = { ctx ->
                         FrameLayout(ctx).also { frame ->
                             frame.addView(
-                                BrowseHost.attach(projectionContext(ctx)),
+                                BrowseHost.attach(projectionContext(frame)),
                                 FrameLayout.LayoutParams(-1, -1)
                             )
                         }
@@ -322,9 +322,9 @@ internal class FullscreenCarPresentation(
                 key(directSurface.runId) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize().zIndex(45f),
-                        factory = { ctx ->
+                        factory = { _ ->
                             CarDirectSurfaceView(
-                                projectionContext(ctx),
+                                projectionContext(),
                                 carToken,
                                 directSurface.runId,
                             )
