@@ -394,6 +394,8 @@
       if (!allowPause && !manual && holding() && !this.ended) {
         ignored++;
         // YouTube already marked itself paused: resync its UI once the pause is dropped.
+        // Reset the cooldown so syncPlayerState() runs immediately (not up to 12 s later).
+        stateFixAt = 0;
         later(syncPlayerState, 400);
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
@@ -2185,7 +2187,11 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
-    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
+    // Mini-player is a phone-only concept: even if the phone is in mini mode, the
+    // VirtualDisplay (car screen) should still show the fullscreen car layout so the
+    // head-unit doesn't see a black screen. isMini therefore only blocks the car layout
+    // when there is no active car projection (i.e., phone landscape + mini).
+    var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !(A.isMini && !A.isCar) && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
     var guarded;
