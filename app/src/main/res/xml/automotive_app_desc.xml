@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <automotiveApp xmlns:tools="http://schemas.android.com/tools">
     <!-- Legacy parked-only projection plus existing MediaBrowser audio entry.
-         The modern AndroidX CarAppService provides a media template and a
-         NavigationTemplate-based fullscreen surface projection.
-         Template support does not authorize background video recording or tracking. -->
+         The modern AndroidX CarAppService provides a separate, car-safe media
+         template. Template support does not authorize video projection. -->
     <uses name="service" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="projection" tools:ignore="InvalidUsesTagAttribute" />
     <uses name="media" />
     <uses name="template" />
-    <uses name="navigation" tools:ignore="InvalidUsesTagAttribute" />
 </automotiveApp>
