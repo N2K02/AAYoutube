@@ -311,7 +311,7 @@ fun AppRoot(activity: MainActivity) {
         }
         onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
-    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill, projectedToCar)
     // Battery/GPU: a <=60 fps video does not need a 120 Hz screen. While it plays in the
     // full player (or PiP), ask Android for 60 Hz, as the YouTube app does. Browsing,
     // the mini player and Settings keep the normal rate so scrolling stays smooth.
@@ -1558,58 +1558,72 @@ fun InfoPage() {
  */
 @Composable
 private fun NowPlayingOnCarScreen(snap: Snap, modifier: Modifier = Modifier) {
+    // Fill with surface color so it's visually distinct from the grey WebView background.
     Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.background),
+        modifier = modifier.background(MaterialTheme.colorScheme.surface),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(32.dp),
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
         ) {
-            // Car icon
-            Icon(
-                Icons.Filled.OndemandVideo,
-                contentDescription = null,
-                modifier = Modifier.size(56.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                "Playing on Android Auto",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (snap.title.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    snap.title,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(24.dp).fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Filled.OndemandVideo,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                if (snap.artist.isNotBlank()) {
+                Text(
+                    "Playing on Android Auto",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                if (snap.title.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        snap.artist,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
+                        snap.title,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    if (snap.artist.isNotBlank()) {
+                        Text(
+                            snap.artist,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                // Progress bar (only for non-live finite content)
+                if (snap.durMs > 0 && !snap.live) {
+                    val fraction = (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
+                    )
+                } else if (snap.playing) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
                     )
                 }
-            }
-            // Progress bar (only for non-live finite content)
-            if (snap.durMs > 0 && !snap.live) {
-                val fraction = (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f)
-                LinearProgressIndicator(
-                    progress = { fraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-            } else if (snap.buffering || snap.playing) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
             }
         }
     }
