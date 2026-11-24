@@ -20,7 +20,8 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.media.MediaBrowserServiceCompat
 
 /**
- * Android Auto media browser and media session; the WebView runs in a separate process.
+ * Android Auto media browser and media session. The WebView renderer is sandboxed;
+ * the app's media service and WebView host run in the same application process.
  */
 class PlaybackService : MediaBrowserServiceCompat() {
     private lateinit var session: MediaSessionCompat
@@ -709,6 +710,14 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 AppLog.add("MEDIA", "Foreground media service started; playing=${snapshot.playing}")
             }.onFailure {
                 AppLog.add("MEDIA", "Foreground start failed: ${it.javaClass.simpleName}: ${it.message}")
+                // Never leave a started service running without the foreground
+                // priority Android requires for background media playback.
+                // Pause the WebView and release any playback CPU wake lock.
+                runCatching { WebHost.cmd("pause") }
+                updatePlaybackWakeLock(false)
+                handler.removeCallbacks(healthTick)
+                stopSelf(startId)
+                return START_NOT_STICKY
             }
         }
         when (intent?.action) {

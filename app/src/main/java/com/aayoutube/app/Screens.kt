@@ -311,7 +311,7 @@ fun AppRoot(activity: MainActivity) {
         }
         onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
-    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill)
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill, projectedToCar)
     // Battery/GPU: a <=60 fps video does not need a 120 Hz screen. While it plays in the
     // full player (or PiP), ask Android for 60 Hz, as the YouTube app does. Browsing,
     // the mini player and Settings keep the normal rate so scrolling stays smooth.
@@ -426,7 +426,10 @@ fun AppRoot(activity: MainActivity) {
                 WebHost.exitFullscreen()
                 homeHandler.post { WebHost.enterMini() }
             }
-            PlayerNavigationPolicy.Home.Mini -> WebHost.enterMini()
+            // On the phone while AA is active, the WebView is on the car screen — go to background.
+            PlayerNavigationPolicy.Home.Mini ->
+                if (projectedToCar && !onCar) activity.moveTaskToBack(true)
+                else WebHost.enterMini()
             PlayerNavigationPolicy.Home.BrowseHome -> BrowseHost.navigate(WebHost.home())
             PlayerNavigationPolicy.Home.OpenHome -> WebHost.openUrl(WebHost.home())
         }
@@ -450,8 +453,11 @@ fun AppRoot(activity: MainActivity) {
             // Browsing under the mini player (or after closing it). On the car screen stay put.
             PlayerNavigationPolicy.Back.BrowseBack ->
                 if (!BrowseHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
-            // Playing or paused, phone or car: a video shrinks to the mini player.
-            PlayerNavigationPolicy.Back.Mini -> WebHost.enterMini()
+            // Playing or paused on the phone: shrink to mini. But when the WebView is on
+            // the car's VirtualDisplay the phone has nothing to mini-ize — go to background.
+            PlayerNavigationPolicy.Back.Mini ->
+                if (projectedToCar && !onCar) activity.moveTaskToBack(true)
+                else WebHost.enterMini()
             PlayerNavigationPolicy.Back.PageBack ->
                 if (!WebHost.goBack() && !WebHost.carDisplay) activity.moveTaskToBack(true)
         }
@@ -561,11 +567,11 @@ fun AppRoot(activity: MainActivity) {
                     onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
                     vertical = ControlsSidePolicy.vertical(phoneLandscape),
-                ) {
+                ) { size ->
                     BarIcon(
                         Icons.Filled.MusicNote,
                         if (canLyrics) { if (lyricsShown) "Hide lyrics" else "Show lyrics" } else "Lyrics unavailable",
-                        BarSize.Phone,
+                        size,
                         onClick = {
                             if (lyricsAvailable) {
                                 lyricsOpenedForVideo = !lyricsOpenedForVideo
@@ -577,14 +583,14 @@ fun AppRoot(activity: MainActivity) {
                         tint = if (canLyrics && lyricsShown) MaterialTheme.colorScheme.primary else null,
                     )
                     if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))
-                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Phone,
+                    BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), size,
                         onClick = {
                             Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
                             topMenuEpoch++
                         },
                         tint = if (VideoFitPolicy.normalize(flags.videoFit) != "fit") MaterialTheme.colorScheme.primary else null)
                     Box {
-                        BarIcon(Icons.Filled.Settings, "Settings", BarSize.Phone,
+                        BarIcon(Icons.Filled.Settings, "Settings", size,
                             onClick = { tab = Tab.Settings.ordinal })
                         dev.n2k02.updater.N2K02UpdateBadge(
                             updateStatus,
@@ -592,7 +598,7 @@ fun AppRoot(activity: MainActivity) {
                         )
                     }
                     // Quit stops playback, services and the WebViews, then closes AAYoutube.
-                    BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", BarSize.Phone,
+                    BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", size,
                         onClick = { activity.quit() })
                 }
             }
@@ -785,6 +791,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     ghostAlpha.animateTo(0f, tween(PlayerTransitionPolicy.FADE_MS))
                 } finally {
                     ghost = null
+                    // Compose may still draw the old frame during state disposal.
+                    // Recycle after the transition has left the render pipeline.
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        if (!frame.isRecycled) frame.recycle()
+                    }, 250L)
                 }
             }
 
@@ -824,6 +835,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     },
                     onRelease = { WebHost.detach(it) },
                 )
+            } else {
+                // WebView is on the car's VirtualDisplay — show a "Now playing" card
+                // so the phone screen doesn't look broken.
+                NowPlayingOnCarScreen(snap = snap, modifier = playerMod)
             }
 
             if (scrim.value > 0f && !onCar) Box(
@@ -1540,6 +1555,83 @@ fun InfoPage() {
             }
         }
 
+    }
+}
+
+/**
+ * Shown on the phone while the video is playing on Android Auto's VirtualDisplay.
+ * The WebView surface belongs to the car screen; this keeps the phone from looking broken.
+ */
+@Composable
+private fun NowPlayingOnCarScreen(snap: Snap, modifier: Modifier = Modifier) {
+    // Fill with surface color so it's visually distinct from the grey WebView background.
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(24.dp).fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Filled.OndemandVideo,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                Text(
+                    "Playing on Android Auto",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                if (snap.title.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        snap.title,
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    if (snap.artist.isNotBlank()) {
+                        Text(
+                            snap.artist,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                // Progress bar (only for non-live finite content)
+                if (snap.durMs > 0 && !snap.live) {
+                    val fraction = (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
+                    )
+                } else if (snap.playing) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
+                    )
+                }
+            }
+        }
     }
 }
 

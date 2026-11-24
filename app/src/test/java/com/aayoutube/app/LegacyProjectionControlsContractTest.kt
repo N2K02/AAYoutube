@@ -67,7 +67,7 @@ class LegacyProjectionControlsContractTest {
         assertFalse("icons only", bar.contains("Text("))
         for (d in listOf("\"Back\"", "\"YouTube home\"", "\"Pause\"", "\"Play\"", "\"Previous video\"", "\"Next video\""))
             assertTrue("accessible description $d", bar.contains(d))
-        assertTrue(bar.contains("val Car = BarSize(button = 52.dp, icon = 26.dp)"))
+        assertTrue(bar.contains("val Car = BarSize(button = 52.dp, icon = 28.dp)"))
         assertTrue(bar.contains("vertical: Boolean = true"))
         val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
         val watch = phone.substringAfter("// App-owned watch header overlays the WebView").substringBefore("if (lyricsOnScreen) {")

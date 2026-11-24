@@ -17,10 +17,11 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,7 +44,10 @@ internal fun EqualizerSheet(onDismiss: () -> Unit) {
     val fallback = webAudio == WebAudioEqState.UNSUPPORTED
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = rememberBottomSheetState(
+            initialValue = SheetValue.Hidden,
+            enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
+        ),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(
             topStart = 32.dp, topEnd = 32.dp),
     ) {
@@ -168,6 +172,8 @@ private fun EqSlider(
     onChange: (Float) -> Unit,
     steps: Int = 0,
 ) {
+    // Keep the established controlled slider overload for this Material3 version.
+    // Settings updates, presets and Reset flow through value on every recomposition.
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth(),

@@ -4,10 +4,10 @@ import android.os.Bundle
 import android.os.SystemClock
 
 /**
- * Messages between the two processes.
+ * Messenger messages between the media service and the WebView host (same app process).
  *
- * - media process (PlaybackService): Android Auto, notification, media session. No WebView.
- * - web process (WebHostService + MainActivity): the WebView and the screens.
+ * - PlaybackService owns Android Auto, notification and media session.
+ * - WebHostService and MainActivity own the WebView and screens.
  *
  * Everything crossing the boundary is a small Bundle, sent without waiting for an answer, so
  * neither side can ever block on the other.

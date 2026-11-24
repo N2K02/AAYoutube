@@ -28,7 +28,7 @@ class PlaybackQualityAndTransitionTest {
         assertTrue(flags.contains("qualityPolicyV3"))
         assertTrue(flags.contains("val lowQualityInBackground: Boolean = true"))
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("fun quality(value: String)"))
+        assertTrue(web.contains("fun quality(value: String, token: String?)"))
         assertTrue(web.contains("generation != webGeneration"))
         assertTrue(web.contains("Features.update { it.copy(preferredQuality = quality) }"))
     }

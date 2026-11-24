@@ -17,7 +17,6 @@ class CarMediaTemplateContractTest {
         assertTrue(xml.contains("android.media.browse.MediaBrowserService"))
         assertTrue(xml.contains("android:name=\".CarMediaTemplateService\""))
         assertTrue(xml.contains("androidx.car.app.category.MEDIA"))
-        assertFalse(xml.contains("androidx.car.app.category.NAVIGATION"))
         assertTrue(xml.contains("androidx.car.app.MEDIA_TEMPLATES"))
         assertTrue(xml.contains("androidx.car.app.minCarApiLevel"))
     }

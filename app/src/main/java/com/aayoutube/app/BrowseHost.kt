@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -15,6 +16,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebSettings
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
@@ -37,6 +39,13 @@ object BrowseHost {
     private var wrapper: MutableContextWrapper? = null
     private var handler: ScriptHandler? = null
     private val main = Handler(Looper.getMainLooper())
+    private var lastRendererCrashAt = 0L
+    private var rendererCrashCount = 0
+    private var browseToken = ""
+
+    private fun browseScript(): String =
+        "if(window.top===window.self)window.__AAY_BROWSE_TOKEN=" +
+            org.json.JSONObject.quote(browseToken) + ";window.__AAY_BROWSE=true;\n" + WebHost.script()
 
     val created = MutableStateFlow(false)
     val revision = MutableStateFlow(0)
@@ -80,6 +89,8 @@ object BrowseHost {
         previous?.destroy()
         wrapper = null
         pendingUrl = null
+        lastRendererCrashAt = 0L
+        rendererCrashCount = 0
         created.value = false
         revision.value++
     }
@@ -99,7 +110,7 @@ object BrowseHost {
             handler = null
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 handler = WebViewCompat.addDocumentStartJavaScript(
-                    w, "window.__AAY_BROWSE=true;\n" + WebHost.script(), setOf("https://*.youtube.com"),
+                    w, browseScript(), setOf("https://*.youtube.com"),
                 )
             }
             w.loadUrl(WebHost.home())
@@ -111,6 +122,7 @@ object BrowseHost {
 
     /** Called when the mini player opens: start where the user came from. */
     fun navigate(url: String) {
+        if (!WebHost.isSafePageUrl(url)) return
         if (web == null) {
             pendingUrl = url
             created.value = true
@@ -120,6 +132,7 @@ object BrowseHost {
     }
 
     fun showFrom(url: String) {
+        if (!WebHost.isSafePageUrl(url)) return
         val w = web
         if (w == null) {
             pendingUrl = url
@@ -134,6 +147,7 @@ object BrowseHost {
         val c = MutableContextWrapper(app)
         wrapper = c
         val w = WebView(c)
+        browseToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         val s = w.settings
         s.javaScriptEnabled = true
@@ -143,16 +157,17 @@ object BrowseHost {
         s.setSupportMultipleWindows(false)
         s.allowFileAccess = false
         s.allowContentAccess = false
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.textZoom = Features.current.pageZoom
         s.userAgentString = WebHost.userAgent(Features.current.desktopSite)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
-        w.addJavascriptInterface(BrowseBridge(), "AAYBrowse")
+        w.addJavascriptInterface(BrowseBridge(browseToken), "AAYBrowse")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(
-                w, "window.__AAY_BROWSE=true;\n" + WebHost.script(), setOf("https://*.youtube.com"),
+                w, browseScript(), setOf("https://*.youtube.com"),
             )
         }
         w.webViewClient = object : WebViewClient() {
@@ -160,29 +175,32 @@ object BrowseHost {
                 view: WebView, detail: android.webkit.RenderProcessGoneDetail
             ): Boolean {
                 if (web !== view) return true
-                val address = view.url?.takeIf {
-                    runCatching { WebHost.allowedHost(Uri.parse(it).host) }.getOrDefault(false)
-                }
-                AppLog.add("CRASH", "Browse renderer gone: crashed=${detail.didCrash()}")
+                val now = SystemClock.elapsedRealtime()
+                rendererCrashCount = if (now - lastRendererCrashAt <= 15_000L) rendererCrashCount + 1 else 1
+                lastRendererCrashAt = now
+                val retry = rendererCrashCount <= 2
+                val address = view.url?.takeIf(WebHost::isSafePageUrl)
+                AppLog.add("CRASH", "Browse renderer gone: crashed=${detail.didCrash()} count=$rendererCrashCount retry=$retry")
                 (view.parent as? ViewGroup)?.removeView(view)
                 runCatching { handler?.remove() }
                 handler = null
                 runCatching { view.destroy() }
                 web = null
                 wrapper = null
-                pendingUrl = address ?: WebHost.home()
+                pendingUrl = if (retry) address ?: WebHost.home() else null
+                created.value = retry
                 revision.value++
                 return true
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
-                if (uri.scheme != "https" && uri.scheme != "http") return true
+                if (uri.scheme != "https") return true
                 if (isVideo(uri)) {
                     openInPlayer(uri.toString())
                     return true
                 }
-                return !WebHost.allowedHost(uri.host)
+                return !WebHost.isSafePageUrl(uri.toString())
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -203,11 +221,12 @@ object BrowseHost {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 adPageHost = runCatching { Uri.parse(url).host }.getOrNull()
-                if (handler == null) view.evaluateJavascript("window.__AAY_BROWSE=true;\n" + WebHost.script(), null)
+                if (handler == null && WebHost.isYouTubeHost(adPageHost))
+                    view.evaluateJavascript(browseScript(), null)
             }
         }
         web = w
-        w.loadUrl(pendingUrl ?: WebHost.home())
+        w.loadUrl(pendingUrl?.takeIf(WebHost::isSafePageUrl) ?: WebHost.home())
         pendingUrl = null
         return w
     }
@@ -224,19 +243,21 @@ object BrowseHost {
     fun openInPlayer(url: String) {
         // Also called by the page script (AAYBrowse.open): accept only YouTube video links.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
-        if (uri == null || !isVideo(uri)) {
-            AppLog.add("NAV", "Ignored a request to open a non-video link: $url")
+        if (uri == null || !WebHost.isSafePageUrl(url) || !isVideo(uri)) {
+            AppLog.add("NAV", "Ignored a request to open an unsafe or non-video link")
             return
         }
         main.post {
-            AppLog.add("NAV", "Browse page opened a video: $url")
+            AppLog.add("NAV", "Browse page opened a video")
             WebHost.openUrl(url)
         }
     }
 }
 
 /** What the browse page script can call. */
-class BrowseBridge {
+class BrowseBridge(private val token: String) {
     @JavascriptInterface
-    fun open(url: String) = BrowseHost.openInPlayer(url)
+    fun open(url: String, providedToken: String?) {
+        if (providedToken == token) BrowseHost.openInPlayer(url)
+    }
 }

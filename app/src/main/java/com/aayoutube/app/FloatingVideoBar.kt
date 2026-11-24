@@ -1,7 +1,6 @@
 package com.aayoutube.app
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
@@ -14,8 +13,10 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -35,8 +36,10 @@ import androidx.compose.ui.unit.dp
 /** Size of the small floating video-controls rail; [car] uses bigger touch targets. */
 internal data class BarSize(val button: Dp, val icon: Dp) {
     companion object {
-        val Phone = BarSize(button = 44.dp, icon = 22.dp)
-        val Car = BarSize(button = 52.dp, icon = 26.dp)
+        val Phone = BarSize(button = 44.dp, icon = 24.dp)
+        /** Compact variant for the horizontal pill so all icons fit without scrolling. */
+        val PhoneCompact = BarSize(button = 36.dp, icon = 20.dp)
+        val Car = BarSize(button = 52.dp, icon = 28.dp)
         fun of(car: Boolean) = if (car) Car else Phone
     }
 }
@@ -81,9 +84,14 @@ internal fun FloatingVideoBar(
     modifier: Modifier = Modifier,
     car: Boolean = false,
     vertical: Boolean = true,
-    extra: @Composable () -> Unit = {},
+    extra: @Composable (size: BarSize) -> Unit = {},
 ) {
-    val size = BarSize.of(car)
+    // In landscape (horizontal pill) use compact icons so all fit without scrolling.
+    val size = when {
+        car -> BarSize.Car
+        !vertical -> BarSize.PhoneCompact
+        else -> BarSize.Phone
+    }
     var pending by remember { mutableStateOf<OverlayTransportLock?>(null) }
     // Ignore duplicate taps for all three transport buttons while the page
     // catches up. Back/Home/settings are deliberately not blocked.
@@ -108,15 +116,24 @@ internal fun FloatingVideoBar(
         val icons: @Composable () -> Unit = {
             BarIcon(Icons.AutoMirrored.Filled.ArrowBack, "Back", size, onBack)
             BarIcon(Icons.Filled.Home, "YouTube home", size, onHome)
-            BarIcon(
-                if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                if (playing) "Pause" else "Play", size, onClick = {
+            // Play/Pause uses a filled tonal container to stand out as the primary action.
+            FilledTonalIconButton(
+                onClick = {
                     if (transportEnabled) {
                         pending = OverlayTransportLock(if (playing) "pause" else "play", playbackId, playing)
                         onPlayPause()
                     }
-                }, enabled = transportEnabled,
-            )
+                },
+                enabled = transportEnabled,
+                modifier = Modifier.size(size.button),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(),
+            ) {
+                Icon(
+                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (playing) "Pause" else "Play",
+                    modifier = Modifier.size(size.icon),
+                )
+            }
             BarIcon(Icons.Filled.SkipPrevious, "Previous video", size, onClick = {
                 if (transportEnabled) {
                     pending = OverlayTransportLock("prev", playbackId, playing)
@@ -129,18 +146,20 @@ internal fun FloatingVideoBar(
                     onNext()
                 }
             }, enabled = transportEnabled)
-            extra()
+            extra(size)
         }
         if (vertical) {
             Column(
-                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { icons() }
         } else {
+            // Horizontal rail (landscape). Compact icon size ensures all buttons
+            // fit in one row without scrolling (9 × 36dp = 324dp ≤ 360dp min width).
             Row(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) { icons() }
         }
@@ -156,10 +175,12 @@ internal fun BarIcon(
     enabled: Boolean = true,
     tint: Color? = null,
 ) {
+    val resolvedTint = when {
+        !enabled -> (tint ?: MaterialTheme.colorScheme.onSurface).copy(alpha = 0.38f)
+        tint != null -> tint
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(size.button)) {
-        Box(contentAlignment = Alignment.Center) {
-            if (tint != null) Icon(image, contentDescription = description, tint = tint, modifier = Modifier.size(size.icon))
-            else Icon(image, contentDescription = description, modifier = Modifier.size(size.icon))
-        }
+        Icon(image, contentDescription = description, tint = resolvedTint, modifier = Modifier.size(size.icon))
     }
 }

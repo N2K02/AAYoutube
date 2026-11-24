@@ -37,7 +37,7 @@ function playerPage(options = {}) {
     mockPlayer.getPlaybackQuality = () => current;
     mockPlayer.setCurrentQuality = (q) => { current = q; };
   }
-  let miniRequests = 0;
+  let miniRequests = 0, resizeEvents = 0;
   const styleElements = [];
   const seekBar = {
     contains(target) { return target === this; },
@@ -77,7 +77,7 @@ function playerPage(options = {}) {
     querySelector(selector) {
       if (selector.includes('ProgressBarDragContainer')) return seekBar;
       if (selector === 'video.html5-main-video' || selector === 'video')
-        return options.noVideo ? null : video;
+        return options.noVideo ? null : activeVideo;
       return dom ? dom.querySelectorAll(selector)[0] || null : null;
     }
     querySelectorAll(selector) { return dom ? dom.querySelectorAll(selector) : []; }
@@ -98,6 +98,7 @@ function playerPage(options = {}) {
   Object.defineProperty(Doc.prototype, 'hidden', { configurable: true, get() { return pageState.hidden; } });
 
   const video = new Media();
+  let activeVideo = video;
   const dom = options.dom ? options.dom(video) : null;
   const document = new Doc();
   document.title = 'Test video - YouTube';
@@ -134,7 +135,7 @@ function playerPage(options = {}) {
       if (!windowCallbacks.has(type)) windowCallbacks.set(type, []);
       windowCallbacks.get(type).push(fn);
     },
-    dispatchEvent() {},
+    dispatchEvent(event) { if (event && event.type === 'resize') resizeEvents++; },
   };
   window.top = window;
   window.self = window;
@@ -181,6 +182,8 @@ function playerPage(options = {}) {
       for (const fn of windowCallbacks.get(type) || []) fn(event);
     },
     get miniRequests() { return miniRequests; },
+    get resizeEvents() { return resizeEvents; },
+    replaceVideo() { activeVideo = new Media(); return activeVideo; },
     player: mockPlayer,
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
@@ -1238,6 +1241,58 @@ test('mini player re-fits a video YouTube moved outside the small window', () =>
   p.video.getBoundingClientRect = () => ({ left: 0, top: 132, width: 290, height: 163 });
   p.runIntervals();
   assert.equal(p.classNames.has('aay-video-only'), true, 'small-window layout is reapplied');
+});
+
+test('Next rebinds the small video surface without resetting playback or the WebView', () => {
+  for (const mode of ['mini', 'pip']) {
+    const p = playerPage({ quality: true });
+    let activeVideoId = '86p7SP34qSc';
+    p.player.getVideoData = () => ({ video_id: activeVideoId });
+    p.window.__aay[mode](true);
+    p.flush();
+    const before = p.resizeEvents;
+    p.video.paused = false;
+    // YouTube's media-session Next can replace the current stream before the
+    // browser URL changes; trust the player identity, not the stale route.
+    activeVideoId = 'newTrack987';
+    p.runIntervals();
+    assert.ok(p.resizeEvents > before, mode + ' track switch re-fits the decoder viewport');
+    assert.equal(p.classNames.has('aay-video-only'), true);
+    assert.equal(p.video.paused, false, 'do not pause or recreate audio to recover the picture');
+    const next = p.resizeEvents;
+    p.runIntervals();
+    assert.equal(p.resizeEvents, next, 'do not repeatedly resize when track and video are unchanged');
+  }
+});
+
+test('Next rebinds a replacement video element in mini-player and PiP', () => {
+  for (const mode of ['mini', 'pip']) {
+    const p = playerPage();
+    p.window.__aay[mode](true);
+    p.flush();
+    p.runIntervals();
+    const before = p.resizeEvents;
+    const nextVideo = p.replaceVideo();
+    p.runIntervals();
+    assert.ok(p.resizeEvents > before, mode + ' must refresh a replacement decoder element');
+    assert.equal(nextVideo.paused, false, 'new track continues playing without an artificial pause');
+    assert.equal(p.classNames.has('aay-video-only'), true);
+  }
+});
+
+test('PiP Next repairs the picture even if Chromium marks the page hidden', () => {
+  const p = playerPage({ quality: true });
+  let id = '86p7SP34qSc';
+  p.player.getVideoData = () => ({ video_id: id });
+  p.window.__aay.pip(true);
+  p.flush();
+  p.runIntervals();
+  p.setRealHidden(true);
+  id = 'newTrack987';
+  const before = p.resizeEvents;
+  p.runIntervals();
+  assert.ok(p.resizeEvents > before, 'visible PiP cannot lose its surface watchdog');
+  assert.equal(p.video.paused, false);
 });
 
 test('phone landscape fills the screen with the video without car behaviour', () => {

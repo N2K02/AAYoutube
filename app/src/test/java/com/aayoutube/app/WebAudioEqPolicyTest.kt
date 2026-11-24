@@ -206,7 +206,7 @@ class WebAudioEqPolicyTest {
         assertTrue(js.contains("last[0] === v"))
         // Mono YouTube streams must reach both ears (the splitter does not upmix).
         assertTrue(js.contains("g.input.channelCountMode = 'explicit'"))
-        assertTrue(js.contains("N.eqStatus(msg)"))
+        assertTrue(js.contains("N.eqStatus(msg, window.__AAY_BRIDGE_TOKEN || '')"))
     }
 
     @Test fun hostInjectsGraphPushesSettingsAndGatesNativeEffects() {
@@ -217,7 +217,7 @@ class WebAudioEqPolicyTest {
         // Settings come only from live pushes, so a reload can never re-route with stale state.
         assertFalse(host.contains("window.__AAY_EQ="))
         assertFalse(src("app/src/main/assets/aay_eq.js").contains("window.__AAY_EQ"))
-        assertTrue(host.contains("fun eqStatus(status: String)"))
+        assertTrue(host.contains("fun eqStatus(status: String, token: String?)"))
         assertTrue(host.contains("window.__aay.eq(\${AAYSoundFx.webAudioJson()})"))
         assertTrue(fx.contains("WebHost.applyEq(WebAudioEqPolicy.params(safe).toJson())"))
         assertTrue(fx.contains("WebAudioEqPolicy.releaseNeedsReload(before, safe, _webAudio.value)"))

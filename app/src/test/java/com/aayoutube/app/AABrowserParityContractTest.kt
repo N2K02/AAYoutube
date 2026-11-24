@@ -4,7 +4,7 @@ import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Details taken from fcaronte/AABrowser (MainCarActivity, BrowserScreen, ForegroundService). */
+/** AABrowser compatibility checks with intentional WebView security hardening. */
 class AABrowserParityContractTest {
     private fun src(name: String): String =
         listOf(File("app/src/main/java/com/aayoutube/app/$name"), File("../app/src/main/java/com/aayoutube/app/$name"))
@@ -14,9 +14,9 @@ class AABrowserParityContractTest {
     @Test fun webViewSettingsMatchAABrowser() {
         val configure = host.substringAfter("private fun configure(w: WebView) {").substringBefore("internal fun userAgent")
         for (line in listOf(
-            "s.databaseEnabled = true", "s.allowFileAccess = true", "s.allowContentAccess = true",
+            "s.databaseEnabled = true", "s.allowFileAccess = false", "s.allowContentAccess = false",
             "s.setSupportZoom(true)", "s.builtInZoomControls = true", "s.displayZoomControls = false",
-            "s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE",
+            "s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW",
             "w.isLongClickable = true", "w.isClickable = true", "w.isFocusableInTouchMode = true",
         )) assertTrue(line, configure.contains(line))
     }

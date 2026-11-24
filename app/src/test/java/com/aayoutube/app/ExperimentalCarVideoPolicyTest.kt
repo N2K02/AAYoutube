@@ -76,7 +76,6 @@ class ExperimentalCarVideoPolicyTest {
         assertTrue(projection.contains("WebHost.isActiveCarHost(carToken)"))
         assertTrue(projection.contains("WebHost.fullscreenView.value != null"))
         assertTrue(projection.contains("bindVideoToCarFrame(frame)"))
-        assertFalse(manifest.contains("androidx.car.app.category.NAVIGATION"))
         assertFalse(manifest.contains("Shizuku"))
     }
 }

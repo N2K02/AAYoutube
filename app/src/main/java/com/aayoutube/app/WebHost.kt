@@ -257,6 +257,17 @@ object WebHost {
 
     internal fun home() = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
 
+    /** Validate explicit loads as WebView.loadUrl does not invoke navigation override. */
+    internal fun isSafePageUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        return uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host != null && allowedHost(uri.host) &&
+            uri.userInfo == null && uri.port == -1
+    }
+
+    private var bridgeToken = ""
+
     private fun displayId(context: Context): Int? =
         runCatching { context.display?.displayId }.getOrNull()
 
@@ -277,6 +288,7 @@ object WebHost {
         AppLog.add("VIEW", "WebView created display=" + webDisplayId +
             " directCarContext=" + inCarDisplay)
         webGeneration++
+        bridgeToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         // Actual WebView geometry changes are a cheap proxy for potential
         // decoder Surface rebinding. Do not confuse them with Codec2 creation.
@@ -300,7 +312,7 @@ object WebHost {
         w.resumeTimers()
         web = w
         installScript(w)
-        var url = pendingUrl ?: savedUrl() ?: home()
+        var url = (pendingUrl ?: savedUrl())?.takeIf(::isSafePageUrl) ?: home()
         // Reopening on the video we left: show it paused. Playing on its own is for Android Auto
         // and for videos you pick (those load with aay=1).
         // Only when the phone screen opens it: Android Auto (car display, media player) plays.
@@ -321,12 +333,12 @@ object WebHost {
         if (!Features.current.resumeLast) return null
         val u = webPrefs.getString("lastUrl", null) ?: return null
         val uri = runCatching { Uri.parse(u) }.getOrNull() ?: return null
-        return u.takeIf { uri.scheme == "https" && isYouTubeHost(uri.host) }
+        return u.takeIf { isSafePageUrl(it) && isYouTubeHost(uri.host) }
     }
 
     private fun saveUrl(url: String) {
         val u = Uri.parse(url)
-        if (u.scheme != "https" || !isYouTubeHost(u.host)) return
+        if (!isSafePageUrl(url) || !isYouTubeHost(u.host)) return
         // Without our autoplay flags: opening the app should not start a video on its own.
         val clean = u.buildUpon().clearQuery().apply {
             u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
@@ -345,14 +357,15 @@ object WebHost {
         // Same WebView settings as AABrowser's browser page.
         @Suppress("DEPRECATION")
         s.databaseEnabled = true
-        s.allowFileAccess = true
-        s.allowContentAccess = true
+        s.allowFileAccess = false
+        s.allowContentAccess = false
         s.setSupportZoom(true)
         s.builtInZoomControls = true
         s.displayZoomControls = false
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        // Refuse HTTP subresources on authenticated HTTPS pages.
+        s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         w.isFocusable = true
         w.isFocusableInTouchMode = true
         w.isClickable = true
@@ -369,7 +382,7 @@ object WebHost {
         cookies.setAcceptCookie(true)
         cookies.setAcceptThirdPartyCookies(w, true)
 
-        w.addJavascriptInterface(WebBridge(webGeneration), "AAYNative")
+        w.addJavascriptInterface(WebBridge(webGeneration, bridgeToken), "AAYNative")
         w.webViewClient = client
         w.webChromeClient = chrome
     }
@@ -391,8 +404,9 @@ object WebHost {
         registerThermalWatch()
         val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
             .put("thermal", thermalStatus())
-        return "window.__AAY_CFG=" + cfg + ";window.__AAY_CAR=" + (carDisplay || carShown) +
-            ";\n" + source
+        return "if(window.top===window.self)window.__AAY_BRIDGE_TOKEN=" +
+            JSONObject.quote(bridgeToken) + ";window.__AAY_CFG=" + cfg +
+            ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
     }
 
     /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
@@ -756,6 +770,15 @@ object WebHost {
             // projected windows. Explicitly restore the native renderer (as
             // upstream AABrowser does), even when 'frozen' was already false.
             web?.let { it.onResume(); it.resumeTimers(); it.invalidate() }
+            // Car took ownership while PiP was active: the shared WebView moves to
+            // the car display, leaving the PiP overlay with a grey surface. Clear
+            // the PiP state so the JS player exits PiP mode and the system
+            // dismisses the floating window.
+            if (!alreadyProjected && inPip.value) {
+                AppLog.add("CAR", "Car started while PiP active — clearing PiP")
+                inPip.value = false
+                pip(false)
+            }
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
@@ -803,11 +826,11 @@ object WebHost {
 
     fun openUrl(url: String) {
         // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
-        // shouldOverrideUrlLoading, so check them here: only YouTube/Google pages, over http(s).
+        // shouldOverrideUrlLoading, so validate HTTPS and trusted destinations directly.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         val scheme = uri?.scheme?.lowercase()
-        if (uri == null || (scheme != "https" && scheme != "http") || !allowedHost(uri.host)) {
-            AppLog.add("NAV", "Refused to open $url in the player: not a YouTube link")
+        if (uri == null || scheme != "https" || !isSafePageUrl(url)) {
+            AppLog.add("NAV", "Refused to open external or unsupported player link")
             return
         }
         unfreeze()
@@ -1361,6 +1384,10 @@ object WebHost {
     }
 
     private fun load(url: String) {
+        if (!isSafePageUrl(url)) {
+            AppLog.add("NAV", "Ignored unsafe direct WebView load")
+            return
+        }
         noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())
         val w = web
         if (w == null) {
@@ -1761,15 +1788,15 @@ object WebHost {
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
-            AppLog.add("NAV", "Navigate ${uri} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
+            AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
-            if (scheme != "http" && scheme != "https") return true
+            if (scheme != "https") return true
             val host = uri.host.orEmpty()
             if (host.equals("youtu.be", true)) {
                 view.loadUrl(normalise(uri.toString()))
                 return true
             }
-            if (!allowedHost(host)) {
+            if (!isSafePageUrl(uri.toString())) {
                 AppLog.add("NAV", "Blocked host $host, opening outside the app=${request.isForMainFrame}")
                 if (request.isForMainFrame) {
                     runCatching {
@@ -1822,14 +1849,15 @@ object WebHost {
             sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
                 incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
                 incomingId to previous.posMs else null
-            AppLog.add("PAGE", "Started $url" +
+            AppLog.add("PAGE", "Started host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}" +
                 if (sameVideoReloadPosition != null) " (same-video position retained)" else "")
             lyricsClock.value = LyricsClock()
             youtubeAccount.value = YouTubeAccountState.CHECKING
             progress.value = 5
             offline.value = false
             // Older WebViews cannot run a script before the page: inject as early as possible instead.
-            if (scriptHandler == null) view.evaluateJavascript(script(), null)
+            if (scriptHandler == null && isYouTubeHost(runCatching { Uri.parse(url).host }.getOrNull()))
+                view.evaluateJavascript(script(), null)
         }
 
         override fun onPageFinished(view: WebView, url: String?) {
@@ -1850,7 +1878,7 @@ object WebHost {
                 }
             }
             sameVideoReloadPosition = null
-            AppLog.add("PAGE", "Finished $url")
+            AppLog.add("PAGE", "Finished host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}")
             progress.value = 100
             CookieManager.getInstance().flush()
             canGoBack.value = view.canGoBack()
@@ -1893,7 +1921,7 @@ object WebHost {
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            AppLog.add("NET", "Error ${error.errorCode} ${error.description} for ${request.url} main=${request.isForMainFrame}")
+            AppLog.add("NET", "Error ${error.errorCode} host=${request.url.host.orEmpty()} main=${request.isForMainFrame}")
             if (request.isForMainFrame) offline.value = true
         }
 
@@ -1932,7 +1960,7 @@ object WebHost {
     private val chrome = object : WebChromeClient() {
         override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
             val cleaned = WebConsolePolicy.clean(m.message()) ?: return true
-            AppLog.add("JS", "${m.messageLevel()} $cleaned (${m.sourceId().orEmpty().substringAfterLast('/')}:${m.lineNumber()})")
+            AppLog.add("JS", "${m.messageLevel()} $cleaned (script:${m.lineNumber()})")
             return true
         }
 
@@ -1977,61 +2005,73 @@ object WebHost {
 }
 
 /** What the page script can call. Every method runs on a WebView thread, not the main thread. */
-class WebBridge(private val generation: Int) {
+class WebBridge(private val generation: Int, private val bridgeToken: String) {
+    private fun authorized(token: String?): Boolean = token == bridgeToken
+
     @JavascriptInterface
-    fun state(json: String) {
+    fun state(json: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsState(json, generation)
     }
 
     /** YouTube's fullscreen / minimise button where the app fills the screen itself. */
     @JavascriptInterface
-    fun fsToggle() {
+    fun fsToggle(token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsFullscreenButton(generation)
     }
 
     @JavascriptInterface
-    fun userPause() {
+    fun userPause(token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsUserPause(generation)
     }
 
     @JavascriptInterface
-    fun account(status: String) {
+    fun account(status: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.reportAccountStatus(status, generation)
     }
 
     /** Real HTMLVideoElement position, sampled only while timed lyrics are displayed. */
     @JavascriptInterface
-    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double) {
+    fun lyricsTime(id: String, seconds: Double, playing: Boolean, buffering: Boolean, rate: Double, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsLyricsTime(id, seconds, playing, buffering, rate, generation)
     }
 
     /** Aggregated metrics; never URLs, tokens or video IDs. */
     @JavascriptInterface
-    fun perf(payload: String) {
+    fun perf(payload: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsPerformance(payload, generation)
     }
 
     /** Persist only explicit quality menu selections (not YouTube's adaptive downgrades). */
     @JavascriptInterface
-    fun quality(value: String) {
+    fun quality(value: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.requestQualityFromBridge(value, generation)
     }
 
     /** In-player Web Audio equalizer state: off, waiting, active or unsupported. */
     @JavascriptInterface
-    fun eqStatus(status: String) {
+    fun eqStatus(status: String, token: String?) {
+        if (!authorized(token)) return
         WebHost.onJsEqStatus(status, generation)
     }
 
     /** Persist only speeds picked by the user in YouTube's menu. */
     @JavascriptInterface
-    fun speed(rate: Double) {
+    fun speed(rate: Double, token: String?) {
+        if (!authorized(token)) return
         WebHost.requestSpeedFromBridge(rate, generation)
     }
 
     /** True when another app is playing media; also starts the native hold that resumes us later. */
     @JavascriptInterface
-    fun otherMediaHold(): Boolean {
+    fun otherMediaHold(token: String?): Boolean {
+        if (!authorized(token)) return false
         val active = WebHost.otherMediaActive()
         if (active) WebHost.postOtherMediaHold(generation)
         return active
@@ -2039,7 +2079,8 @@ class WebBridge(private val generation: Int) {
 
     /** Swipe down on the playing video. */
     @JavascriptInterface
-    fun mini() {
+    fun mini(token: String?) {
+        if (!authorized(token)) return
         WebHost.requestMiniFromBridge(generation)
     }
 }

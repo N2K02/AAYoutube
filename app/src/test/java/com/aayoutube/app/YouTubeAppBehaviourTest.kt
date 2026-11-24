@@ -56,7 +56,10 @@ class YouTubeAppBehaviourTest {
 
     @Test fun backFromAVideoNeverStopsIt_playingOrPaused() {
         assertEquals(Back.Mini, back(full = true, watchPage = true))
-        assertTrue(ui.contains("PlayerNavigationPolicy.Back.Mini -> WebHost.enterMini()"))
+        assertTrue(ui.contains("PlayerNavigationPolicy.Back.Mini ->"))
+        assertTrue("On the phone, Back must keep the video alive in mini mode", ui.contains("else WebHost.enterMini()"))
+        assertTrue("When projected to Android Auto, Back should not miniaturize the car WebView",
+            ui.contains("if (projectedToCar && !onCar) activity.moveTaskToBack(true)"))
     }
 
     @Test fun backUnderTheMiniPlayerMovesThroughBrowsing() {

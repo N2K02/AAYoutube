@@ -33,7 +33,7 @@
     var msg = s === 'active' && latencyMs() >= 0 ? s + ':' + latencyMs() : s;
     if (EQ.status === s && EQ.sent === msg) return;
     EQ.status = s; EQ.sent = msg;
-    try { var N = window.AAYNative; if (N && typeof N.eqStatus === 'function') N.eqStatus(msg); } catch (e) {}
+    try { var N = window.AAYNative; if (N && typeof N.eqStatus === 'function') N.eqStatus(msg, window.__AAY_BRIDGE_TOKEN || ''); } catch (e) {}
   }
   function want() { return !!(EQ.cfg && EQ.cfg.enabled); }
   // Flat + 3D Off changes nothing: keep Chromium's native audio path (no Web

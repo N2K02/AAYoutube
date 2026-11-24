@@ -154,6 +154,7 @@
 
   var CFG = window.__AAY_CFG || {};
   var N = window.AAYNative || null;
+  var BRIDGE_TOKEN = window.__AAY_BRIDGE_TOKEN || '';
   var BROWSE = !!window.__AAY_BROWSE;
   // YouTube reads this preference during player creation. Persist it before
   // its scripts run so initial playback need not start at adaptive 144p.
@@ -241,7 +242,7 @@
       var status = signedIn ? 'signed_in' : 'signed_out';
       if (status !== lastAccountReport) {
         lastAccountReport = status;
-        N.account(status);
+        N.account(status, BRIDGE_TOKEN);
       }
     } catch (e) {}
   }
@@ -383,7 +384,7 @@
     bgWatch.wanted = false;
     bgWatch.attempts = 0;
     userPauseEligibleUntil = 0;
-    try { if (N && typeof N.userPause === 'function') N.userPause(); } catch (e) {}
+    try { if (N && typeof N.userPause === 'function') N.userPause(BRIDGE_TOKEN); } catch (e) {}
     console.log('[aay] intentional YouTube player pause');
   }
   try {
@@ -393,6 +394,8 @@
       if (!allowPause && !manual && holding() && !this.ended) {
         ignored++;
         // YouTube already marked itself paused: resync its UI once the pause is dropped.
+        // Reset the cooldown so syncPlayerState() runs immediately (not up to 12 s later).
+        stateFixAt = 0;
         later(syncPlayerState, 400);
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
@@ -488,7 +491,7 @@
       // Browse page (under the mini player): a video opens in the player, not here.
       if (BROWSE && /\/watch\?|\/shorts\/|\/live\/|youtu\.be\//.test(href)) {
         e.preventDefault(); e.stopImmediatePropagation();
-        try { window.AAYBrowse.open(href); } catch (x) {}
+        try { window.AAYBrowse.open(href, window.__AAY_BROWSE_TOKEN || ''); } catch (x) {}
         return;
       }
       // A video or mix link that YouTube's page ignored (seen with Mix playlists): open it ourselves.
@@ -591,7 +594,7 @@
         return;
       }
       console.log('[aay] player swipe down -> mini');
-      try { if (window.AAYNative) window.AAYNative.mini(); }
+      try { if (window.AAYNative) window.AAYNative.mini(BRIDGE_TOKEN); }
       catch (err) { console.warn('[aay] mini bridge failed', err); }
     }, { capture: true, passive: true });
     document.addEventListener('touchcancel', function() { swipeStart = null; }, true);
@@ -1124,7 +1127,7 @@
       if (lastSent && lastSent.id) {
         lastSent = { id: '', playing: false, userPaused: false, buffering: false,
           ended: false, queue: [], pos: 0, dur: 0 };
-        N.state(JSON.stringify(lastSent));
+        N.state(JSON.stringify(lastSent), BRIDGE_TOKEN);
       }
       return;
     }
@@ -1154,7 +1157,7 @@
       rate: v.playbackRate || 1,
       next: !!H.nexttrack,
       prev: !!H.previoustrack
-    }));
+    }), BRIDGE_TOKEN);
   }
 
   /* ---------- 6. SponsorBlock ---------- */
@@ -1310,6 +1313,7 @@
   }
 
   function onLoaded(v) {
+    refreshSmallVideo(v);
     applySelectedWatchPlayback();
     var id = urlId();
     sbLoad(id);
@@ -1411,7 +1415,7 @@
       var rate = v.playbackRate;
       if (!isFinite(rate) || Math.abs(rate - (Number(CFG.speed) || 1)) < 0.01) return;
       CFG.speed = rate;
-      try { if (N && typeof N.speed === 'function') N.speed(rate); } catch (err) {}
+      try { if (N && typeof N.speed === 'function') N.speed(rate, BRIDGE_TOKEN); } catch (err) {}
     }, true);
 
     // Double-tap seek with a custom length. At YouTube's own 10 s nothing is intercepted.
@@ -1618,7 +1622,7 @@
     // after Chromium pauses us, so an instant resume would steal focus back.
     if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
     try {
-      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold()) {
+      if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold(BRIDGE_TOKEN)) {
         bgWatch.held = true;
         console.log('[aay] another app is playing media: not resuming');
         return;
@@ -1660,6 +1664,7 @@
       bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
     }
     v.__aay = 1;
+    refreshSmallVideo(v);
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
       'durationchange', 'emptied', 'loadstart'].forEach(function (ev) {
       v.addEventListener(ev, function () {
@@ -1816,7 +1821,7 @@
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }));
+          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
@@ -1851,7 +1856,7 @@
     var id = (pv && pv.video_id) || urlId();
     if (!v || !id || !isFinite(v.currentTime) || isAd()) return;
     N.lyricsTime(id, v.currentTime, !v.paused && !v.ended,
-      v.readyState < 3, v.playbackRate || 1);
+      v.readyState < 3, v.playbackRate || 1, BRIDGE_TOKEN);
   }
   A.lyricsSync = function (on) {
     if (BROWSE) return;
@@ -2021,6 +2026,30 @@
   // plays but the picture is stuck (black), seek to the current position: that restarts the
   // video decoder without stopping the sound for more than a moment.
   var pipTimer = 0, pipLast = null, pipFixAt = 0;
+  var smallVideo = null, smallRoute = '';
+  // YouTube may replace the video/decoder on Next without leaving mini or PiP.
+  // A new decoder needs the same viewport treatment as the original one.
+  function refreshSmallVideo(v) {
+    if (!(A.isMini || A.inPip) || !v) return;
+    var pv = playerVideo();
+    var id = (pv && pv.video_id) || urlId() || '';
+    if (smallVideo === v && smallRoute === id) return;
+    smallVideo = v;
+    smallRoute = id;
+    pipLast = null;
+    pipFixAt = 0;
+    refitAt = 0;
+    liftAncestors(v, true);
+    document.documentElement.classList.add('aay-video-only');
+    // Never recreate the WebView or restart audio during a playlist transition.
+    repaintVideo(v);
+    later(function () {
+      if ((A.isMini || A.inPip) && getVideo() === v) {
+        refitAt = 0;
+        refitSmall(v);
+      }
+    }, 350);
+  }
   function videoInfo(v) {
     var q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
     var r = v.getBoundingClientRect();
@@ -2061,10 +2090,18 @@
     if (!v) return;
     // Hidden (Home, screen off): Chromium stops decoding frames on purpose. Restarting
     // the picture there would only interrupt background audio every few seconds.
-    if (Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document)) {
+    // PiP remains visible even when Chromium reports the document hidden
+    // because the Activity is not full-screen. Keep checking its video frames.
+    // Ordinary background playback must remain untouched for battery/audio safety.
+    if (realHidden() && !A.inPip) {
       pipLast = null;
       return;
     }
+    refreshSmallVideo(v);
+    // YouTube can toggle our root classes during SPA navigation. Restore CSS
+    // immediately even when the throttled geometry refit is on cooldown.
+    if ((A.isMini || A.inPip) && !document.documentElement.classList.contains('aay-video-only'))
+      document.documentElement.classList.add('aay-video-only');
     if ((A.isMini || A.inPip) && !smallFits(v)) refitSmall(v);
     syncPlayerState();
     var i = videoInfo(v);
@@ -2150,6 +2187,10 @@
   }
   function carLayout() {
     // Phone landscape reuses the car's fill-the-screen layout, without car behaviour.
+    // Mini-player is always a phone-screen concept: the VirtualDisplay (car screen) has its
+    // own WebView (FullscreenCarPresentation) that is never in mini mode. So when the phone
+    // WebView enters mini mode we always suppress the car layout here, even if A.isCar=true,
+    // so the phone doesn't apply fullscreen hit targets while showing the mini player.
     var on = !!((A.isCar && !A.isCarPage) || A.isLand) && !A.isMini && !A.inPip && !BROWSE && /^\/(watch|live\/)/.test(location.pathname);
     var box = on ? playerBox() : null;
     var v = on ? getVideo() : null;
@@ -2207,6 +2248,26 @@
     // Android Auto can take over an existing background-audio WebView.
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
+    // Surface reconnects (PPUIHOST re-setup) trigger a Chromium video pause even
+    // when the user never tapped pause. The pause fires after car(true) with
+    // holding()=false, so the interceptor cannot block it. Clear the stateFixAt
+    // cooldown and schedule a delayed recovery: if the video is paused but the
+    // user never asked to pause, resume it after the surface settles.
+    if (A.isCar) {
+      stateFixAt = 0;
+      later(function () {
+        if (!A.isCar) return;
+        var v = getVideo(), p = ytPlayer();
+        if (!v || !p) return;
+        if (!v.paused || v.ended || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
+        try {
+          if (typeof p.getPlayerState === 'function' && p.getPlayerState() !== 2) return;
+        } catch (e) { return; }
+        stateFixAt = 0;
+        console.log('[aay] car reconnect: resuming after surface-reconnect pause');
+        requestPlayerPlay(v);
+      }, 700);
+    }
   };
   // Android Auto: the watch page (player + playlist) instead of the filled video.
   A.carPage = function (on) {
@@ -2249,7 +2310,7 @@
       if (!fsButton(e) || !owned()) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (N && typeof N.fsToggle === 'function') N.fsToggle();
+      if (N && typeof N.fsToggle === 'function') N.fsToggle(BRIDGE_TOKEN);
     }, true);
   })();
 
@@ -2312,6 +2373,7 @@
     perf.layoutChanges++;
     var revision = ++layoutRevision;
     liftAncestors(getVideo(), on);
+    if (!on) { smallVideo = null; smallRoute = ''; }
     document.documentElement.classList.toggle('aay-video-only', on);
     document.documentElement.classList.toggle('aay-mini', !!A.isMini && !A.inPip);
     document.documentElement.classList.toggle('aay-pip', !!A.inPip);
@@ -2648,7 +2710,7 @@
     CFG.preferredQuality = q;
     writeYouTubeQuality(q);
     if (N && typeof N.quality === 'function') { // explicit pick: always persisted natively
-      try { N.quality(q); } catch (e) {}
+      try { N.quality(q, BRIDGE_TOKEN); } catch (e) {}
     }
     // Log every explicit choice, including picking the same resolution again.
     console.log('[aay] user selected video quality=' + q + ' (' + source + ')');
