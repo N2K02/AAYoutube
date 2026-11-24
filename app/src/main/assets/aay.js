@@ -2248,6 +2248,26 @@
     // Android Auto can take over an existing background-audio WebView.
     // Undo our own tiny-only quality cap before the projected video is shown.
     A.setBg(A.isBg);
+    // Surface reconnects (PPUIHOST re-setup) trigger a Chromium video pause even
+    // when the user never tapped pause. The pause fires after car(true) with
+    // holding()=false, so the interceptor cannot block it. Clear the stateFixAt
+    // cooldown and schedule a delayed recovery: if the video is paused but the
+    // user never asked to pause, resume it after the surface settles.
+    if (A.isCar) {
+      stateFixAt = 0;
+      later(function () {
+        if (!A.isCar) return;
+        var v = getVideo(), p = ytPlayer();
+        if (!v || !p) return;
+        if (!v.paused || v.ended || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
+        try {
+          if (typeof p.getPlayerState === 'function' && p.getPlayerState() !== 2) return;
+        } catch (e) { return; }
+        stateFixAt = 0;
+        console.log('[aay] car reconnect: resuming after surface-reconnect pause');
+        requestPlayerPlay(v);
+      }, 700);
+    }
   };
   // Android Auto: the watch page (player + playlist) instead of the filled video.
   A.carPage = function (on) {
