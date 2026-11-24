@@ -13,6 +13,10 @@
     <!-- Car App Library media templates (not navigation or video projection). -->
     <uses-permission android:name="androidx.car.app.MEDIA_TEMPLATES" />
     <uses-feature android:name="android.software.car.templates_host.media" android:required="false" />
+    <!-- FullscreenCarService: NavigationTemplate raw-surface access (VirtualDisplay projection). -->
+    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
+    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
+    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
 
     <!-- Installs its own updates (Android asks the user first) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -140,6 +144,26 @@
                 <category android:name="androidx.car.app.category.MEDIA" />
             </intent-filter>
             <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="8" />
+        </service>
+
+        <!-- Modern AndroidX Car App Library fullscreen video projection.
+             Uses NavigationTemplate + SurfaceCallback → VirtualDisplay → Presentation
+             hosting the YouTube WebView on the head-unit's surface.
+             Runs alongside the legacy CATEGORY_PROJECTION entry; Android Auto picks
+             whichever it supports on the connected head unit.
+             API level 7: NavigationTemplate surface access requires Car App API 2+;
+             minCarApiLevel 7 covers all head units that expose a raw surface. -->
+        <service
+            android:name=".FullscreenCarService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback"
+            android:label="AAYT Fullscreen">
+            <intent-filter>
+                <action android:name="androidx.car.app.CarAppService" />
+                <category android:name="androidx.car.app.category.NAVIGATION" />
+            </intent-filter>
+            <meta-data android:name="androidx.car.app.minCarApiLevel" android:value="7" />
         </service>
 
         <!-- Independent Android Auto MUSIC entry. The native MediaBrowserServiceCompat
