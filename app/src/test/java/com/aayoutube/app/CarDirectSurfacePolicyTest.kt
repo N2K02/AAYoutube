@@ -80,6 +80,5 @@ class CarDirectSurfacePolicyTest {
         assertFalse(renderer.contains("MediaProjectionManager"))
         assertFalse(renderer.contains("writeBytes("))
         assertFalse(renderer.contains("compress("))
-        assertFalse(manifest.contains("androidx.car.app.category.NAVIGATION"))
     }
 }

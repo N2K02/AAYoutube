@@ -56,7 +56,9 @@ class PlayerPrefsPolicyTest {
         assertTrue(js.contains("seekHold = { v: v, target: target"))
         assertTrue(js.contains("p.unloadModule('captions')"))
         // Mini/PiP watchdog never restarts the picture on a hidden page (background audio).
+        // The hidden check is extracted into realHidden() so pipCheck delegates to it.
+        assertTrue(js.contains("function realHidden()"))
         val watchdog = js.substringAfter("function pipCheck()").substringBefore("pipLast = i;")
-        assertTrue(watchdog.contains("hidden').get.call(document)"))
+        assertTrue(watchdog.contains("realHidden()"))
     }
 }

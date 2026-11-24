@@ -54,7 +54,6 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(music.contains("android:exported=\"true\""))
         assertTrue(music.contains("android.media.browse.MediaBrowserService"))
         assertFalse(music.contains("CATEGORY_PROJECTION"))
-        // The AndroidX navigation side-panel previously froze the shared WebView.
         assertFalse(manifest.contains("android:name=\".CarVideoService\""))
         assertFalse(video.contains("androidx.car.app.CarAppService"))
         for (resource in listOf("xml", "xml-v35")) {
