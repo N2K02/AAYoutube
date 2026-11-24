@@ -1,13 +1,10 @@
 package com.aayoutube.app
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -33,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -41,6 +37,8 @@ import androidx.compose.ui.unit.dp
 internal data class BarSize(val button: Dp, val icon: Dp) {
     companion object {
         val Phone = BarSize(button = 44.dp, icon = 24.dp)
+        /** Compact variant for the horizontal pill so all icons fit without scrolling. */
+        val PhoneCompact = BarSize(button = 36.dp, icon = 20.dp)
         val Car = BarSize(button = 52.dp, icon = 28.dp)
         fun of(car: Boolean) = if (car) Car else Phone
     }
@@ -88,7 +86,12 @@ internal fun FloatingVideoBar(
     vertical: Boolean = true,
     extra: @Composable () -> Unit = {},
 ) {
-    val size = BarSize.of(car)
+    // In landscape (horizontal pill) use compact icons so all fit without scrolling.
+    val size = when {
+        car -> BarSize.Car
+        !vertical -> BarSize.PhoneCompact
+        else -> BarSize.Phone
+    }
     var pending by remember { mutableStateOf<OverlayTransportLock?>(null) }
     // Ignore duplicate taps for all three transport buttons while the page
     // catches up. Back/Home/settings are deliberately not blocked.
@@ -102,12 +105,8 @@ internal fun FloatingVideoBar(
         }
     }
     val transportEnabled = transportReady && pending == null
-    // In landscape the pill is horizontal. Constrain its width so the scroll
-    // activates instead of the pill growing wider than the screen and clipping.
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
-    val surfaceModifier = if (!vertical) modifier.widthIn(max = screenWidthDp - 16.dp) else modifier
     Surface(
-        modifier = surfaceModifier,
+        modifier = modifier,
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -156,12 +155,10 @@ internal fun FloatingVideoBar(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { icons() }
         } else {
-            // Horizontal rail (landscape). Scrollable so all icons remain reachable
-            // on narrow screens without clipping the Settings or Quit buttons.
+            // Horizontal rail (landscape). Compact icon size ensures all buttons
+            // fit in one row without scrolling (9 × 36dp = 324dp ≤ 360dp min width).
             Row(
-                modifier = Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) { icons() }

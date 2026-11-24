@@ -829,6 +829,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     },
                     onRelease = { WebHost.detach(it) },
                 )
+            } else {
+                // WebView is on the car's VirtualDisplay — show a "Now playing" card
+                // so the phone screen doesn't look broken.
+                NowPlayingOnCarScreen(snap = snap, modifier = playerMod)
             }
 
             if (scrim.value > 0f && !onCar) Box(
@@ -1545,6 +1549,69 @@ fun InfoPage() {
             }
         }
 
+    }
+}
+
+/**
+ * Shown on the phone while the video is playing on Android Auto's VirtualDisplay.
+ * The WebView surface belongs to the car screen; this keeps the phone from looking broken.
+ */
+@Composable
+private fun NowPlayingOnCarScreen(snap: Snap, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(32.dp),
+        ) {
+            // Car icon
+            Icon(
+                Icons.Filled.OndemandVideo,
+                contentDescription = null,
+                modifier = Modifier.size(56.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                "Playing on Android Auto",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (snap.title.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    snap.title,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                if (snap.artist.isNotBlank()) {
+                    Text(
+                        snap.artist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            // Progress bar (only for non-live finite content)
+            if (snap.durMs > 0 && !snap.live) {
+                val fraction = (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f)
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                )
+            } else if (snap.buffering || snap.playing) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+            }
+        }
     }
 }
 
