@@ -14,7 +14,7 @@ val appVersionCode = appVersion.split(".").let { (major, minor) -> major.toInt()
 
 // Library versions in one place: used for the dependencies and shown on the Info page.
 val v = mapOf(
-    "material3" to "1.5.0-beta01",
+    "material3" to "1.6.0-alpha01",
     "mediaCompat" to "1.7.1",
     "appCompat" to "1.8.0",
     "webkit" to "1.14.0",
@@ -24,7 +24,7 @@ val v = mapOf(
 
 android {
     namespace = "com.aayoutube.app"
-    compileSdk = 37
+    compileSdk { version = release(37) { minorApiLevel = 2 } }
 
     defaultConfig {
         applicationId = "com.aayoutube.app"
@@ -127,8 +127,8 @@ dependencies {
 
  // Opt-in compile-only shared library evaluation; no production runtime cutover.
 dependencies {
-    implementation("dev.n2k02:theme:0.1.14")
-        implementation("dev.n2k02:updater:0.1.36")
+    implementation("dev.n2k02:theme:0.1.15")
+        implementation("dev.n2k02:updater:0.1.39")
 }
 
  
