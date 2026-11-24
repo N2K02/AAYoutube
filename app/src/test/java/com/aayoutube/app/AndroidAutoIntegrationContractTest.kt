@@ -32,8 +32,12 @@ class AndroidAutoIntegrationContractTest {
         assertTrue(phone.contains("android.intent.category.LAUNCHER"))
         assertTrue(phone.contains("android.media.action.MEDIA_PLAY_FROM_SEARCH"))
         for (category in listOf("android.intent.category.CAR_LAUNCHER",
-            "androidx.car.app.category.NAVIGATION", "android.intent.category.APP_MAPS"))
+            "android.intent.category.APP_MAPS"))
             assertFalse(category, manifest.contains(category))
+        // NAVIGATION is used by FullscreenCarService (VirtualDisplay projection) — allowed.
+        // It must not appear on MainActivity or LegacyProjectionService.
+        assertFalse("MainActivity must not declare NAVIGATION", phone.contains("androidx.car.app.category.NAVIGATION"))
+        assertFalse("LegacyProjectionService must not declare NAVIGATION", video.contains("androidx.car.app.category.NAVIGATION"))
         assertFalse("legacy video does not set a car template API level", video.contains("minCarApiLevel"))
         val carWebLink = phone.substringAfter("<!-- Opens YouTube links in this app -->")
             .substringBefore("</intent-filter>")
