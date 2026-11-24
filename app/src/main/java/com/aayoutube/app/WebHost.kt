@@ -770,6 +770,15 @@ object WebHost {
             // projected windows. Explicitly restore the native renderer (as
             // upstream AABrowser does), even when 'frozen' was already false.
             web?.let { it.onResume(); it.resumeTimers(); it.invalidate() }
+            // Car took ownership while PiP was active: the shared WebView moves to
+            // the car display, leaving the PiP overlay with a grey surface. Clear
+            // the PiP state so the JS player exits PiP mode and the system
+            // dismisses the floating window.
+            if (!alreadyProjected && inPip.value) {
+                AppLog.add("CAR", "Car started while PiP active — clearing PiP")
+                inPip.value = false
+                pip(false)
+            }
         } else if (!snapshot.value.playing) {
             scheduleFreeze()
         }
