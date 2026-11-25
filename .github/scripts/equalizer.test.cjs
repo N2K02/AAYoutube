@@ -341,3 +341,21 @@ test('background playback continues while routed music is actually playing', () 
   p.document.hidden = true; p.fire('visibilitychange');
   assert.equal(p.calls.suspend, 0);
 });
+
+test('detached media cannot wake DSP but reattached media reuses its route', () => {
+  const p = page();
+  p.eq({ ...BASE, bands: [6, 0, 0, 0, 0] });
+  p.video.isConnected = false;
+  p.document.hidden = true;
+  p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 1);
+  p.fire('play');
+  p.fire('playing');
+  assert.equal(p.calls.resume, 0, 'detached media must not wake the context');
+  p.video.isConnected = true;
+  p.fire('play');
+  assert.equal(p.calls.resume, 1);
+  assert.equal(p.calls.routed, 1, 'reuse the original MediaElementSource');
+  p.fire('visibilitychange');
+  assert.equal(p.calls.suspend, 1, 'reattached playing media must not be suspended');
+});
