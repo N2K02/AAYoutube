@@ -66,6 +66,14 @@ class MediaInterruptionRegressionTest {
         assertTrue(protocol.contains("putBoolean(\"held\", held)"))
     }
 
+    @Test fun delayedMediaHoldCannotInterruptRecoveredOrBufferingPlayback() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("if (generation != webGeneration) return@post"))
+        assertTrue(web.contains("!current.playing && !current.buffering && !current.userPaused"))
+        assertTrue(web.contains("current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertEquals(2, Regex("s.playing \\|\\| s.buffering \\|\\| !playbackWanted").findAll(web).count())
+    }
+
     @Test fun overloadFallbackIsWired() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("try { overloadCheck(getVideo()); } catch (e) {}"))
