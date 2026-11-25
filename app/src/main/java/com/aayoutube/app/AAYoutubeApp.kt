@@ -11,7 +11,7 @@ class AAYoutubeApp : Application() {
         SleepTimer.init(this)
         Features.init(this)
         LyricsPrefs.init(this)
-        AAYSoundFx.init(this)
+        getSharedPreferences("aay_sound_fx", MODE_PRIVATE).edit().clear().apply()
         Library.init(this)
         WebHost.init(this)
         BrowseHost.init(this)
