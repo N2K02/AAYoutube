@@ -1028,7 +1028,7 @@ test('trusted YouTube Pause is authoritative even with background protection ena
   p.window.AAYNative.userPause = () => nativePauses.push(true);
   p.window.__aay.setBg(true);
   p.runIntervals(); // remember that playback was requested
-  p.emit('pointerdown', { isTrusted: true, target: { closest: () => ({}) } });
+  p.emit('pointerdown', { isTrusted: true, target: { closest: selector => selector.includes('.ytp-play-button') ? {} : null } });
   p.video.pause();
   assert.equal(p.video.paused, true, 'trusted page Pause must bypass the pause interceptor');
   assert.equal(nativePauses.length, 1, 'the native media owner must know this pause was intentional');
@@ -1177,6 +1177,20 @@ test('dialog and scrim taps over the video do not release explicit pause', () =>
     p.video.trigger('play');
     assert.equal(p.video.paused, true, 'overlay must not permit autoplay');
   }
+});
+
+test('pointerdown and click on one Play control do not arm an opposite pause', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.window.__aay.setBg(true);
+  const target = { closest: selector => selector.includes('.ytp-play-button') ? {} : null };
+  p.emit('pointerdown', { type: 'pointerdown', isTrusted: true, target });
+  p.video.play();
+  p.video.trigger('play');
+  p.emit('click', { type: 'click', isTrusted: true, target });
+  p.video.pause();
+  assert.equal(p.video.paused, false, 'the duplicate click must not authorize Pause');
 });
 
 test('pointerdown alone does not release an explicit pause', () => {
