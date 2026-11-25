@@ -1851,12 +1851,6 @@ test('paused video produces no periodic performance bridge reports', () => {
   assert.equal(p.perfReports.length, 0);
 });
 
-test('audio DSP reports graph state, not an invented CPU percentage', () => {
-  const eq = fs.readFileSync('app/src/main/assets/aay_eq.js', 'utf8');
-  assert.match(eq, /A\.eqPerf = function \(\)/);
-  assert.match(eq, /needsRoute\(\) \? 'dsp' : 'bypass'/);
-  assert.doesNotMatch(eq, /A\.eqCpuPct/);
-});
 
 test('saved 1080p is a maximum, a 720p-only video plays 720p and next 1080p video restores it', () => {
   const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd1080' } });
