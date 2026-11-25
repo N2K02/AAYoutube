@@ -431,7 +431,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
             !s.rate.isFinite() -> 1f
             else -> s.rate.coerceIn(0.1f, 4f)
         }
-        val queueChanged = queueGate.update(s.queue)
+        val queueChanged = queueGate.update(s.queue, retainDuringTransition =
+            !s.userPaused && !s.ended && (s.buffering || s.recovering ||
+                transportSkips.hasPending(android.os.SystemClock.elapsedRealtime())))
         if (queueChanged) {
             // Android Auto's Now Playing queue is a native MediaSession queue, not
             // just browse-only "Up next" children.
@@ -591,6 +593,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     if (target != null) {
                         AppLog.add("MEDIA", "Next: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else if (transportSkips.hasPending(android.os.SystemClock.elapsedRealtime())) {
+                        AppLog.add("MEDIA", "Next: pending native queue boundary; awaiting playback")
                     } else {
                         AppLog.add("MEDIA", "Next: YouTube player fallback")
                         send(Msg.NEXT)
@@ -610,6 +614,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     if (target != null) {
                         AppLog.add("MEDIA", "Previous: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else if (transportSkips.hasPending(now)) {
+                        AppLog.add("MEDIA", "Previous: pending native queue boundary; awaiting playback")
                     } else {
                         AppLog.add("MEDIA", "Previous: YouTube player fallback")
                         send(Msg.PREV)
