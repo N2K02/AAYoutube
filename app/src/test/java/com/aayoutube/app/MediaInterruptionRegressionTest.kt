@@ -76,6 +76,14 @@ class MediaInterruptionRegressionTest {
         assertEquals(2, Regex("s.playing \\|\\| s.buffering \\|\\| !playbackWanted").findAll(web).count())
     }
 
+    @Test fun noisyRouteCancelsRecoveryEvenWithoutActivePlayback() {
+        val action = NoisyAudioPolicy.ACTION
+        assertTrue(NoisyAudioPolicy.shouldPause(action, false, false, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause(action, false, true, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause("other", false, false, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause(action, false, false, recovering = false))
+    }
+
     @Test fun overloadFallbackIsWired() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("try { overloadCheck(getVideo()); } catch (e) {}"))
