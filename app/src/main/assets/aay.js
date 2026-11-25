@@ -311,6 +311,7 @@
   function actualPlayPauseButton(target) {
     return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
   }
+  var lastTransportPointer = null;
   function manualPauseGesture(e) {
     if (BROWSE || e.isTrusted === false) return;
     var v = getVideo();
@@ -332,6 +333,17 @@
         e.clientX >= rect.left && e.clientX <= rect.left + rect.width &&
         e.clientY >= rect.top && e.clientY <= rect.top + rect.height;
     }
+    // Real controls may act on pointerdown, before click. Coordinate-only
+    // hits remain click-only so a swipe starting over the picture is harmless.
+    if (e.type === 'pointerdown' && !playerControl && !playerSurface) return;
+    var now = Date.now();
+    if (e.type === 'click' && lastTransportPointer && lastTransportPointer.video === v &&
+        lastTransportPointer.target === t && now - lastTransportPointer.at < 1000) {
+      lastTransportPointer = null;
+      return;
+    }
+    if (e.type === 'pointerdown' && (playerControl || (v.paused && playerSurface)))
+      lastTransportPointer = { video: v, target: t, at: now };
     if (v.paused && (playerControl || insideVideo || playerSurface)) {
       userResumeEligibleUntil = Date.now() + 1500;
       PAUSED = false;
@@ -343,8 +355,7 @@
       userPauseEligibleUntil = Date.now() + 2000;
     }
   }
-  // Commit intent once, on click, rather than on pointerdown before a drag
-  // or before YouTube has decided which control was actually activated.
+  document.addEventListener('pointerdown', manualPauseGesture, true);
   document.addEventListener('click', manualPauseGesture, true);
   // Some mobile YouTube builds render an always-Play button after an
   // involuntary page pause while the actual <video> continues playing.
@@ -1621,6 +1632,7 @@
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
     if (bgWatch.held) return;
+    if (typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
     // Source replacement can abort play() while the media element is empty.
     if (v.readyState === 0 && !v.currentSrc && !v.src) return;
     // Let an audio-focus handoff settle: the other app starts its output shortly
@@ -1673,6 +1685,7 @@
     ['play', 'pause', 'ended', 'waiting', 'playing', 'seeked', 'ratechange',
       'durationchange', 'emptied', 'loadstart'].forEach(function (ev) {
       v.addEventListener(ev, function () {
+        if (v !== getVideo()) return; // an old element must not change current playback intent
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
