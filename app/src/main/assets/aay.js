@@ -1582,7 +1582,6 @@
     if (on) {
       // Another app (or call) owns audio now. Stop audible playback even when
       // Chromium missed audio focus loss; preserve intent for a later resume.
-      if (typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
       var v = getVideo();
       if (v && !v.ended && !v.paused && !PAUSED && !bgWatch.explicitPause)
         bgWatch.wanted = true;
@@ -1645,7 +1644,6 @@
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
     if (bgWatch.held) return;
-    if (typeof A.eqIdleNow === 'function') { try { A.eqIdleNow(); } catch (e) {} }
     // Source replacement can abort play() while the media element is empty.
     if (v.readyState === 0 && !v.currentSrc && !v.src) return;
     // Let an audio-focus handoff settle: the other app starts its output shortly
@@ -1872,7 +1870,7 @@
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, eq: typeof A.eqPerf === 'function' ? A.eqPerf() : 'unavailable' }), BRIDGE_TOKEN);
+          codec: codec, tier: tier }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
