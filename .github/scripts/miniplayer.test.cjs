@@ -1322,6 +1322,26 @@ test('Next rebinds a replacement video element in mini-player and PiP', () => {
   }
 });
 
+test('retired video events cannot change the active replacement playback state', () => {
+  const p = playerPage();
+  p.flush();
+  const old = p.video;
+  const next = p.replaceVideo();
+  p.emit('loadstart', { target: next });
+  p.flush();
+  next.paused = false;
+  next.trigger('play');
+  p.flush();
+  old.paused = true;
+  old.ended = true;
+  for (const event of ['pause', 'ended', 'loadedmetadata', 'timeupdate', 'emptied']) {
+    old.trigger(event);
+  }
+  p.flush();
+  assert.equal(next.paused, false, 'retired events must not pause the replacement');
+  assert.equal(p.stateReports.at(-1).playing, true, 'media session must keep the active playback state');
+});
+
 test('PiP Next repairs the picture even if Chromium marks the page hidden', () => {
   const p = playerPage({ quality: true });
   let id = '86p7SP34qSc';
