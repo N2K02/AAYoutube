@@ -19,9 +19,9 @@ class YouTubeAppBehaviourTest {
     private val js = src("app/src/main/assets/aay.js")
 
     private fun back(
-        equalizer: Boolean = false, fullscreen: Boolean = false, landFill: Boolean = false,
+        fullscreen: Boolean = false, landFill: Boolean = false,
         settingsTab: Boolean = false, watchTab: Boolean = true, full: Boolean = true, watchPage: Boolean = true,
-    ) = PlayerNavigationPolicy.back(equalizer, fullscreen, landFill, settingsTab, watchTab, full, watchPage)
+    ) = PlayerNavigationPolicy.back(fullscreen, landFill, settingsTab, watchTab, full, watchPage)
 
     // ---- Home ----------------------------------------------------------------
 
@@ -48,7 +48,6 @@ class YouTubeAppBehaviourTest {
     // ---- Back ----------------------------------------------------------------
 
     @Test fun backLeavesOneLayerAtATime() {
-        assertEquals(Back.CloseEqualizer, back(equalizer = true, fullscreen = true, landFill = true))
         assertEquals(Back.ExitFullscreen, back(fullscreen = true, landFill = true))
         assertEquals(Back.ShowWatchPage, back(landFill = true))
         assertEquals(Back.Mini, back())
