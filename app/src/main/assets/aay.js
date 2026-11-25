@@ -316,6 +316,8 @@
     var v = getVideo();
     if (!v) return;
     var t = e.target;
+    // Dialogs and scrims can cover the video rectangle; their taps are not transport intent.
+    if (t && t.closest && t.closest('dialog, [role="dialog"], ytm-dialog, ytw-scrim, #dialog-container, .dialog-container')) return;
     var playerControl = !!actualPlayPauseButton(t);
     // A tap on Settings, quality, or another player control is not a Pause.
     // When paused, the actual video rectangle still allows anonymous center Play.
@@ -1618,6 +1620,8 @@
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
     if (bgWatch.held) return;
+    // Source replacement can abort play() while the media element is empty.
+    if (v.readyState === 0 && !v.currentSrc && !v.src) return;
     // Let an audio-focus handoff settle: the other app starts its output shortly
     // after Chromium pauses us, so an instant resume would steal focus back.
     if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
