@@ -11,8 +11,13 @@ class AAYoutubeApp : Application() {
         SleepTimer.init(this)
         Features.init(this)
         LyricsPrefs.init(this)
-        val retiredSound = getSharedPreferences("aay_sound_fx", MODE_PRIVATE)
-        if (retiredSound.all.isNotEmpty()) deleteSharedPreferences("aay_sound_fx")
+        val migrations = getSharedPreferences("app_migrations", MODE_PRIVATE)
+        if (!migrations.getBoolean("retired_sound_v1", false)) {
+            val retiredSound = getSharedPreferences("aay_sound_fx", MODE_PRIVATE)
+            if (retiredSound.all.isEmpty() || deleteSharedPreferences("aay_sound_fx")) {
+                migrations.edit().putBoolean("retired_sound_v1", true).apply()
+            }
+        }
         Library.init(this)
         WebHost.init(this)
         BrowseHost.init(this)
