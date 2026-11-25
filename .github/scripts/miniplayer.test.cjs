@@ -1153,7 +1153,7 @@ test('anonymous center div tap resumes an explicitly paused video', () => {
   p.video.paused = true;
   p.flush();
   // YouTube renders the center Play overlay as an anonymous div without selectors.
-  p.emit('pointerdown', {
+  p.emit('click', {
     isTrusted: true, clientX: 160, clientY: 90,
     target: { tagName: 'DIV', closest: () => null },
   });
@@ -1177,6 +1177,19 @@ test('dialog and scrim taps over the video do not release explicit pause', () =>
     p.video.trigger('play');
     assert.equal(p.video.paused, true, 'overlay must not permit autoplay');
   }
+});
+
+test('pointerdown alone does not release an explicit pause', () => {
+  const p = playerPage({ paused: true, car: true });
+  p.video.paused = true;
+  p.flush();
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 160, clientY: 90,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'a drag start must not permit autoplay');
 });
 
 test('outside video tap does not override an explicit pause', () => {
