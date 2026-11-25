@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -41,6 +42,13 @@ internal data class BarSize(val button: Dp, val icon: Dp) {
         val PhoneCompact = BarSize(button = 36.dp, icon = 20.dp)
         val Car = BarSize(button = 52.dp, icon = 28.dp)
         fun of(car: Boolean) = if (car) Car else Phone
+        /** Fit all controls in the available horizontal space, including padding and gaps. */
+        fun horizontal(availableWidth: Dp?, count: Int, car: Boolean): BarSize {
+            if (availableWidth == null) return if (car) Car else PhoneCompact
+            val slots = count.coerceAtLeast(1)
+            val button = ((availableWidth - 12.dp - 4.dp * (slots - 1)) / slots).coerceIn(0.dp, if (car) Car.button else Phone.button)
+            return BarSize(button, minOf(if (car) Car.icon else Phone.icon, button * 0.55f))
+        }
     }
 }
 
@@ -84,12 +92,14 @@ internal fun FloatingVideoBar(
     modifier: Modifier = Modifier,
     car: Boolean = false,
     vertical: Boolean = true,
+    availableWidth: Dp? = null,
+    extraCount: Int = 0,
     extra: @Composable (size: BarSize) -> Unit = {},
 ) {
     // In landscape (horizontal pill) use compact icons so all fit without scrolling.
     val size = when {
+        !vertical -> BarSize.horizontal(availableWidth, 5 + extraCount, car)
         car -> BarSize.Car
-        !vertical -> BarSize.PhoneCompact
         else -> BarSize.Phone
     }
     var pending by remember { mutableStateOf<OverlayTransportLock?>(null) }
@@ -106,7 +116,7 @@ internal fun FloatingVideoBar(
     }
     val transportEnabled = transportReady && pending == null
     Surface(
-        modifier = modifier,
+        modifier = Modifier.wrapContentSize().then(modifier),
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -155,8 +165,8 @@ internal fun FloatingVideoBar(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) { icons() }
         } else {
-            // Horizontal rail (landscape). Compact icon size ensures all buttons
-            // fit in one row without scrolling (9 × 36dp = 324dp ≤ 360dp min width).
+            // Horizontal rail stays content-sized so unused screen space remains
+            // available to the WebView. The slot budget includes padding and gaps.
             Row(
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
