@@ -252,7 +252,6 @@ fun AppRoot(activity: MainActivity) {
     }
     // Keep the departing settings panel mounted until its fade-out completes.
     var lastPanel by remember { mutableStateOf(Tab.Settings) }
-    var equalizerOpen by rememberSaveable { mutableStateOf(false) }
     val phoneDisplay = (activity.display?.displayId ?: android.view.Display.DEFAULT_DISPLAY) ==
         android.view.Display.DEFAULT_DISPLAY
     var showInstallHelp by remember {
@@ -437,7 +436,7 @@ fun AppRoot(activity: MainActivity) {
     }
     val goBack: () -> Unit = {
         when (PlayerNavigationPolicy.back(
-            equalizerOpen = equalizerOpen,
+            equalizerOpen = false,
             fullscreen = fullscreen != null,
             landscapeFill = WebHost.landscapeFill.value,
             onSettingsTab = tab == Tab.Settings.ordinal,
@@ -445,7 +444,7 @@ fun AppRoot(activity: MainActivity) {
             fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
             onWatchPage = WebHost.isOnWatchPage(),
         )) {
-            PlayerNavigationPolicy.Back.CloseEqualizer -> equalizerOpen = false
+            PlayerNavigationPolicy.Back.CloseEqualizer -> Unit
             PlayerNavigationPolicy.Back.ExitFullscreen -> WebHost.exitFullscreen()
             // Landscape video: Back first shows the watch page (player + playlist).
             PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()
@@ -515,7 +514,6 @@ fun AppRoot(activity: MainActivity) {
                                 Tab.Info -> InfoPage()
                                 Tab.Settings -> AAYoutubeSettingsMenu(
                                     onSelect = { tab = it.ordinal },
-                                    onEqualizer = { equalizerOpen = true },
                                 )
                             }
                         }
@@ -616,9 +614,6 @@ fun AppRoot(activity: MainActivity) {
                         onClick = { activity.quit() })
                 }
             }
-        }
-        if (equalizerOpen && !inPip && fullscreen == null) {
-            EqualizerSheet(onDismiss = { equalizerOpen = false })
         }
         if (lyricsOnScreen) {
             // Reduce overlap while the menu is hidden; no second app header.
@@ -956,7 +951,6 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 @Composable
 private fun AAYoutubeSettingsMenu(
     onSelect: (Tab) -> Unit,
-    onEqualizer: () -> Unit,
 ) {
     val updateStatus by LiveUpdater.controller.status.collectAsState()
     Column(Modifier.fillMaxSize()) {
@@ -971,14 +965,6 @@ private fun AAYoutubeSettingsMenu(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
-            )
-            ListItem(
-                headlineContent = { Text("Equalizer") },
-                supportingContent = {
-                    Text("5-band sound, presets, bass and experimental 3D sound")
-                },
-                leadingContent = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onEqualizer),
             )
             listOf(Tab.Features, Tab.SleepTimer, Tab.ExperimentalVideo, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
