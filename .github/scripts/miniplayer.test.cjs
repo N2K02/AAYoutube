@@ -188,7 +188,7 @@ function playerPage(options = {}) {
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
     emit(type, event) {
-      for (const fn of callbacks.get(type) || []) fn(event);
+      for (const fn of callbacks.get(type) || []) fn({ type, ...event });
     },
     flush() {
       let budget = 100;
