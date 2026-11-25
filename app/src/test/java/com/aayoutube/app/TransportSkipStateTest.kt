@@ -17,6 +17,16 @@ class TransportSkipStateTest {
         assertNull(state.next("", emptyList(), 1_300))
     }
 
+    @Test fun pendingQueueBoundaryDoesNotAuthorizeCompetingFallback() {
+        val state = TransportSkipState()
+        assertEquals("d", state.next("c", queue, 1_000L))
+        assertNull(state.next("c", emptyList(), 1_100L))
+        assertTrue(state.hasPending(1_100L))
+        state.onPlaybackState("d", true)
+        assertFalse(state.hasPending(1_200L))
+        assertNull(state.next("d", queue, 1_200L))
+    }
+
     @Test fun previousReversesPendingNextBeforePlaybackAcknowledged() {
         val state = TransportSkipState()
         assertEquals("b", state.next("a", queue, 1_000))
