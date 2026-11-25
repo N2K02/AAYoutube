@@ -1671,6 +1671,7 @@
     }, true);
   });
 
+  var adObservedPlayer = null, adObserver = null;
   function bind(v) {
     if (!v || v.__aay) return;
     trackNewVideoElement(v);
@@ -1711,14 +1712,16 @@
       }, true);
     });
     v.addEventListener('loadedmetadata', function () {
+      if (v !== getVideo()) return;
       if (PAUSED && !AUTO) enforceExplicitPause(v);
       onLoaded(v);
       restoreAfterSourceChange(v);
-      later(function () { restoreAfterSourceChange(v); }, 300);
+      later(function () { if (v === getVideo()) restoreAfterSourceChange(v); }, 300);
       schedReport(120);
     }, true);
     var lastProgressReportAt = 0;
     v.addEventListener('timeupdate', function () {
+      if (v !== getVideo()) return;
       if (qualityState.reset) restoreAfterSourceChange(v);
       else notePosition(v);
       sbTick(v);
@@ -1737,7 +1740,15 @@
     }, true);
     // Ads are detected from the player's class, not by polling.
     var p = document.querySelector('.html5-video-player');
-    if (p) new MutationObserver(function () { skipAd(); }).observe(p, { attributes: true, attributeFilter: ['class'] });
+    if (p !== adObservedPlayer) {
+      if (adObserver) adObserver.disconnect();
+      adObservedPlayer = p;
+      adObserver = null;
+      if (p) {
+        adObserver = new MutationObserver(function () { skipAd(); });
+        adObserver.observe(p, { attributes: true, attributeFilter: ['class'] });
+      }
+    }
     if (v.readyState >= 1) { onLoaded(v); restoreAfterSourceChange(v); }
     // If the script attaches after YouTube's initial play event, report immediately rather
     // than waiting for the 30-second heartbeat. The media service needs the active state.
