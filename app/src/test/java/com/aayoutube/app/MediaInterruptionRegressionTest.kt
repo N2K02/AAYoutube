@@ -50,15 +50,13 @@ class MediaInterruptionRegressionTest {
         assertEquals(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY, a)
     }
 
-    @Test fun wiringSilencesOwnAudioAndWakesOnChanges() {
+    @Test fun wiringWaitsForPlaybackStateAndWakesOnChanges() {
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("window.__aay.eqIdleNow()"))
         assertTrue(web.contains("main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)"))
         assertTrue(web.contains("am.registerAudioPlaybackCallback(cb, main)"))
         assertTrue(web.contains("am.addOnModeChangedListener(app.mainExecutor, l)"))
         assertTrue(web.contains("holdWake.acquire(OtherMediaHoldPolicy.WAKE_CHECK_MS)"))
         assertTrue(web.contains("held = otherMediaHeldSince != 0L && !incoming.playing"))
-        assertTrue(read("app/src/main/assets/aay_eq.js").contains("A.eqIdleNow = function ()"))
         val service = read("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(service.contains("ACTION_AUDIO_BECOMING_NOISY"))
         assertTrue(service.contains("ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback)"))
