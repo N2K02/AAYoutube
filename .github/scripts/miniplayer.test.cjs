@@ -1458,6 +1458,29 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
 });
 
 
+test('blocked pause storms cannot reset player reconciliation cooldown', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2;
+  player.playVideo = () => { repairs++; p.video.pause(); };
+  p.window.__aay.mini(true);
+  p.runIntervals();
+  assert.equal(repairs, 1);
+  for (let i = 0; i < 40; i++) {
+    p.video.pause();
+    p.advance(250);
+    p.flush();
+    p.runIntervals();
+  }
+  assert.equal(repairs, 1, 'blocked pauses cannot cause a Play repair storm');
+  assert.equal(p.video.paused, false, 'audio continues playing');
+  p.advance(2000);
+  p.runIntervals();
+  assert.equal(repairs, 2, 'repair remains available after cooldown');
+});
+
 test('phone center Play resumes after a previous explicit native Pause', () => {
   const p = playerPage();
   p.flush();
