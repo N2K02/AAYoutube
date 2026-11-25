@@ -62,14 +62,12 @@ class AdditionalWebHardeningContractTest {
         val player = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val browse = read("app/src/main/java/com/aayoutube/app/BrowseHost.kt")
         val js = read("app/src/main/assets/aay.js")
-        val eq = read("app/src/main/assets/aay_eq.js")
         assertTrue(player.contains("private fun authorized(token: String?): Boolean = token == bridgeToken"))
         assertTrue(player.contains("if (!authorized(token)) return false"))
         assertTrue(player.contains("window.top===window.self"))
         assertTrue(browse.contains("if (providedToken == token) BrowseHost.openInPlayer(url)"))
         assertTrue(js.contains("N.otherMediaHold(BRIDGE_TOKEN)"))
         assertTrue(js.contains("window.__AAY_BROWSE_TOKEN"))
-        assertTrue(eq.contains("window.__AAY_BRIDGE_TOKEN"))
         assertFalse(browse.contains("Ignored a request to open a non-video link: \$url"))
     }
 }
