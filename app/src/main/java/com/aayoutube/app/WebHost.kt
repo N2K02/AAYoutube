@@ -411,23 +411,6 @@ object WebHost {
             ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
     }
 
-    /** Pushes mRadio DSP parameters to the in-page Web Audio graph (assets/aay_eq.js). */
-    fun applyEq(json: String) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post { applyEq(json) }
-            return
-        }
-        js("window.__aay&&window.__aay.eq&&window.__aay.eq($json)")
-    }
-
-    fun onJsEqStatus(status: String, generation: Int) {
-        if (generation != webGeneration) return
-        main.post {
-            if (generation != webGeneration) return@post
-            // Legacy bridge reports are ignored; playback uses Chromium output.
-        }
-    }
-
     private fun installScript(w: WebView) {
         runCatching { scriptHandler?.remove() }
         scriptHandler = null
@@ -905,7 +888,6 @@ object WebHost {
             val peak = recentWebCpu.maxOrNull() ?: -1
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
-            val eq = d.optString("eq").take(32).filter { it.isLetterOrDigit() || it in ":-" }
             AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak " +
                 "rendererCpuPct=adb-only domTicks=${metric("ticks")} domMs=${metric("tickMs")} " +
                 "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
@@ -913,7 +895,7 @@ object WebHost {
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
                 "frames=${metric("frames")} droppedPct=${d.optInt("droppedPct", -1).coerceIn(-1,100)} " +
                 "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
-                "codec=${codec.ifEmpty { "unknown" }} eq=$eq thermal=${thermalStatus()}")
+                "codec=${codec.ifEmpty { "unknown" }} thermal=${thermalStatus()}")
         }
     }
 
@@ -1602,9 +1584,7 @@ object WebHost {
     private val droppedResume = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
-        // isMusicActive cannot say WHOSE audio is active: first make sure our own
-        // Web Audio equalizer output is closed, then judge what is still playing.
-        js("window.__aay&&window.__aay.eqIdleNow&&window.__aay.eqIdleNow()")
+        // Allow native playback state to settle before checking other media.
         main.removeCallbacks(droppedResumeJudge)
         main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)
     }
@@ -2082,13 +2062,6 @@ class WebBridge(private val generation: Int, private val bridgeToken: String) {
     fun quality(value: String, token: String?) {
         if (!authorized(token)) return
         WebHost.requestQualityFromBridge(value, generation)
-    }
-
-    /** In-player Web Audio equalizer state: off, waiting, active or unsupported. */
-    @JavascriptInterface
-    fun eqStatus(status: String, token: String?) {
-        if (!authorized(token)) return
-        WebHost.onJsEqStatus(status, generation)
     }
 
     /** Persist only speeds picked by the user in YouTube's menu. */
