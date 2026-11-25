@@ -525,7 +525,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // suddenly playing from the phone speaker. Treated as a deliberate pause.
     private val noisyReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested)) return
+            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested,
+                    recovering = recoveringPlayback || snapshot.recovering || snapshot.held)) return
             AppLog.add("MEDIA", "Audio output disconnected (headphones/Bluetooth): pausing")
             runCatching { session.controller.transportControls.pause() }
         }
@@ -731,6 +732,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carAttached = true
                 handler.removeCallbacks(demoteForeground)
                 handler.removeCallbacks(idleStop)
+                if (!quitRequested && (snapshot.playing || recoveringPlayback || snapshot.recovering)) {
+                    // Reconnect to the existing renderer; never reopen a video just for a car attach.
+                    ensureWeb()
+                    if (bound && !awaitingRegistration) send(Msg.SYNC)
+                }
             }
             ACTION_CAR_DETACHED -> {
                 carAttached = false
