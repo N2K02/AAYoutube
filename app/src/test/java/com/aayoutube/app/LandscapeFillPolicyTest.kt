@@ -35,7 +35,7 @@ class LandscapeFillPolicyTest {
         assertTrue(ui.contains("PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()"))
         // Back from the landscape video shows the watch page before the mini player.
         assertEquals(PlayerNavigationPolicy.Back.ShowWatchPage, PlayerNavigationPolicy.back(
-            equalizerOpen = false, fullscreen = false, landscapeFill = true, onSettingsTab = false,
+            fullscreen = false, landscapeFill = true, onSettingsTab = false,
             onWatchTab = true, fullPlayer = true, onWatchPage = true))
         assertTrue(ui.contains("WebHost.landscapeDismissed.value = false"))
         // Closing YouTube's own fullscreen while sideways must not fall back into the fill layout.
