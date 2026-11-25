@@ -1930,20 +1930,30 @@
       (now.route && now.route !== origin.route && now.route !== origin.player));
   }
   function fallbackSkip(direction) {
-    var player = document.getElementById('movie_player');
+    var serial = skipSerial, origin = skipIdentity();
+    var player = ytPlayer();
     var method = direction === 'next' ? 'nextVideo' : 'previousVideo';
-    if (player && typeof player[method] === 'function') {
-      try { player[method](); console.log('[aay] ' + direction + ' fallback: player API'); return; }
-      catch (e) { console.log('[aay] ' + direction + ' player API failed'); }
+    function clickControl() {
+      if (serial !== skipSerial || hasNavigated(origin) ||
+          !/^\/(watch|live\/)/.test(location.pathname)) return;
+      var selector = direction === 'next' ?
+        '.ytp-next-button, ytm-next-button button, button[aria-label^="Next"]' :
+        '.ytp-prev-button, ytm-previous-button button, button[aria-label^="Previous"]';
+      var button = document.querySelector(selector);
+      if (button && !button.disabled && (!button.getAttribute || button.getAttribute('aria-disabled') !== 'true')) {
+        button.click();
+        console.log('[aay] ' + direction + ' fallback: button');
+      } else console.log('[aay] ' + direction + ' fallback unavailable');
     }
-    var selector = direction === 'next' ?
-      '.ytp-next-button, button[aria-label^="Next"]' :
-      '.ytp-prev-button, button[aria-label^="Previous"]';
-    var button = document.querySelector(selector);
-    if (button && !button.disabled) {
-      button.click();
-      console.log('[aay] ' + direction + ' fallback: button');
-    } else console.log('[aay] ' + direction + ' fallback unavailable');
+    if (player && typeof player[method] === 'function') {
+      try {
+        player[method]();
+        console.log('[aay] ' + direction + ' fallback: player API');
+        later(clickControl, 2500);
+        return;
+      } catch (e) { console.log('[aay] ' + direction + ' player API failed'); }
+    }
+    clickControl();
   }
   function skip(direction) {
     var serial = ++skipSerial;
