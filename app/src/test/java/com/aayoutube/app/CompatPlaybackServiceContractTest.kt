@@ -25,9 +25,10 @@ class CompatPlaybackServiceContractTest {
         assertTrue(source.contains("METADATA_KEY_ART_URI"))
         assertTrue(source.contains("updateGate.playbackChanged("))
         assertTrue(source.contains("updateGate.metadataChanged("))
-        assertTrue(source.contains("val queueChanged = queueGate.update(s.queue)"))
-        assertTrue(source.indexOf("val queueChanged = queueGate.update(s.queue)") <
+        assertTrue(source.contains("val queueChanged = queueGate.update(s.queue, retainDuringTransition ="))
+        assertTrue(source.indexOf("val queueChanged = queueGate.update(s.queue, retainDuringTransition =") <
             source.indexOf("val actions = actionsFor(s)"))
+        assertTrue(source.contains("transportSkips.hasPending(android.os.SystemClock.elapsedRealtime())"))
         assertTrue(source.contains("if (playbackChanged || queueChanged)"))
         assertTrue(source.contains("val actions = actionsFor(s)"))
         assertTrue(source.contains("!s.rate.isFinite() -> 1f"))
