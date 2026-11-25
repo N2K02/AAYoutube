@@ -25,7 +25,16 @@ class PlaybackLifecycleCleanupTest {
         assertTrue(unregister.contains("unregisterAudioPlaybackCallback(cb)"))
         assertTrue(unregister.contains("removeOnModeChangedListener(l)"))
         assertTrue(unregister.contains("holdWake.release()"))
-        assertTrue(web.contains("main.post { if (generation == webGeneration) startOtherMediaHold(\"page watchdog\") }"))
+        val hold = web.substringAfter("fun postOtherMediaHold(generation: Int) {")
+            .substringBefore("private val droppedResume")
+        assertTrue(hold.contains("main.post {"))
+        assertTrue(hold.contains("if (generation != webGeneration) return@post"))
+        assertTrue(hold.contains("!current.playing && !current.buffering && !current.userPaused"))
+        assertTrue(hold.contains("!current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertTrue(hold.contains("startOtherMediaHold(\"page watchdog\")"))
+        assertTrue(hold.indexOf("if (generation != webGeneration) return@post") <
+            hold.indexOf("startOtherMediaHold"))
+        assertTrue(hold.contains("window.__aay.mediaHold(false)"))
     }
 
     @Test fun manualPauseOrPlayCancelsAPendingAutomaticDecision() {
