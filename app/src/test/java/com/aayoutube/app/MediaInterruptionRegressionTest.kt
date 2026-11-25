@@ -93,4 +93,11 @@ class MediaInterruptionRegressionTest {
         assertTrue(web.contains("incoming.buffering || incoming.id != previous.id || !playbackWanted"))
         assertTrue(web.contains("incoming.playing || incoming.id != previous.id || !playbackWanted"))
     }
+    @Test fun recoveryBudgetIsNotSharedAcrossDifferentVideos() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("if (incoming.id != previous.id) resetResumeBudget()"))
+        assertTrue(web.contains("resumeWindowAt = 0L"))
+        assertTrue(web.contains("unregisterThermalWatch()\n        resetResumeBudget()"))
+        assertTrue(web.contains("removeThermalStatusListener(listener)"))
+    }
 }
