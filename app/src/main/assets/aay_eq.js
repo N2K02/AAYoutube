@@ -331,7 +331,7 @@
   }
 
   function attach(v) {
-    if (!v || EQ.hooked.has(v)) return;
+    if (!v || v.isConnected === false || EQ.hooked.has(v)) return;
     if (!want()) { report(settled()); return; }
     if (!needsRoute()) { if (!EQ.count) report('waiting'); return; }
     var src = v.currentSrc || v.src || '';
@@ -357,7 +357,7 @@
     }
     var ctx = EQ.ctx;
     var go = function () {
-      if (EQ.hooked.has(v)) return;
+      if (v.isConnected === false || v.paused || v.ended || EQ.hooked.has(v)) return;
       if (ctx.state !== 'running') { if (!EQ.count) report('unsupported'); return; }
       try {
         ctx.createMediaElementSource(v).connect(EQ.g.input);
@@ -375,7 +375,10 @@
   }
 
   function anyPlaying() {
-    for (var i = 0; i < EQ.els.length; i++) if (EQ.els[i].isConnected !== false && !EQ.els[i].paused && !EQ.els[i].ended) return true;
+    // Keep only connected elements in the strong-reference list. The WeakSet
+    // still remembers a previously routed element if YouTube reattaches it.
+    EQ.els = EQ.els.filter(function (v) { return v.isConnected !== false; });
+    for (var i = 0; i < EQ.els.length; i++) if (!EQ.els[i].paused && !EQ.els[i].ended) return true;
     return false;
   }
   // A routed element is silent while the context is suspended: resume at once,
@@ -404,7 +407,8 @@
   });
   function wake(e) {
     var t = e.target;
-    if (!(t instanceof HTMLMediaElement) || !EQ.hooked.has(t)) return;
+    if (!(t instanceof HTMLMediaElement) || t.isConnected === false || !EQ.hooked.has(t)) return;
+    if (EQ.els.indexOf(t) < 0) EQ.els.push(t);
     clearTimeout(EQ.idleTimer);
     EQ.idle = false;
     keepRunning();
@@ -417,8 +421,12 @@
   });
 
   function scan() {
+    anyPlaying(); // prune detached elements even during configuration updates
     var list = document.getElementsByTagName('video');
-    for (var i = 0; i < list.length; i++) if (!list[i].paused) attach(list[i]);
+    for (var i = 0; i < list.length; i++) if (!list[i].paused) {
+      attach(list[i]);
+      if (EQ.hooked.has(list[i])) wake({ target: list[i] });
+    }
   }
 
   document.addEventListener('playing', function (e) {
