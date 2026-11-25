@@ -36,11 +36,10 @@ class PlaybackTelemetryContractTest {
         assertTrue(host.contains("fun perf(payload: String, token: String?)"))
     }
 
-    @Test fun equalizerReportsActiveGraphNotAnInventedCpuValue() {
-        val eq = read("app/src/main/assets/aay_eq.js")
-        assertTrue(eq.contains("A.eqPerf = function ()"))
-        assertTrue(eq.contains("needsRoute() ? 'dsp' : 'bypass'"))
-        assertTrue(eq.contains("EQ.ctx ? EQ.ctx.state : 'none'"))
+    @Test fun playbackUsesNativeWebAudioOutput() {
+        val host = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(!host.contains("aay_eq.js"))
+        assertTrue(!host.contains("AAYSoundFx"))
     }
 
     @Test fun mediaCpuHasBoundedAverageAndPeak() {
