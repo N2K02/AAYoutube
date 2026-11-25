@@ -1,7 +1,7 @@
 # AAYouTube performance and decoder triage (experimental PR #54)
 
 These checks are **on-device measurements**, not predictions of energy use. On Android, a hardware
-decoder may be active while the app's UI, Chromium renderer, compositor, and Web Audio DSP
+decoder may be active while the app's UI, Chromium renderer, compositor
 still consume substantial CPU. Never infer active decoder hardware solely from supported codec lists.
 
 ## Logging and counters (no private media URLs or video IDs)
@@ -9,7 +9,7 @@ still consume substantial CPU. Never infer active decoder hardware solely from s
 * `AAYouTube-PERF` every ~30 seconds of active playback: `webCpuPct`, rolling 10-sample
   `webAvgPct`/`webPeakPct`, `domTicks`/`domMs`/`mutations`/`longTasks`, `resourceLoads`,
   `layoutChanges`, `refits`, `recoveries`, `frames`, `droppedPct`, video dimensions,
-  reported codec, quality tier, thermal status, and the equalizer mode.
+  reported codec, quality tier, thermal status.
   `resourceLoads` measures page *loadstart* notifications, **not** native decoder creations.
   `frames=0`, `droppedPct=-1` or `codec=unknown` may mean the browser API could not supply
   a measurement. `domMs` is sampled JS wall time, **not** CPU time.
@@ -17,7 +17,6 @@ still consume substantial CPU. Never infer active decoder hardware solely from s
   process CPU usage, 10-sample average and peak, wake-lock and screen state.
 * `rendererCpuPct=adb-only`: sandboxed Chromium renderer CPU cannot be read reliably
   by the application's JavaScript bridge. Read the process directly through ADB.
-* `eq=bypass:*` means DSP is not routed; `eq=dsp:running:1` means a live Web Audio graph.
   This proves mode only: Web Audio does **not** expose its audio thread's CPU percentage.
 
 ## ADB experiments
@@ -25,8 +24,8 @@ still consume substantial CPU. Never infer active decoder hardware solely from s
 Run at least 2 minutes per scenario, with the **same video and brightness**.
 After the first 30-second warmup, compare the last 3+ performance samples:
 
-1. Foreground playback 360p or 720p, equalizer off, no PiP.
-2. Identical playback, equalizer effects enabled, compare CPU and temperature.
+1. Foreground playback 360p or 720p, no PiP.
+2. Identical playback in background, compare CPU and temperature.
 3. Fullscreen → mini-player → fullscreen → PiP → fullscreen. Count changes to
    `layoutChanges` and `resourceLoads`; inspect black frames and audible continuity.
 4. Screen-off audio-only, then screen on. Check background saver and wake-lock state.
