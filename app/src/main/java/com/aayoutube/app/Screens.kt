@@ -52,6 +52,7 @@ import kotlin.math.roundToInt
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -548,7 +549,7 @@ fun AppRoot(activity: MainActivity) {
                     .then(
                         if (phoneLandscape) Modifier.statusBarsPadding().padding(top = 8.dp)
                         else Modifier.padding(horizontal = 8.dp)
-                    ).then(railDrag).zIndex(20f),
+                    ).wrapContentSize().zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
                 val updateStatus by LiveUpdater.controller.status.collectAsState()
@@ -567,6 +568,9 @@ fun AppRoot(activity: MainActivity) {
                     onPrevious = { WebHost.cmd("prev"); topMenuEpoch++ },
                     onNext = { WebHost.cmd("next"); topMenuEpoch++ },
                     vertical = ControlsSidePolicy.vertical(phoneLandscape),
+                    modifier = railDrag,
+                    availableWidth = if (phoneLandscape) screenCfg.screenWidthDp.dp else null,
+                    extraCount = if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing)) 4 else 3,
                 ) { size ->
                     BarIcon(
                         Icons.Filled.MusicNote,
@@ -589,13 +593,23 @@ fun AppRoot(activity: MainActivity) {
                             topMenuEpoch++
                         },
                         tint = if (VideoFitPolicy.normalize(flags.videoFit) != "fit") MaterialTheme.colorScheme.primary else null)
-                    Box {
+                    Box(Modifier.size(size.button), contentAlignment = Alignment.Center) {
                         BarIcon(Icons.Filled.Settings, "Settings", size,
-                            onClick = { tab = Tab.Settings.ordinal })
-                        dev.n2k02.updater.N2K02UpdateBadge(
-                            updateStatus,
-                            modifier = Modifier.align(Alignment.TopEnd),
-                        )
+                            onClick = { tab = Tab.Settings.ordinal; topMenuEpoch++ })
+                        // A text badge can cover a compact gear. Keep its indicator
+                        // inside the fixed Settings slot without obscuring the icon.
+                        if (phoneLandscape) {
+                            if (updateStatus.hasPendingUpdate()) {
+                                androidx.compose.material3.Badge(
+                                    modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
+                                )
+                            }
+                        } else {
+                            dev.n2k02.updater.N2K02UpdateBadge(
+                                updateStatus,
+                                modifier = Modifier.align(Alignment.TopEnd),
+                            )
+                        }
                     }
                     // Quit stops playback, services and the WebViews, then closes AAYoutube.
                     BarIcon(Icons.Rounded.PowerSettingsNew, "Quit AAYoutube", size,
