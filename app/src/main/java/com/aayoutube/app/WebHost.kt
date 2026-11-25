@@ -556,6 +556,7 @@ object WebHost {
             " playing=$play position=${state.posMs / 1000}s")
         // A display transition is not Quit. Preserve car ownership, MediaSession,
         // snapshot and cookies; replace only the renderer and its cached services.
+        cancelOtherMediaWork("Renderer display changed")
         exitFullscreen()
         web = null
         webGeneration++
@@ -1743,13 +1744,13 @@ object WebHost {
             userPausedAt = SystemClock.elapsedRealtime()
         } else if (incoming.playing) playbackWanted = true
         if (incoming.ended || incoming.id.isBlank()) playbackWanted = false
-        if (incoming.playing || !playbackWanted) {
-            // A resume/hold decision still pending from an earlier pause is obsolete.
+        if (incoming.playing || incoming.buffering || incoming.id != previous.id || !playbackWanted) {
+            // A decision for an older video or playback state is obsolete.
             main.removeCallbacks(droppedResume)
             main.removeCallbacks(droppedResumeJudge)
         }
-        if (otherMediaHeldSince != 0L && (incoming.playing || !playbackWanted))
-            endOtherMediaHold(if (incoming.playing) "playing again" else "paused or ended")
+        if (otherMediaHeldSince != 0L && (incoming.playing || incoming.id != previous.id || !playbackWanted))
+            endOtherMediaHold(if (incoming.playing) "playing again" else "selection changed, paused or ended")
         // Keep foreground media priority while the active watchdog retries a
         // spontaneous pause. Never preserve this for explicit Pause or ending.
         val s = incoming.copy(recovering = !incoming.playing && !incoming.userPaused &&
