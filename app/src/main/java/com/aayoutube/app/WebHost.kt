@@ -1567,12 +1567,19 @@ object WebHost {
         runCatching { app.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
 
     internal fun postOtherMediaHold(generation: Int) {
-        main.post { if (generation == webGeneration) startOtherMediaHold("page watchdog") }
+        main.post {
+            if (generation != webGeneration) return@post
+            val current = snapshot.value
+            if (!current.playing && !current.buffering && !current.userPaused &&
+                !current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()) {
+                startOtherMediaHold("page watchdog")
+            }
+        }
     }
 
     private val droppedResume = Runnable {
         val s = snapshot.value
-        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         // isMusicActive cannot say WHOSE audio is active: first make sure our own
         // Web Audio equalizer output is closed, then judge what is still playing.
         js("window.__aay&&window.__aay.eqIdleNow&&window.__aay.eqIdleNow()")
@@ -1582,7 +1589,7 @@ object WebHost {
 
     private val droppedResumeJudge = Runnable {
         val s = snapshot.value
-        if (s.playing || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         if (otherMediaActive()) startOtherMediaHold("native resume") else cmd("play")
     }
 
