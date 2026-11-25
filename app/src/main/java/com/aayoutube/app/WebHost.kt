@@ -1194,6 +1194,8 @@ object WebHost {
         // Quit, idle shutdown and renderer replacement: no hold, listener, timed wake
         // lock or delayed resume may outlive (or act on the successor of) this renderer.
         cancelOtherMediaWork("WebView released")
+        unregisterThermalWatch()
+        resetResumeBudget()
         cancelTransportTrace()
         modeHandoffStartedAt = 0L
         exitFullscreen()
@@ -1503,6 +1505,12 @@ object WebHost {
     private var resumeWindowAt = 0L
     private var unexpectedPauseRecoveryUntil = 0L
 
+    private fun resetResumeBudget() {
+        resumeTries = 0
+        resumeWindowAt = 0L
+        unexpectedPauseRecoveryUntil = 0L
+    }
+
     /** The screen went to the background, into picture in picture, or came back. */
     fun noteVisibilityChange() {
         // Keep the retry budget across layout transitions; it is reset by elapsed time.
@@ -1552,16 +1560,28 @@ object WebHost {
     }
 
     // Device heat: above SEVERE the page caps quality at 1080p until it cools.
-    private var thermalRegistered = false
+    private var thermalListener: Any? = null
     private fun registerThermalWatch() {
-        if (thermalRegistered || android.os.Build.VERSION.SDK_INT < 29) return
+        if (thermalListener != null || android.os.Build.VERSION.SDK_INT < 29) return
         runCatching {
             val pm = app.getSystemService(android.os.PowerManager::class.java)
-            pm.addThermalStatusListener(app.mainExecutor) { status ->
-                AppLog.add("VIDEO", "Thermal status=$status")
-                js("window.__aay&&window.__aay.thermal&&window.__aay.thermal($status)")
+            val listener = android.os.PowerManager.OnThermalStatusChangedListener { status ->
+                if (thermalListener != null && web != null) {
+                    AppLog.add("VIDEO", "Thermal status=$status")
+                    js("window.__aay&&window.__aay.thermal&&window.__aay.thermal($status)")
+                }
             }
-            thermalRegistered = true
+            pm.addThermalStatusListener(app.mainExecutor, listener)
+            thermalListener = listener
+        }
+    }
+
+    private fun unregisterThermalWatch() {
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        val listener = thermalListener as? android.os.PowerManager.OnThermalStatusChangedListener ?: return
+        thermalListener = null
+        runCatching {
+            app.getSystemService(android.os.PowerManager::class.java).removeThermalStatusListener(listener)
         }
     }
     private fun thermalStatus(): Int = if (android.os.Build.VERSION.SDK_INT < 29) 0 else
@@ -1739,6 +1759,7 @@ object WebHost {
             modeHandoffStartedAt = 0L
         }
         val previous = snapshot.value
+        if (incoming.id != previous.id) resetResumeBudget()
         if (incoming.userPaused && !incoming.playing) {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
