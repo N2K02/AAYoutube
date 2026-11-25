@@ -343,7 +343,8 @@
       userPauseEligibleUntil = Date.now() + 2000;
     }
   }
-  document.addEventListener('pointerdown', manualPauseGesture, true);
+  // Commit intent once, on click, rather than on pointerdown before a drag
+  // or before YouTube has decided which control was actually activated.
   document.addEventListener('click', manualPauseGesture, true);
   // Some mobile YouTube builds render an always-Play button after an
   // involuntary page pause while the actual <video> continues playing.
@@ -2678,11 +2679,12 @@
       qualityApply.player = p;
       qualityApply.key = key;
       qualityApply.at = Date.now();
+      var appliedAt = qualityApply.at;
       // Record actual vs requested quality for diagnosis, without forcing more
       // source changes when the server/device cannot serve the requested tier.
       later(function () {
         try {
-          if (qualityApply.key === key && typeof p.getPlaybackQuality === 'function')
+          if (qualityApply.player === p && qualityApply.key === key && qualityApply.at === appliedAt && typeof p.getPlaybackQuality === 'function')
             console.log('[aay] quality requested=' + chosen + ' actual=' + p.getPlaybackQuality());
         } catch (e) {}
       }, 1500);
