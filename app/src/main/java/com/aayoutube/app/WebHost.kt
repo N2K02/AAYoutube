@@ -1592,7 +1592,9 @@ object WebHost {
     private val droppedResumeJudge = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
-        if (otherMediaActive()) startOtherMediaHold("native resume") else cmd("play")
+        val active = otherMediaActive()
+        AppLog.add("FOCUS", "Native recovery decision: external audio or residual output=$active")
+        if (active) startOtherMediaHold("native resume") else cmd("play")
     }
 
     // ------------------------------------------------- other app's media (audio focus)
@@ -1686,7 +1688,8 @@ object WebHost {
             when (OtherMediaHoldPolicy.step(active, otherMediaHeldSince, otherMediaQuietSince, now)) {
                 // Screen off, this delay may stretch while the CPU sleeps; the
                 // playback/mode callbacks wake it on the change that matters.
-                OtherMediaHoldPolicy.Step.KEEP_HOLDING -> main.postDelayed(this, 1_000L)
+                OtherMediaHoldPolicy.Step.KEEP_HOLDING -> main.postDelayed(this,
+                    OtherMediaHoldPolicy.pollDelay(active, otherMediaQuietSince, now))
                 OtherMediaHoldPolicy.Step.RESUME -> {
                     endOtherMediaHold("other media stopped")
                     if (keepRecovering()) cmd("play")
