@@ -71,6 +71,8 @@ class MediaInterruptionRegressionTest {
         assertTrue(web.contains("if (generation != webGeneration) return@post"))
         assertTrue(web.contains("!current.playing && !current.buffering && !current.userPaused"))
         assertTrue(web.contains("current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertTrue(web.contains("else if (otherMediaHeldSince == 0L)"))
+        assertTrue(web.contains("window.__aay.mediaHold(false)"))
         assertEquals(2, Regex("s.playing \\|\\| s.buffering \\|\\| !playbackWanted").findAll(web).count())
     }
 
