@@ -315,6 +315,44 @@ test('car mini player recovers an unexpected pause but honours explicit pause', 
   assert.equal(p.video.paused, true, 'mini player must honour the user pause');
 });
 
+test('car video to audio handoff recovers before the normal watchdog interval', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.window.__aay.car(false);
+  p.window.__aay.setBg(true);
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, false, 'handoff must recover without waiting five seconds');
+});
+
+test('car handoff recovery never overrides explicit Pause', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.window.__aay.cmd('pause');
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, true);
+});
+
+test('car handoff recovery respects other active audio', () => {
+  const other = { active: false };
+  const p = playerPage({ car: true, otherMedia: other });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  other.active = true;
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, true);
+});
+
 test('pause caused by another app playing media is not resumed until it stops', () => {
   const other = { active: false };
   const p = playerPage({ otherMedia: other });
