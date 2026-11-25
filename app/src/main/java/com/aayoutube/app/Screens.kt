@@ -69,7 +69,6 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.OndemandVideo
 import dev.n2k02.updater.hasPendingUpdate
 import androidx.compose.material3.BadgedBox
@@ -436,7 +435,6 @@ fun AppRoot(activity: MainActivity) {
     }
     val goBack: () -> Unit = {
         when (PlayerNavigationPolicy.back(
-            equalizerOpen = false,
             fullscreen = fullscreen != null,
             landscapeFill = WebHost.landscapeFill.value,
             onSettingsTab = tab == Tab.Settings.ordinal,
@@ -444,7 +442,6 @@ fun AppRoot(activity: MainActivity) {
             fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
             onWatchPage = WebHost.isOnWatchPage(),
         )) {
-            PlayerNavigationPolicy.Back.CloseEqualizer -> Unit
             PlayerNavigationPolicy.Back.ExitFullscreen -> WebHost.exitFullscreen()
             // Landscape video: Back first shows the watch page (player + playlist).
             PlayerNavigationPolicy.Back.ShowWatchPage -> WebHost.dismissLandscapeFill()
