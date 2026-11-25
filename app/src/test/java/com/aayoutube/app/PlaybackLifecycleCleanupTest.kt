@@ -39,12 +39,15 @@ class PlaybackLifecycleCleanupTest {
 
     @Test fun manualPauseOrPlayCancelsAPendingAutomaticDecision() {
         val publish = web.substringAfter("private fun publish(incoming: Snap) {").substringBefore("val key =")
-        assertTrue(publish.contains("if (incoming.playing || !playbackWanted) {"))
+        assertTrue(publish.contains("if (incoming.playing || incoming.buffering || incoming.id != previous.id || !playbackWanted) {"))
+        assertTrue(publish.contains("main.removeCallbacks(droppedResume)"))
         assertTrue(publish.contains("main.removeCallbacks(droppedResumeJudge)"))
     }
 
     @Test fun thermalStatusReachesThePage() {
-        assertTrue(web.contains("pm.addThermalStatusListener(app.mainExecutor)"))
+        assertTrue(web.contains("pm.addThermalStatusListener(app.mainExecutor, listener)"))
+        assertTrue(web.contains("removeThermalStatusListener(listener)"))
+        assertTrue(web.contains("if (thermalListener != null && web != null)"))
         assertTrue(web.contains("window.__aay.thermal(\$status)"))
         assertTrue(web.contains(".put(\"thermal\", thermalStatus())"))
     }
