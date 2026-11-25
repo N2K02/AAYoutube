@@ -402,8 +402,7 @@ object WebHost {
     // ---------------------------------------------------------------- the page script
 
     internal fun script(): String {
-        val source = jsSource ?: (app.assets.open("aay.js").bufferedReader().use { it.readText() } + "\n" +
-            app.assets.open("aay_eq.js").bufferedReader().use { it.readText() }).also { jsSource = it }
+        val source = jsSource ?: app.assets.open("aay.js").bufferedReader().use { it.readText() }.also { jsSource = it }
         registerThermalWatch()
         val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
             .put("thermal", thermalStatus())
@@ -425,7 +424,7 @@ object WebHost {
         if (generation != webGeneration) return
         main.post {
             if (generation != webGeneration) return@post
-            AAYSoundFx.onWebAudioStatus(status)
+            // Legacy bridge reports are ignored; playback uses Chromium output.
         }
     }
 
@@ -1206,7 +1205,6 @@ object WebHost {
     /** Frees the WebView completely (nothing is playing and no screen is open). */
     fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
-        AAYSoundFx.shutdown() // immediately retire any shared output-mix effects
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
@@ -1240,7 +1238,6 @@ object WebHost {
         carWindowId = null
         frozen = false
         snapshot.value = Snap()
-        AAYSoundFx.onPlaybackChanged(false)
         selectedWatchVideoId.value = ""
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
@@ -1784,7 +1781,6 @@ object WebHost {
         }
         snapshot.value = s
         updateBackgroundPlaybackProbe()
-        AAYSoundFx.onPlaybackChanged(s.playing)
         if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
         if (!s.playing && !shown) scheduleFreeze()
@@ -1878,7 +1874,6 @@ object WebHost {
                 playbackWanted = false
                 unexpectedPauseRecoveryUntil = 0L
                 snapshot.value = Snap()
-                AAYSoundFx.onPlaybackChanged(false)
                 send(Msg.STATE, Snap().toBundle())
                 AppLog.add("PLAY", "Navigation cleared previous media session")
             }
@@ -1903,7 +1898,6 @@ object WebHost {
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
-            view.evaluateJavascript("window.__aay&&window.__aay.eq&&window.__aay.eq(${AAYSoundFx.webAudioJson()})", null)
             sameVideoReloadPosition?.let { (videoId, positionMs) ->
                 if (runCatching { Uri.parse(url).getQueryParameter("v") }.getOrNull() == videoId) {
                     val seconds = positionMs / 1000.0
