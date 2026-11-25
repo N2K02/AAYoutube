@@ -87,4 +87,10 @@ class MediaInterruptionRegressionTest {
         assertTrue(js.contains("try { overloadCheck(getVideo()); } catch (e) {}"))
         assertTrue(js.contains("var q = capForDevice(savedQuality());"))
     }
+    @Test fun staleRecoveryIsCancelledWhenVideoOrRendererChanges() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("cancelOtherMediaWork(\"Renderer display changed\")"))
+        assertTrue(web.contains("incoming.buffering || incoming.id != previous.id || !playbackWanted"))
+        assertTrue(web.contains("incoming.playing || incoming.id != previous.id || !playbackWanted"))
+    }
 }
