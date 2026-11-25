@@ -10,12 +10,13 @@ internal class QueueUpdateGate {
 
     fun items(): List<QItem> = queue
 
-    fun update(reported: List<QItem>): Boolean {
+    fun update(reported: List<QItem>, retainDuringTransition: Boolean = false): Boolean {
         val next = reported.asSequence()
             .filter { it.id.isNotBlank() }
             .distinctBy { it.id }
             .take(40)
             .toList()
+        if (next.isEmpty() && retainDuringTransition) return false
         if (next == queue) return false
         queue = next
         return true
