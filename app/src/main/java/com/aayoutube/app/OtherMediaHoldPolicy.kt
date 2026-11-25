@@ -9,7 +9,7 @@ internal object OtherMediaHoldPolicy {
     /** Chromium pauses on focus loss before the other app's output starts. */
     const val SETTLE_MS = 1_500L
     const val QUIET_MS = 2_000L
-    /** Our Web Audio equalizer output is suspended before judging other media. */
+    /** Allow playback state to settle before judging other media. */
     const val SELF_SILENCE_MS = 400L
     /** Timed wake lock per playback/mode callback: enough for the quiet check. */
     const val WAKE_CHECK_MS = 5_000L
