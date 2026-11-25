@@ -17,7 +17,7 @@ internal object PlayerNavigationPolicy {
     }
 
     enum class Back {
-        CloseEqualizer, ExitFullscreen, ShowWatchPage, ToWatchTab, ToSettingsTab,
+        ExitFullscreen, ShowWatchPage, ToWatchTab, ToSettingsTab,
         /** Mini / closed player: back through the browse page, else leave (never on the car). */
         BrowseBack,
         Mini,
@@ -26,7 +26,6 @@ internal object PlayerNavigationPolicy {
     }
 
     fun back(
-        equalizerOpen: Boolean,
         fullscreen: Boolean,
         landscapeFill: Boolean,
         onSettingsTab: Boolean,
@@ -34,7 +33,6 @@ internal object PlayerNavigationPolicy {
         fullPlayer: Boolean,
         onWatchPage: Boolean,
     ): Back = when {
-        equalizerOpen -> Back.CloseEqualizer
         fullscreen -> Back.ExitFullscreen
         landscapeFill -> Back.ShowWatchPage
         onSettingsTab -> Back.ToWatchTab
