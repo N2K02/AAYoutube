@@ -294,7 +294,12 @@
   // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
   // A short transit window drops those involuntary pauses; a real tap on Pause
   // still wins through userPauseEligibleUntil.
-  var transitUntil = 0;
+  var transitUntil = 0, modeTransitUntil = 0, modeRecoveryTimer = 0;
+  A.modeTransit = function () {
+    modeTransitUntil = Date.now() + 4000;
+    A.transit(4000);
+    console.log('[aay] car mode handoff started');
+  };
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
   function holding() { return !bgWatch.held && (inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini))); }
@@ -1564,7 +1569,7 @@
   /* WebView timers may be throttled with the screen off. Check only when the
    * user's last intent was to play; explicit media pauses and completed videos win.
    */
-  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0, held: false, pausedAt: 0 };
+  var bgWatch = { id: '', wanted: false, explicitPause: false, attempts: 0, lastAttemptAt: 0, held: false, pausedAt: 0, playingSince: 0 };
   // Another app took the audio (music, video, call): Chromium paused us. Do not
   // grab focus back; native resumes once the other media has stopped.
   var MEDIA_SETTLE_MS = 2500;
@@ -1627,7 +1632,10 @@
     }
     if (!v.paused) {
       bgWatch.wanted = true;
-      bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+      if (!bgWatch.playingSince) bgWatch.playingSince = Date.now();
+      if (Date.now() - bgWatch.playingSince >= 3000) {
+        bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+      }
       return;
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
@@ -1637,7 +1645,8 @@
     if (v.readyState === 0 && !v.currentSrc && !v.src) return;
     // Let an audio-focus handoff settle: the other app starts its output shortly
     // after Chromium pauses us, so an instant resume would steal focus back.
-    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < MEDIA_SETTLE_MS) return;
+    var modeHandoff = Date.now() < modeTransitUntil;
+    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < (modeHandoff ? 400 : MEDIA_SETTLE_MS)) return;
     try {
       if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold(BRIDGE_TOKEN)) {
         bgWatch.held = true;
@@ -1648,7 +1657,7 @@
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
-    var retryMs = Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)));
+    var retryMs = modeHandoff ? 750 : Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)));
     if (bgWatch.lastAttemptAt && now - bgWatch.lastAttemptAt < retryMs) return;
     bgWatch.lastAttemptAt = now;
     bgWatch.attempts++;
@@ -1698,11 +1707,19 @@
           else {
             PAUSED = false;
             bgWatch.wanted = true; bgWatch.explicitPause = false;
-            bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
+            if (!bgWatch.playingSince) bgWatch.playingSince = Date.now();
           }
         }
         if (ev === 'playing') later(syncPlayerState, 100);
-        if (ev === 'pause') bgWatch.pausedAt = Date.now();
+        if (ev === 'pause') {
+          bgWatch.pausedAt = Date.now(); bgWatch.playingSince = 0;
+          if (Date.now() < modeTransitUntil && !PAUSED && !bgWatch.held && !modeRecoveryTimer) {
+            modeRecoveryTimer = setTimeout(function () {
+              modeRecoveryTimer = 0;
+              if (Date.now() < modeTransitUntil) backgroundWatchdog();
+            }, 800);
+          }
+        }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
           if (qualityState.reset) restoreAfterSourceChange(v);
