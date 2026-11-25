@@ -505,9 +505,10 @@ object WebHost {
             webDisplayId, targetDisplay, carWindowId, targetWindow)
         if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)
         val w = ensureWeb(context)
+        val sameBinding = w.parent === frame && carWindowId == targetWindow && reason == null
         if (w.parent !== frame) (w.parent as? ViewGroup)?.removeView(w)
         carWindowId = targetWindow
-        AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
+        if (!sameBinding) AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1) + " window=" +
             (targetWindow?.let { Integer.toHexString(it) } ?: "none") +
             " renderer=" + (reason?.let { "new($it)" } ?: "kept"))
@@ -1573,6 +1574,10 @@ object WebHost {
             if (!current.playing && !current.buffering && !current.userPaused &&
                 !current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()) {
                 startOtherMediaHold("page watchdog")
+            } else if (otherMediaHeldSince == 0L) {
+                // The bridge returned a provisional hold to JS. Release it if
+                // playback changed or the external output stopped before validation.
+                js("window.__aay&&window.__aay.mediaHold&&window.__aay.mediaHold(false)")
             }
         }
     }
