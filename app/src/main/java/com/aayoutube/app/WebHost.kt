@@ -713,6 +713,10 @@ object WebHost {
 
     fun detach(container: ViewGroup) {
         val mine = web?.parent === container
+        if (mine && carShown && playbackWanted) {
+            js("window.__aay&&window.__aay.modeTransit&&window.__aay.modeTransit()")
+            AppLog.add("CAR", "Playback handoff before car surface detach")
+        }
         container.removeAllViews()
         // Another screen (phone or car) may already have taken the page over; leave it alone then.
         if (mine) wrapper?.setBaseContext(app)
@@ -755,6 +759,10 @@ object WebHost {
         val alreadyProjected = carShown
         if (on) carOwners.add(owner) else carOwners.remove(owner)
         carShown = carOwners.isNotEmpty()
+        if (alreadyProjected != carShown && playbackWanted) {
+            js("window.__aay&&window.__aay.modeTransit&&window.__aay.modeTransit()")
+            AppLog.add("CAR", "Playback mode handoff video=$carShown")
+        }
         if (!carShown) setCarPage(false)
         if (alreadyProjected && !carShown) {
             playingWhenCarLeft = snapshot.value.playing
