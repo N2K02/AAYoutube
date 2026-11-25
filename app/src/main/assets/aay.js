@@ -1922,11 +1922,12 @@
   var skipSerial = 0;
   function skipIdentity() {
     var pv = playerVideo();
-    return { player: (pv && pv.video_id) || '', route: urlId() };
+    return { player: (pv && pv.video_id) || '', route: urlId(), video: getVideo() };
   }
   function hasNavigated(origin) {
     var now = skipIdentity();
-    return !!((now.player && now.player !== origin.player && now.player !== origin.route) ||
+    return !!((now.video && origin.video && now.video !== origin.video) ||
+      (now.player && now.player !== origin.player && now.player !== origin.route) ||
       (now.route && now.route !== origin.route && now.route !== origin.player));
   }
   function fallbackSkip(direction) {
