@@ -1541,8 +1541,14 @@ object WebHost {
         // in visible phone/car, mini-player or PiP still deserve recovery.
         if (background && !Features.current.backgroundPlay) return
         val mini = mode.value == PlayerMode.MINI && !inPip.value
-        if (now - userPausedAt <= 5_000L) return
+        if (new.userPaused || !playbackWanted || now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
+        // During the bounded car handoff the page owns fast recovery. Avoid
+        // competing native Play commands while the decoder is changing surfaces.
+        if (modeHandoffStartedAt != 0L && now - modeHandoffStartedAt < 4_000L) {
+            AppLog.add("PLAY", "Native recovery deferred to car mode handoff")
+            return
+        }
         if (now - resumeWindowAt > 60_000L) {
             resumeWindowAt = now
             resumeTries = 0
