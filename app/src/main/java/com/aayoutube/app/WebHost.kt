@@ -157,11 +157,14 @@ object WebHost {
     private var skipTraceActive = false
     private var skipTraceExpected: String? = null
     private var skipTraceOrigin = ""
+    private var skipTraceStartedAt = 0L
+    private var modeHandoffStartedAt = 0L
     private fun traceTransport(command: String, expected: String? = null) {
         val serial = ++skipTraceSerial
         skipTraceActive = true
         skipTraceExpected = expected
         skipTraceOrigin = snapshot.value.id
+        skipTraceStartedAt = SystemClock.elapsedRealtime()
         AppLog.add("MEDIA", "WebView received $command origin=$skipTraceOrigin expected=${expected.orEmpty()} serial=$serial")
         main.postDelayed({
             if (skipTraceSerial != serial) return@postDelayed
@@ -179,7 +182,7 @@ object WebHost {
         if (current.id.isNotBlank() && current.playing &&
             (if (expected != null) current.id == expected
              else current.id != skipTraceOrigin)) {
-            AppLog.add("MEDIA", "Transport confirmed: id=${current.id} playing=true")
+            AppLog.add("MEDIA", "Transport confirmed: id=${current.id} playing=true elapsedMs=${SystemClock.elapsedRealtime() - skipTraceStartedAt}")
             skipTraceExpected = null
             skipTraceActive = false
             skipTraceSerial++
@@ -761,6 +764,7 @@ object WebHost {
         carShown = carOwners.isNotEmpty()
         if (alreadyProjected != carShown && playbackWanted) {
             js("window.__aay&&window.__aay.modeTransit&&window.__aay.modeTransit()")
+            modeHandoffStartedAt = SystemClock.elapsedRealtime()
             AppLog.add("CAR", "Playback mode handoff video=$carShown")
         }
         if (!carShown) setCarPage(false)
@@ -1209,6 +1213,8 @@ object WebHost {
         // Quit, idle shutdown and renderer replacement: no hold, listener, timed wake
         // lock or delayed resume may outlive (or act on the successor of) this renderer.
         cancelOtherMediaWork("WebView released")
+        cancelTransportTrace()
+        modeHandoffStartedAt = 0L
         exitFullscreen()
         val w = web
         web = null
@@ -1741,6 +1747,10 @@ object WebHost {
 
     private fun publish(incoming: Snap) {
         confirmTransport(incoming)
+        if (modeHandoffStartedAt != 0L && incoming.playing && !incoming.buffering) {
+            AppLog.add("CAR", "Playback confirmed after mode handoff elapsedMs=${SystemClock.elapsedRealtime() - modeHandoffStartedAt}")
+            modeHandoffStartedAt = 0L
+        }
         val previous = snapshot.value
         if (incoming.userPaused && !incoming.playing) {
             playbackWanted = false
