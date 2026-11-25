@@ -12,12 +12,12 @@ class AAYoutubeApp : Application() {
         Features.init(this)
         LyricsPrefs.init(this)
         val migrations = getSharedPreferences("app_migrations", MODE_PRIVATE)
-        if (!migrations.getBoolean("retired_sound_v1", false)) {
-            val retiredSound = getSharedPreferences("aay_sound_fx", MODE_PRIVATE)
-            if (retiredSound.all.isEmpty() || deleteSharedPreferences("aay_sound_fx")) {
-                migrations.edit().putBoolean("retired_sound_v1", true).apply()
-            }
-        }
+        RetiredSoundMigration.run(
+            completed = migrations.getBoolean("retired_sound_v1", false),
+            hasLegacySettings = { getSharedPreferences("aay_sound_fx", MODE_PRIVATE).all.isNotEmpty() },
+            deleteLegacySettings = { deleteSharedPreferences("aay_sound_fx") },
+            markCompleted = { migrations.edit().putBoolean("retired_sound_v1", true).apply() },
+        )
         Library.init(this)
         WebHost.init(this)
         BrowseHost.init(this)
