@@ -60,6 +60,22 @@ class LegacyProjectionControlsContractTest {
         assertFalse(manifest.contains("android:name=\".CarVideoService\""))
     }
 
+    @Test fun landscapePillReservesEveryIconAndDoesNotOwnUnusedScreenSpace() {
+        val bar = source("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
+        val phone = source("app/src/main/java/com/aayoutube/app/Screens.kt")
+        assertTrue(bar.contains("Modifier.wrapContentSize().then(modifier)"))
+        assertTrue(phone.contains(").wrapContentSize().zIndex(20f)"))
+        assertTrue(phone.contains("modifier = railDrag,"))
+        assertTrue(phone.contains("Box(Modifier.size(size.button), contentAlignment = Alignment.Center)"))
+        for (width in listOf(320, 360, 480, 720)) {
+            for (count in listOf(8, 9)) {
+                val size = BarSize.horizontal(androidx.compose.ui.unit.Dp(width.toFloat()), count, false)
+                assertTrue(size.button.value * count + 4 * (count - 1) + 12 <= width + 0.01f)
+                assertTrue(size.icon.value > 0)
+            }
+        }
+    }
+
     @Test fun phoneAndCarShareFloatingIconOnlyBar() {
         val bar = source("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
         assertTrue(bar.contains("internal fun FloatingVideoBar("))
