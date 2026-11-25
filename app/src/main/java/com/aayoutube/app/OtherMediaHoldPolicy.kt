@@ -30,4 +30,8 @@ internal object OtherMediaHoldPolicy {
     /** Next quiet-since value for a poll: reset whenever something else is audible. */
     fun quietSince(previous: Long, othersActive: Boolean, now: Long): Long =
         if (othersActive) 0L else if (previous <= 0L) now else previous
+    /** Callbacks wake the poll immediately; use slower fallback while external audio is active. */
+    fun pollDelay(active: Boolean, quietSince: Long, now: Long): Long =
+        if (active) 2_000L else if (quietSince <= 0L) 1_000L
+        else (QUIET_MS - (now - quietSince)).coerceIn(100L, 1_000L)
 }
