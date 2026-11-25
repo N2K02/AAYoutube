@@ -1164,6 +1164,21 @@ test('anonymous center div tap resumes an explicitly paused video', () => {
   assert.equal(p.video.paused, false, 'watchdog also respects resumed play');
 });
 
+test('dialog and scrim taps over the video do not release explicit pause', () => {
+  for (const event of ['pointerdown', 'click']) {
+    const p = playerPage({ paused: true, car: true });
+    p.video.paused = true;
+    p.flush();
+    p.emit(event, {
+      isTrusted: true, clientX: 160, clientY: 90,
+      target: { tagName: 'DIV', closest: selector => selector.includes('ytw-scrim') ? {} : null },
+    });
+    p.video.play();
+    p.video.trigger('play');
+    assert.equal(p.video.paused, true, 'overlay must not permit autoplay');
+  }
+});
+
 test('outside video tap does not override an explicit pause', () => {
   const p = playerPage({ paused: true });
   p.video.paused = true;
