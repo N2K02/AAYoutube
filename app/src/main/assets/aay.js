@@ -1245,7 +1245,7 @@
   function report() {
     if (!N) return;
     // The page moved to another video: native ownership was only for the previous one.
-    if (nativeAudio.owned && nativeAudio.id && urlId() && urlId() !== nativeAudio.id) {
+    if (nativeAudio.owned && nativeAudio.id && qualityVideoId() && qualityVideoId() !== nativeAudio.id) {
       nativeAudio.owned = false; nativeAudio.id = '';
       console.log('[aay] native audio released: page changed video');
     }

@@ -105,9 +105,7 @@ class DefaultSabrSegmentFetcher(
         sessionManager.requestMetadataManager.put(httpUrl.toString(), resolvedMetadata)
 
         val abrRequest = buildAbrRequest(sessionManager, format, resolvedMetadata)
-        val abrRequestJson = abrRequest.toDebugJson()
-        resolvedMetadata.abrRequestJson = abrRequestJson
-        sessionManager.recordAbrRequestJson(abrRequestJson)
+        // Full request contains private session fields; never retain it for logging.
         logger.d(TAG) {
             val requestedRange = resolvedMetadata.requestedStartRange?.toString() ?: "unset"
             val requestedTime = resolvedMetadata.requestedStartTimeMs?.toString() ?: "unset"

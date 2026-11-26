@@ -71,9 +71,9 @@ internal class SabrUmpProcessor(
         if (result != null) {
             // Reset partial state after terminal result
             partialBuffer = null
-            android.util.Log.d(TAG, "UMP parts: ${partSummary.joinToString()}")
+            com.googlevideo.sabr.logging.QuietLog.d(TAG, "UMP parts: ${partSummary.joinToString()}")
         } else if (partSummary.isNotEmpty()) {
-            android.util.Log.d(TAG, "UMP parts (partial): ${partSummary.joinToString()}")
+            com.googlevideo.sabr.logging.QuietLog.d(TAG, "UMP parts (partial): ${partSummary.joinToString()}")
         }
 
         return result
@@ -98,7 +98,7 @@ internal class SabrUmpProcessor(
         val targetFormatKey = FormatKeyUtils.fromFormat(requestMetadata.format)
         val segmentFormatKey = FormatKeyUtils.fromMediaHeader(mediaHeader)
 
-        android.util.Log.d(
+        com.googlevideo.sabr.logging.QuietLog.d(
             TAG,
             "MEDIA_HEADER headerId=${mediaHeader.headerId} segmentKey=$segmentFormatKey targetKey=$targetFormatKey isInit=${mediaHeader.isInitSeg} startRange=${if (mediaHeader.hasStartRange()) mediaHeader.startRange else null} startTimeMs=${if (mediaHeader.hasStartMs()) mediaHeader.startMs else null} seq=${if (mediaHeader.hasSequenceNumber()) mediaHeader.sequenceNumber else null}"
         )
@@ -113,19 +113,19 @@ internal class SabrUmpProcessor(
 
         if (requestMetadata.isSabr && formatMatches) {
             if (!rangeMatches && mediaHeader.hasStartRange()) {
-                android.util.Log.w(
+                com.googlevideo.sabr.logging.QuietLog.w(
                     TAG,
                     "MEDIA_HEADER range mismatch headerId=${mediaHeader.headerId} startRange=${mediaHeader.startRange} requestedStartRange=$requestedRange seq=${if (mediaHeader.hasSequenceNumber()) mediaHeader.sequenceNumber else null}"
                 )
             }
             if (!timeMatches && mediaHeader.hasStartMs()) {
-                android.util.Log.w(
+                com.googlevideo.sabr.logging.QuietLog.w(
                     TAG,
                     "MEDIA_HEADER time mismatch headerId=${mediaHeader.headerId} startTimeMs=${mediaHeader.startMs} requestedStartTimeMs=$requestedTime seq=${if (mediaHeader.hasSequenceNumber()) mediaHeader.sequenceNumber else null}"
                 )
             }
         } else if (!formatMatches) {
-            android.util.Log.w(
+            com.googlevideo.sabr.logging.QuietLog.w(
                 TAG,
                 "MEDIA_HEADER format mismatch headerId=${mediaHeader.headerId} segmentKey=$segmentFormatKey targetKey=$targetFormatKey (ignoring)"
             )
@@ -140,9 +140,9 @@ internal class SabrUmpProcessor(
             )
             if (isTarget) {
                 desiredHeaderId = headerId
-                android.util.Log.d(TAG, "Desired header set to $headerId")
+                com.googlevideo.sabr.logging.QuietLog.d(TAG, "Desired header set to $headerId")
             } else {
-                android.util.Log.d(
+                com.googlevideo.sabr.logging.QuietLog.d(
                     TAG,
                     "Detected fallback segment headerId=$headerId range=${if (mediaHeader.hasStartRange()) mediaHeader.startRange else null} timeMs=${if (mediaHeader.hasStartMs()) mediaHeader.startMs else null}"
                 )
@@ -161,12 +161,12 @@ internal class SabrUmpProcessor(
         if (segment != null) {
             segment.lastChunkSize = buffer.length()
             buffer.chunkList.forEach(segment.bufferedChunks::add)
-            android.util.Log.d(
+            com.googlevideo.sabr.logging.QuietLog.d(
                 TAG,
                 "MEDIA chunk headerId=$actualId chunkBytes=${segment.lastChunkSize} total=${segment.bufferedChunks.sumOf { it.size }}"
             )
         } else {
-            android.util.Log.d(TAG, "MEDIA chunk dropped headerId=$actualId (no segment)")
+            com.googlevideo.sabr.logging.QuietLog.d(TAG, "MEDIA chunk dropped headerId=$actualId (no segment)")
         }
         return null
     }
@@ -182,7 +182,7 @@ internal class SabrUmpProcessor(
 
         if (!segment.isFallback && desired != null && headerId == desired) {
             val segmentBytes = concatenateChunks(segment.bufferedChunks)
-            android.util.Log.d(
+            com.googlevideo.sabr.logging.QuietLog.d(
                 TAG,
                 "MEDIA_END headerId=$headerId bufferedBytes=${segmentBytes.size} init=${segment.mediaHeader.isInitSeg} startRange=${if (segment.mediaHeader.hasStartRange()) segment.mediaHeader.startRange else null} startTimeMs=${if (segment.mediaHeader.hasStartMs()) segment.mediaHeader.startMs else null} seq=${if (segment.mediaHeader.hasSequenceNumber()) segment.mediaHeader.sequenceNumber else null}"
             )
@@ -217,7 +217,7 @@ internal class SabrUmpProcessor(
             return UmpProcessingResult(segmentBytes, done = true)
         } else if (segment.isFallback) {
             val fallbackBytes = concatenateChunks(segment.bufferedChunks)
-            android.util.Log.w(
+            com.googlevideo.sabr.logging.QuietLog.w(
                 TAG,
                 "FALLBACK_MEDIA headerId=$headerId bufferedBytes=${fallbackBytes.size} range=${if (segment.mediaHeader.hasStartRange()) segment.mediaHeader.startRange else null} timeMs=${if (segment.mediaHeader.hasStartMs()) segment.mediaHeader.startMs else null}"
             )
@@ -245,7 +245,7 @@ internal class SabrUmpProcessor(
         val playbackContextJson = requestMetadata.reloadPlaybackContextJson
             ?: requestMetadata.streamInfo?.reloadPlaybackContext?.let(::reloadContextToJson)
         val abrRequestJson = requestMetadata.abrRequestJson
-        android.util.Log.e(
+        com.googlevideo.sabr.logging.QuietLog.e(
             TAG,
             "SABR_ERROR type=$errorType code=$errorCode playbackContext=${playbackContextJson ?: "null"} abrRequest=${abrRequestJson ?: "null"}"
         )

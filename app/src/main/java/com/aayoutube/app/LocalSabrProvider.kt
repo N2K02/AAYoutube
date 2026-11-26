@@ -37,8 +37,9 @@ internal class LocalSabrProvider(
                 it.userInfo == null && it.fragment == null && (it.port == -1 || it.port == 443)
         }
         private fun expiry(url: URI): Long {
-            val seconds = url.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("expire=") }
-                ?.substringAfter('=')?.toLongOrNull() ?: return 0L
+            val raw = url.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("expire=") }
+                ?.substringAfter('=') ?: return 0L
+            val seconds = raw.toLongOrNull() ?: return -1L
             return seconds.takeIf { it in 1..9_000_000_000L }?.times(1000L) ?: -1L
         }
         private fun escape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -74,9 +75,10 @@ internal class LocalSabrProvider(
                     val direct = cdn(f.optString("url"))
                     if (direct != null) {
                         val expires = expiry(direct)
-                        if (expires == 0L || expires > nowMs + 30_000L)
+                        if (expires == 0L || expires > nowMs + 30_000L) {
                             candidates += AudioStream(direct.toASCIIString(), mime, codec, bitrate, rate, channels, expires)
-                        continue
+                            continue
+                        }
                     }
                     if (endpoint == null || !configOk) continue
                     val expires = expiry(endpoint)

@@ -29,5 +29,6 @@ class LocalSabrProviderTest {
         assertTrue(LocalSabrProvider.parse("abc", descriptor("https://googlevideo.com.evil.test/x").toString(), 1000) is StreamResult.Unavailable)
         assertTrue(LocalSabrProvider.parse("abc", descriptor().put("ustreamerConfig", "").toString(), 1000) is StreamResult.Unavailable)
         assertTrue(LocalSabrProvider.parse("abc", descriptor("https://r1.googlevideo.com/x?expire=1").toString(), 1000) is StreamResult.Unavailable)
+        assertTrue(LocalSabrProvider.parse("abc", descriptor("https://r1.googlevideo.com/x?expire=bad").toString(), 1000) is StreamResult.Unavailable)
     }
 }

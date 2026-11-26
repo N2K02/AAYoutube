@@ -17,6 +17,7 @@ import okhttp3.OkHttpClient
 import java.io.IOException
 import java.net.URI
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Audio-only SABR transport. Valid authorized session MPD supplied by the configured resolver. */
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
@@ -24,11 +25,12 @@ internal class SabrAudioSource private constructor(
     val source: MediaSource,
     private val client: OkHttpClient,
     private val manager: SabrSessionManager,
+    private val closed: AtomicBoolean,
 ) {
     fun updatePosition(positionMs: Long) {
         manager.updatePlaybackMetrics(playerPositionSeconds = positionMs.coerceAtLeast(0L) / 1000.0)
     }
-    fun close() { client.dispatcher.cancelAll(); client.connectionPool.evictAll() }
+    fun close() { closed.set(true); client.dispatcher.cancelAll(); client.connectionPool.evictAll() }
 
     companion object {
         fun create(stream: AudioStream): SabrAudioSource {
@@ -49,13 +51,16 @@ internal class SabrAudioSource private constructor(
             val manager = SabrSessionManager().apply { applyManifest(session.manifestInfo); updateActiveFormats(null, format) }
             val host = endpoint.host.lowercase()
             val googlevideo = host == "googlevideo.com" || host.endsWith(".googlevideo.com")
+            val closed = AtomicBoolean(false)
+            val allowedPort = if (endpoint.port == -1) 443 else endpoint.port
             val client = OkHttpClient.Builder()
                 .followRedirects(false).followSslRedirects(false)
                 .connectTimeout(5, TimeUnit.SECONDS).readTimeout(5, TimeUnit.SECONDS)
                 .callTimeout(10, TimeUnit.SECONDS)
                 .addInterceptor { chain ->
                     val url = chain.request().url
-                    if (!url.isHttps || !(url.host == host || (googlevideo && url.host.endsWith(".googlevideo.com"))))
+                    if (closed.get() || !url.isHttps || url.port != allowedPort ||
+                        !(url.host == host || (googlevideo && url.host.endsWith(".googlevideo.com"))))
                         throw IOException("SABR destination rejected")
                     chain.proceed(chain.request())
                 }.build()
@@ -67,7 +72,7 @@ internal class SabrAudioSource private constructor(
             val source = DashMediaSource.Factory(DefaultDashChunkSource.Factory(chunks), manifest)
                 .createMediaSource(MediaItem.Builder().setUri("https://example.invalid/aay.sabr.mpd")
                     .setMimeType(MimeTypes.APPLICATION_MPD).build())
-            return SabrAudioSource(source, client, manager)
+            return SabrAudioSource(source, client, manager, closed)
         }
     }
 }
