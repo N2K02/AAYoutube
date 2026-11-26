@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
@@ -1609,6 +1610,21 @@ private fun NowPlayingOnCarScreen(snap: Snap, modifier: Modifier = Modifier) {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
+                }
+                // Both screens control the same renderer and media session.
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { WebHost.cmd("prev") }, enabled = snap.id.isNotBlank()) {
+                        Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous video")
+                    }
+                    IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
+                        enabled = snap.id.isNotBlank()) {
+                        Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = if (snap.playing) "Pause" else "Play")
+                    }
+                    IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.id.isNotBlank()) {
+                        Icon(Icons.Filled.SkipNext, contentDescription = "Next video")
                     }
                 }
                 // Progress bar (only for non-live finite content)
