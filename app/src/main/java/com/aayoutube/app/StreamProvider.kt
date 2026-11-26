@@ -134,6 +134,14 @@ internal object StreamSelection {
                 { it.bitrate },
             ))
 
+    /** Rank all available audio variants using exact stream/route offload eligibility. */
+    fun bestForPlayback(streams: List<AudioStream>, caps: AudioCapabilities, nowMs: Long,
+                        offload: (AudioStream) -> Boolean): AudioStream? =
+        streams.filter { it.url.isNotBlank() && (it.expiresAtMs == 0L || it.expiresAtMs > nowMs) }
+            .filter { caps.supports(it.codecMime) }
+            .maxWithOrNull(compareBy<AudioStream>({ if (offload(it)) 1 else 0 },
+                { if (caps.hardware(it.codecMime)) 1 else 0 }, { it.bitrate }))
+
     /** Why nothing was selected, for logs and the fallback decision. */
     fun unavailable(resolved: ResolvedStreams, caps: AudioCapabilities, nowMs: Long): UnavailableReason? = when {
         resolved.live -> UnavailableReason.LIVE

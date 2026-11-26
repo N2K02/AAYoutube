@@ -1330,8 +1330,10 @@ object WebHost {
                 fun audioCount(key: String) = d.optInt(key, -1).coerceIn(-1, 256)
                 AppLog.add("NATIVE-AUDIO", "probe=metadata-only audioFormats=${audioCount("audioFormats")} " +
                     "direct=${audioCount("audioDirect")} wrapped=${audioCount("audioWrapped")} " +
-                    "aac=${audioCount("audioAac")} opus=${audioCount("audioOpus")}")
+                    "aac=${audioCount("audioAac")} opus=${audioCount("audioOpus")} " +
+                    "sabr=${audioCount("audioSabr")} hls=${audioCount("audioHls")} dash=${audioCount("audioDash")}")
             }
+            AppLog.add("PLAYER-UI", "centerCount=${metric("centerCount", 20)} centerPlaying=${d.optBoolean("centerPlaying", false)} mode=${mode.value}")
             AppLog.add("PERF", "engine ${PerformanceMonitor.summary()} " +
                 "rendererCpuPct=adb-only(${PerformanceMonitor.diagnostics.liveRenderers()} live)")
         }

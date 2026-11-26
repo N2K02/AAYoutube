@@ -72,6 +72,38 @@ internal object AudioCapabilityProbe {
         else -> null
     }
 
+    /** Exact stream format, rather than the generic 48kHz/stereo capability summary. */
+    fun supportsOffload(context: Context, stream: AudioStream): Boolean {
+        val audio = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (audio == null || Build.VERSION.SDK_INT < 29 || stream.sampleRate <= 0) return false
+        val mask = when (stream.channels) {
+            1 -> AudioFormat.CHANNEL_OUT_MONO
+            2 -> AudioFormat.CHANNEL_OUT_STEREO
+            else -> return false // conservative until multichannel routes are validated
+        }
+        val codec = stream.codecs.lowercase().trim().trim('"')
+        val encoding = if (stream.codecMime == StreamSelection.AAC) when (codec) {
+            "mp4a.40.2", "aac" -> AudioFormat.ENCODING_AAC_LC
+            "mp4a.40.5" -> AudioFormat.ENCODING_AAC_HE_V1
+            "mp4a.40.29" -> AudioFormat.ENCODING_AAC_HE_V2
+            else -> return false
+        } else encodingOf(stream.codecMime) ?: return false
+        return checkOffload(encoding, stream.sampleRate, mask)
+    }
+
+    private fun checkOffload(encoding: Int, sampleRate: Int, mask: Int): Boolean = runCatching {
+        val format = AudioFormat.Builder().setEncoding(encoding).setSampleRate(sampleRate)
+            .setChannelMask(mask).build()
+        val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()
+        if (Build.VERSION.SDK_INT >= 31) {
+            AudioManager.getPlaybackOffloadSupport(format, attrs) != AudioManager.PLAYBACK_OFFLOAD_NOT_SUPPORTED
+        } else {
+            @Suppress("DEPRECATION")
+            AudioManager.isOffloadedPlaybackSupported(format, attrs)
+        }
+    }.getOrDefault(false)
+
     /** AudioManager's own answer for the current route; false when unknown or below API 29. */
     private fun offloadSupported(audio: AudioManager?, mime: String): Boolean {
         if (audio == null || Build.VERSION.SDK_INT < 29) return false

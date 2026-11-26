@@ -10,6 +10,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeAudioEngineTest {
+    @Test fun sixAudioVariantsPreferActualOffloadThenHardwareAndBitrate() {
+        val formats = listOf(
+            AudioStream("https://a/1", "audio/mp4", "mp4a.40.2", 48000, 44100),
+            AudioStream("https://a/2", "audio/mp4", "mp4a.40.2", 128000, 44100),
+            AudioStream("https://a/3", "audio/webm", "opus", 48000, 48000),
+            AudioStream("https://a/4", "audio/webm", "opus", 64000, 48000),
+            AudioStream("https://a/5", "audio/webm", "opus", 128000, 48000),
+            AudioStream("https://a/6", "audio/webm", "opus", 160000, 48000),
+        )
+        val caps = AudioCapabilities(listOf(
+            AudioDecoderInfo("aac", StreamSelection.AAC, true),
+            AudioDecoderInfo("opus", StreamSelection.OPUS, false),
+        ))
+        assertEquals("https://a/5", StreamSelection.bestForPlayback(formats, caps, 0) { it.url == "https://a/5" }!!.url)
+        assertEquals("https://a/2", StreamSelection.bestForPlayback(formats, caps, 0) { false }!!.url)
+        val expired = formats.map { if (it.url == "https://a/5") it.copy(expiresAtMs = 1) else it }
+        assertEquals("https://a/2", StreamSelection.bestForPlayback(expired, caps, 2) { it.url == "https://a/5" }!!.url)
+    }
+
     @After fun resetProviders() = StreamProviders.reset()
 
     // ---------- StreamProvider ----------

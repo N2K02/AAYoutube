@@ -131,13 +131,21 @@ internal object NativePlayback {
             AppLog.add("NATIVE-AUDIO", "engine=web reason=$reason video=${streams.videoId} caps=[${caps.summary()}]")
             return
         }
-        val stream = StreamSelection.bestAudio(streams.audio, caps, preferOffload = true, nowMs = System.currentTimeMillis()) ?: return
-        val key = AudioOffloadPolicy.failureKey(stream.codecMime, route)
-        val offload = AudioOffloadPolicy.decide(OffloadInputs(
-            route = route, codecMime = stream.codecMime,
-            deviceSupportsOffload = caps.offloadSupported(stream.codecMime),
-            speed = current.rate, blockedByFailure = breaker?.isBlocked(key, System.currentTimeMillis()) == true,
-        ))
+        val application = app ?: return
+        val wallNow = System.currentTimeMillis()
+        val decisions = mutableMapOf<AudioStream, OffloadDecision>()
+        fun decision(stream: AudioStream): OffloadDecision = decisions.getOrPut(stream) {
+            val key = AudioOffloadPolicy.failureKey(stream.codecMime, route)
+            AudioOffloadPolicy.decide(OffloadInputs(
+                route = route, codecMime = stream.codecMime,
+                deviceSupportsOffload = AudioCapabilityProbe.supportsOffload(application, stream),
+                speed = current.rate, blockedByFailure = breaker?.isBlocked(key, System.currentTimeMillis()) == true,
+            ))
+        }
+        val stream = StreamSelection.bestForPlayback(streams.audio, caps, wallNow) { decision(it).enabled } ?: return
+        val offload = decision(stream)
+        AppLog.add("NATIVE-AUDIO", "candidates=${streams.audio.size} selected=${stream.codecMime} " +
+            "bitrate=${stream.bitrate} sampleRate=${stream.sampleRate} channels=${stream.channels} offload=${offload.enabled} reason=${offload.reason}")
         AppLog.add("NATIVE-AUDIO", "route=$route caps=[${caps.summary()}] separateAudio=${streams.separateAudio} " +
             "videoStreams=${streams.video.size} videoDecoding=off")
         c.prepareNative(HandoffState.from(current, now), stream, offload)

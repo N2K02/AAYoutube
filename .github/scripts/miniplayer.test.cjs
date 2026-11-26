@@ -2583,7 +2583,8 @@ test('mobile centre icon tracks actual media even when YouTube reports playing',
   p.window.__aay.mini(true); p.window.__aay.mini(false); p.flush();
   assert.ok(p.classNames.has('aay-center-transport'));
   assert.ok(p.classNames.has('aay-center-playing'));
-  const target = { closest: selector => selector.includes('player-control-play-pause-icon') ? target : null };
+  const target = { closest: selector => selector.includes('player-control-play-pause-icon') ? target : null,
+    matches: selector => selector.includes('player-control-play-pause-icon') };
   let stopped = false;
   p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
   assert.ok(stopped); assert.ok(p.video.paused); assert.ok(!p.classNames.has('aay-center-playing'));
@@ -2598,4 +2599,25 @@ test('native silence confirms matching paused element and rejects stale video', 
   assert.equal(p.video.paused, false);
   assert.equal(p.window.__aay.confirmNativeSilence('86p7SP34qSc'), true);
   assert.equal(p.video.paused, true); assert.equal(p.window.__aay.nativeOwned(), true);
+});
+
+
+test('non-transport menu click is never intercepted as mobile center', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  const menu = { tagName: 'BUTTON', textContent: '720p', matches: () => false, closest: () => menu };
+  let stopped = false;
+  p.emit('click', { target: menu, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
+  assert.equal(stopped, false); assert.equal(p.video.paused, false);
+});
+
+test('native probe distinguishes SABR, HLS, DASH without recording URL values', () => {
+  const p = playerPage({ quality: true, cfg: { nativeAudio: true } }); p.flush();
+  p.player.getPlayerResponse = () => ({videoDetails: {videoId: '86p7SP34qSc'}, streamingData: {
+    serverAbrStreamingUrl: 'https://example.invalid/private-sabr',
+    adaptiveFormats: [{mimeType: 'audio/mp4; codecs="mp4a.40.2"'}]}});
+  p.advance(30000); p.runIntervals();
+  const r = p.perfReports.at(-1);
+  assert.equal(r.audioFormats, 1); assert.equal(r.audioDirect, 0);
+  assert.equal(r.audioSabr, 1); assert.equal(r.audioHls, 0); assert.equal(r.audioDash, 0);
+  assert.equal(JSON.stringify(r).includes('private-sabr'), false);
 });

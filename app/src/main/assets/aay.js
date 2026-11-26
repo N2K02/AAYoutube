@@ -333,9 +333,13 @@
     'button[aria-label*="pause" i], button[aria-label*="play" i],' +
     'button[title*="pause" i], button[title*="play" i],' +
     '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]';
-  var MOBILE_CENTER = '.player-control-play-pause-icon';
+  var MOBILE_CENTER = '.player-control-play-pause-icon,.player-play-pause-icon,.player-play-pause-button,.ytm-player-controls-play-pause-button,ytm-play-pause-button,.ytp-large-play-button,.ytp-play-button';
+  var centerNodes = [];
+  var centerCount = 0;
   function mobileCenterButton(target) {
-    return target && typeof target.closest === 'function' ? target.closest(MOBILE_CENTER) : null;
+    var control = target && typeof target.closest === 'function' ? target.closest(MOBILE_CENTER) : null;
+    // Independently validate the matched element; a quality/menu control is never transport.
+    return control && typeof control.matches === 'function' && control.matches(MOBILE_CENTER) ? control : null;
   }
   function updateCenterTransport(v) {
     var root = document.documentElement;
@@ -343,10 +347,27 @@
     var active = !BROWSE && !A.audioOnly && !nativeAudio.owned && !isAd() && !!v && !v.ended && /^\/(watch|live\/)/.test(location.pathname);
     root.classList.toggle('aay-center-transport', active);
     root.classList.toggle('aay-center-playing', active && !v.paused);
+    // Reconcile replacement nodes as YouTube rebuilds the player during a resize.
+    var next = [];
     if (active) {
-      var button = document.querySelector(MOBILE_CENTER);
-      if (button && button.style && getComputedStyle(button).position === 'static') button.style.position = 'relative';
+      var candidates = document.querySelectorAll(MOBILE_CENTER);
+      for (var i = 0; i < candidates.length; i++) {
+        var button = candidates[i];
+        if (!button.classList || !button.matches || !button.matches(MOBILE_CENTER)) continue;
+        // Avoid nested duplicate glyphs; prefer the outer interactive control.
+        if (button.parentElement && mobileCenterButton(button.parentElement)) continue;
+        if (button.style && getComputedStyle(button).position === 'static') button.classList.add('aay-center-relative');
+        button.classList.add('aay-center-control');
+        next.push(button);
+      }
     }
+    centerNodes.forEach(function (node) {
+      if (next.indexOf(node) < 0 && node.classList) {
+        node.classList.remove('aay-center-control');
+        node.classList.remove('aay-center-relative');
+      }
+    });
+    centerNodes = next; centerCount = next.length;
   }
   function actualPlayPauseButton(target) {
     return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
@@ -404,10 +425,13 @@
   // Letting YouTube handle this click calls Play again instead of Pause.
   // Intercept only a genuine Play/Pause control when its state is proven stale.
   document.addEventListener('click', function (e) {
-    if (BROWSE || e.isTrusted === false || !actualPlayPauseButton(e.target)) return;
+    if (BROWSE || e.isTrusted === false || typeof e.preventDefault !== 'function' ||
+        typeof e.stopImmediatePropagation !== 'function') return;
+    var center = mobileCenterButton(e.target);
+    if (!center && !actualPlayPauseButton(e.target)) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || v.ended || A.audioOnly || nativeAudio.owned || isAd()) return;
-    if (mobileCenterButton(e.target)) {
+    if (center) {
       e.preventDefault(); e.stopImmediatePropagation();
       if (!v.paused) { noteManualPause(); A.cmd('pause'); }
       else A.cmd('play', 'user');
@@ -1056,9 +1080,11 @@
   }
   function applyCss() {
     var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS +
-      'html.aay-center-transport .player-control-play-pause-icon > * {visibility:hidden!important;}' +
-      'html.aay-center-transport .player-control-play-pause-icon::after {content:"";display:block;position:absolute;inset:0;pointer-events:none;background: center / 56% 56% no-repeat url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27white%27 d=%27M8 5v14l11-7z%27/%3E%3C/svg%3E");}' +
-      'html.aay-center-transport.aay-center-playing .player-control-play-pause-icon::after {background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27white%27 d=%27M6 5h4v14H6zm8 0h4v14h-4z%27/%3E%3C/svg%3E");}';
+      // CSS geometry, not data: SVG URLs (which may be blocked by the page's CSP).
+      'html.aay-center-transport .aay-center-relative {position:relative!important;}' +
+      'html.aay-center-transport .aay-center-control > * {visibility:hidden!important;}' +
+      'html.aay-center-transport .aay-center-control::after {content:"";display:block;position:absolute;left:50%;top:50%;width:44%;height:52%;transform:translate(-50%,-50%);pointer-events:none;box-sizing:border-box;background:white;clip-path:polygon(16% 0,100% 50%,16% 100%);}' +
+      'html.aay-center-transport.aay-center-playing .aay-center-control::after {clip-path:none;background:linear-gradient(to right,white 0%,white 34%,transparent 34%,transparent 66%,white 66%,white 100%);}';
     applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
@@ -1488,16 +1514,20 @@
   // Feasibility probe only. Never transfer signed URLs, tokens or response bodies to Android.
   // A stale SPA response must not be attributed to the currently playing video.
   function audioStreamProbe(p) {
-    var out = { audioFormats: -1, audioDirect: -1, audioWrapped: -1, audioAac: -1, audioOpus: -1 };
+    var out = { audioFormats: -1, audioDirect: -1, audioWrapped: -1, audioAac: -1, audioOpus: -1, audioSabr: -1, audioHls: -1, audioDash: -1 };
     if (!CFG.nativeAudio || BROWSE || isAd()) return out;
     try {
       var id = qualityVideoId(), response = p && p.getPlayerResponse ? p.getPlayerResponse() : null;
       function matches(r) { return r && r.videoDetails && r.videoDetails.videoId === id && id; }
       if (!matches(response)) response = window.ytInitialPlayerResponse;
       if (!matches(response)) return out;
-      var formats = response.streamingData && response.streamingData.adaptiveFormats;
+      var data = response.streamingData || {};
+      var formats = data.adaptiveFormats;
+      out.audioSabr = typeof data.serverAbrStreamingUrl === 'string' && data.serverAbrStreamingUrl.length > 0 ? 1 : 0;
+      out.audioHls = typeof data.hlsManifestUrl === 'string' && data.hlsManifestUrl.length > 0 ? 1 : 0;
+      out.audioDash = typeof data.dashManifestUrl === 'string' && data.dashManifestUrl.length > 0 ? 1 : 0;
       if (!Array.isArray(formats)) return out;
-      out = { audioFormats: 0, audioDirect: 0, audioWrapped: 0, audioAac: 0, audioOpus: 0 };
+      out.audioFormats = 0; out.audioDirect = 0; out.audioWrapped = 0; out.audioAac = 0; out.audioOpus = 0;
       formats.slice(0, 256).forEach(function (f) {
         if (!f || typeof f.mimeType !== 'string' || !/^audio\//i.test(f.mimeType)) return;
         out.audioFormats++;
@@ -2113,7 +2143,9 @@
           width: v.videoWidth || 0, height: v.videoHeight || 0,
           codec: codec, tier: tier, audioOnly: !!A.audioOnly,
           audioFormats: audioProbe.audioFormats, audioDirect: audioProbe.audioDirect,
-          audioWrapped: audioProbe.audioWrapped, audioAac: audioProbe.audioAac, audioOpus: audioProbe.audioOpus }), BRIDGE_TOKEN);
+          audioWrapped: audioProbe.audioWrapped, audioAac: audioProbe.audioAac, audioOpus: audioProbe.audioOpus,
+          audioSabr: audioProbe.audioSabr, audioHls: audioProbe.audioHls, audioDash: audioProbe.audioDash,
+          centerCount: centerCount, centerPlaying: !v.paused }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;

@@ -81,3 +81,7 @@ With Native audio enabled, existing playback diagnostics report aggregate audio 
 ## Confirmed handoff
 
 Native playback waits for a matching WebView media element to confirm it is paused. Late acknowledgements cannot start native playback after cancellation. Actual duplicate-audio behavior still needs device verification; a matching authorized audio stream is required.
+
+## Audio-only stream selection
+
+The native engine ranks all supplied separate audio variants by actual per-stream route/codec/sample-rate/channel offload eligibility, then hardware decoder and bitrate. It keeps video mode on WebView. If the server exposes only adaptive metadata, the diagnostic now distinguishes SABR, DASH and HLS by presence only (no URLs, tokens or raw requests are logged). SABR metadata is not a playable URI and no SABR transport is implemented. A source authorized for direct playback is still required. Center transport diagnostics record only matched-control counts and media playing state.

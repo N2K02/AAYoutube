@@ -51,7 +51,8 @@ class NativeAudioContractTest {
         assertTrue(onError.contains("breaker?.recordFailure(AudioOffloadPolicy.failureKey(codecMime, route)"))
         assertTrue(onError.contains("coordinator?.onNativeError(detail)"))
         assertTrue(glue.contains("blockedByFailure = breaker?.isBlocked(key, System.currentTimeMillis()) == true"))
-        assertTrue(glue.contains("deviceSupportsOffload = caps.offloadSupported(stream.codecMime)"))
+        assertTrue(glue.contains("deviceSupportsOffload = AudioCapabilityProbe.supportsOffload(application, stream)"))
+        assertTrue(glue.contains("StreamSelection.bestForPlayback(streams.audio, caps, wallNow)"))
         assertTrue(glue.contains("val car = WebHost.carProjectionActive()"))
     }
 
