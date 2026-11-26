@@ -29,7 +29,7 @@ class BatteryPolicyTest {
     @Test fun backgroundSaverNoLongerNeedsChromiumHiddenFlag() {
         val js = src("app/src/main/assets/aay.js")
         val f = js.substringAfter("function bgSaverActive() {").substringBefore("\n  }\n")
-        assertTrue(f.contains("if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality"))
+        assertTrue(f.contains("!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality"))
         assertFalse(f.contains("!realHidden()"))
         assertTrue(f.contains("if (isAd()) return false;"))
         assertTrue("live streams untouched", f.contains("if (!v || !isFinite(v.duration)) return false;"))

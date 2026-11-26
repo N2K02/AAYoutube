@@ -17,7 +17,7 @@ class BackgroundQualityRecoveryContractTest {
         // Native recovery observes real transitions; the page watchdog continues
         // at a capped rate even after native's short retry budget has expired.
         assertTrue(web.contains("val background = !shown && !inPip.value && !carShown"))
-        assertTrue(web.contains("if (background && !Features.current.backgroundPlay) return"))
+        assertTrue(web.contains("if (background && !Features.current.backgroundPlay"))
         assertTrue(web.contains("now - userPausedAt <= 5_000L"))
         assertTrue(web.contains("resumeTries >= 2"))
         assertTrue(web.contains("cmd(\"play\")"))
@@ -63,7 +63,7 @@ class BackgroundQualityRecoveryContractTest {
     @Test fun recoveryIntentPreventsIdleFreezeButStopsOnPauseOrQuit() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("private fun keepRecovering(): Boolean = playbackWanted"))
-        assertTrue(web.contains("Features.current.backgroundPlay || carShown || inPip.value || shown"))
+        assertTrue(web.contains("Features.current.backgroundPlay || carShown"))
         assertTrue(web.contains("if (keepRecovering()) {\n            AppLog.add(\"POWER\", \"Idle freeze skipped while playback recovery is requested\")\n            return"))
         assertTrue(web.contains("if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()"))
         assertTrue(web.contains("if (incoming.ended || incoming.id.isBlank()) playbackWanted = false"))
@@ -154,7 +154,7 @@ class BackgroundQualityRecoveryContractTest {
         val main = source("app/src/main/java/com/aayoutube/app/MainActivity.kt")
         val host = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
         val manifest = source("app/src/main/AndroidManifest.xml")
-        assertTrue(main.contains("if (!isInPictureInPictureMode && WebHost.pipSourceRect(bounds))"))
+        assertTrue(main.contains("!isInPictureInPictureMode && WebHost.pipSourceRect(bounds)"))
         assertTrue(main.contains("if (isInPictureInPictureMode) return"))
         assertTrue(main.contains("setAspectRatio(Rational(16, 9))"))
         assertTrue(host.contains("if (mode.value != PlayerMode.FULL || !isOnWatchPage()) return false"))

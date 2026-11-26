@@ -314,7 +314,7 @@ object BrowseHost : BrowseSession() {
 }
 
 /** What the browse page script can call. */
-class BrowseBridge(private val token: String, private val select: (String) -> Unit = BrowseHost::openInPlayer) {
+class BrowseBridge(private val token: String, private val select: (String) -> Unit = {}) {
     @JavascriptInterface
     fun open(url: String, providedToken: String?) {
         if (providedToken == token) select(url)
