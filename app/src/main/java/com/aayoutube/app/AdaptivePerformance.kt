@@ -239,22 +239,165 @@ internal class AdaptivePerformanceGovernor(
  * CPU wake lock bounds. A WebView is not a native player: the partial wake lock is needed
  * while it plays, but it is never held unbounded:
  *  - every acquisition carries a timeout and is refreshed while still wanted;
- *  - recovery of a stalled stream keeps it only for [STALL_LIMIT_MS]; after that the
- *    phone may sleep (the media session and explicit Play still work).
+ *  - when the media clock has not moved for [STALL_LIMIT_MS] (a player stuck buffering while
+ *    it still reports playing, or a recovery that never produced playback) it is released;
+ *    the phone may then sleep (the media session and explicit Play still work).
+ *
+ * [stalledSince] comes from [MediaClockWatch]: the last time the clock moved, or 0 while it moves.
  */
 internal object WakeLockPolicy {
     const val TIMEOUT_MS = 10 * 60_000L
     const val REFRESH_MS = 5 * 60_000L
     const val STALL_LIMIT_MS = 3 * 60_000L
 
-    fun hold(wanted: Boolean, playing: Boolean, stalledSince: Long, nowMs: Long): Boolean = when {
+    fun hold(wanted: Boolean, stalledSince: Long, nowMs: Long): Boolean = when {
         !wanted -> false
-        playing -> true
         stalledSince <= 0L -> true
         else -> nowMs - stalledSince < STALL_LIMIT_MS
     }
 
     fun needsRefresh(acquiredAt: Long, nowMs: Long): Boolean = acquiredAt <= 0L || nowMs - acquiredAt >= REFRESH_MS
+}
+
+/**
+ * Media-clock progression from the page's state reports. `playing=true` alone proves nothing:
+ * a player stuck buffering keeps reporting it. Progress means the position moved by at least
+ * [MIN_STEP_MS] (or a new video started). While playback is not wanted the watch idles, so a
+ * fresh Play starts with a full grace period.
+ *
+ * Reports while playing arrive at least every 10 s even in the background (timeupdate), so no
+ * movement for [GRACE_MS] is a real stall; [state] tells buffering (the page says so) from a
+ * silently stalled clock.
+ */
+internal class MediaClockWatch(
+    private val graceMs: Long = GRACE_MS,
+) {
+    enum class State { IDLE, PROGRESSING, BUFFERING, STALLED }
+
+    private var id = ""
+    private var posMs = -1L
+    private var lastProgressAt = 0L
+    private var wanted = false
+    private var buffering = false
+    var bufferingMs = 0L
+        private set
+    var stalledMs = 0L
+        private set
+    private var accountedAt = 0L
+
+    /** One state report. [wantsPlay]: playback should be running (playing, or recovering). */
+    fun onSample(videoId: String, positionMs: Long, wantsPlay: Boolean, isBuffering: Boolean, nowMs: Long) {
+        account(nowMs)
+        buffering = isBuffering
+        if (!wantsPlay) {
+            wanted = false
+            lastProgressAt = nowMs
+        } else {
+            if (!wanted || videoId != id || posMs < 0L || kotlin.math.abs(positionMs - posMs) >= MIN_STEP_MS) {
+                lastProgressAt = nowMs
+            }
+            wanted = true
+        }
+        if (videoId != id || kotlin.math.abs(positionMs - posMs) >= MIN_STEP_MS || !wantsPlay) posMs = positionMs
+        id = videoId
+    }
+
+    /** Last clock movement while playback is wanted but the clock is not moving; 0 otherwise. */
+    fun stalledSince(nowMs: Long): Long =
+        if (wanted && lastProgressAt > 0L && nowMs - lastProgressAt >= graceMs) lastProgressAt else 0L
+
+    fun state(nowMs: Long): State = when {
+        !wanted -> State.IDLE
+        stalledSince(nowMs) > 0L -> State.STALLED
+        buffering -> State.BUFFERING
+        else -> State.PROGRESSING
+    }
+
+    /**
+     * Adds the time since the last report: the part after the grace period ran out is a stalled
+     * clock, the rest counts as buffering when the page said it was buffering.
+     */
+    private fun account(nowMs: Long) {
+        if (accountedAt > 0L && nowMs > accountedAt && wanted) {
+            val span = nowMs - accountedAt
+            val stallStart = if (lastProgressAt > 0L) lastProgressAt + graceMs else Long.MAX_VALUE
+            val stalledPart = if (nowMs > stallStart) (nowMs - maxOf(accountedAt, stallStart)).coerceIn(0L, span) else 0L
+            stalledMs += stalledPart
+            if (buffering) bufferingMs += span - stalledPart
+        }
+        accountedAt = nowMs
+    }
+
+    /** Totals including the time since the last report. */
+    fun totals(nowMs: Long): Pair<Long, Long> {
+        account(nowMs)
+        return bufferingMs to stalledMs
+    }
+
+    fun reset() {
+        id = ""; posMs = -1L; lastProgressAt = 0L; wanted = false; buffering = false
+        bufferingMs = 0L; stalledMs = 0L; accountedAt = 0L
+    }
+
+    companion object {
+        const val GRACE_MS = 30_000L
+        const val MIN_STEP_MS = 250L
+    }
+}
+
+/**
+ * Lifecycle of the adaptive performance engine, without Android: it runs only while a playback
+ * session (a primary renderer) exists. Outside a session every input is ignored, nothing asks
+ * for a recovery tick, and the level is NORMAL; a renderer change drops stale measurements.
+ */
+internal class PerformanceSession(
+    val governor: AdaptivePerformanceGovernor = AdaptivePerformanceGovernor(),
+) {
+    data class Result(val level: PerfLevel, val transition: PerfTransition?, val needsRecoveryTick: Boolean)
+
+    private val dropped = DroppedFrameTracker()
+    var active = false
+        private set
+    private var bufferingSince = 0L
+
+    fun start() {
+        if (active) return
+        active = true
+        clearMeasurements()
+    }
+
+    fun stop() {
+        active = false
+        governor.reset()
+        clearMeasurements()
+    }
+
+    /** A new primary renderer: its frames and buffering have nothing to do with the old one. */
+    fun rendererChanged() = clearMeasurements()
+
+    private fun clearMeasurements() {
+        dropped.reset()
+        bufferingSince = 0L
+    }
+
+    fun onDroppedFrames(droppedPct: Int) {
+        if (active) dropped.update(droppedPct)
+    }
+
+    val droppedLevel: PerfLevel get() = dropped.level
+
+    /** Tracks how long the primary player has been buffering while it should play. */
+    fun primaryBufferingMs(wantsPlayAndBuffering: Boolean, nowMs: Long): Long {
+        if (!active || !wantsPlayAndBuffering) { bufferingSince = 0L; return 0L }
+        if (bufferingSince == 0L) bufferingSince = nowMs
+        return nowMs - bufferingSince
+    }
+
+    fun evaluate(signals: PerfSignals, nowMs: Long): Result {
+        if (!active) return Result(PerfLevel.NORMAL, null, false)
+        val t = governor.update(signals.copy(droppedFrames = dropped.level), nowMs)
+        return Result(governor.level, t, governor.level != PerfLevel.NORMAL)
+    }
 }
 
 /**
@@ -277,6 +420,13 @@ internal object PositionPersistPolicy {
         nowMs - savedAtMs < PLAYING_INTERVAL_MS -> false
         else -> screenOn()
     }
+}
+
+/** Hidden secondary renderer: a release deadline only ever moves earlier when pressure rises. */
+internal object HiddenReleasePolicy {
+    /** New absolute deadline for a renderer hidden since [hiddenAt]; never later than [currentDeadline]. */
+    fun deadline(hiddenAt: Long, currentDeadline: Long, level: PerfLevel): Long =
+        minOf(currentDeadline, hiddenAt + AdaptivePerformancePolicy.hiddenSecondaryReleaseMs(level))
 }
 
 /** Counters for structured diagnostics (renderer ownership, wake lock and level history). */

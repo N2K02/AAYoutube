@@ -65,6 +65,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
             "musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
             "wakeHeld=${playbackWakeLock?.isHeld == true} wakeHeldMs=${wakeHeldMs(now)} " +
             "wakeAcquisitions=$wakeAcquisitions wakeStallReleases=$wakeStallReleases " +
+            "mediaClock=${mediaClock.state(now)} clockBufferingMs=${mediaClock.totals(now).first} " +
+            "clockStalledMs=${mediaClock.totals(now).second} " +
             "perfLevel=${PerformanceMonitor.level.value} foreground=$foreground bound=$bound")
     }
     private val healthTick = object : Runnable {
@@ -143,7 +145,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var wakeHeldTotalMs = 0L
     private var wakeAcquisitions = 0
     private var wakeStallReleases = 0
-    private var wakeStalledSince = 0L
+    // Media clock progression: playing=true alone does not prove playback (stuck buffering reports it too).
+    private val mediaClock = MediaClockWatch()
     private fun wakeHeldMs(now: Long) = wakeHeldTotalMs + currentHoldMs(now)
     /** A hold whose refreshes stopped ended at its timeout, not now. */
     private fun currentHoldMs(now: Long): Long = if (wakeAcquiredAt <= 0L) 0L
@@ -163,13 +166,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun updatePlaybackWakeLock(active: Boolean) {
         val now = android.os.SystemClock.elapsedRealtime()
         if (!active || quitRequested || shuttingDown) {
-            wakeStalledSince = 0L
+            mediaClock.onSample(snapshot.id, snapshot.posMs, wantsPlay = false, isBuffering = false, nowMs = now)
             releaseWakeLock("not-wanted")
             return
         }
-        // Wanted but not playing (recovery of a stalled stream): bounded by WakeLockPolicy.
-        if (snapshot.playing) wakeStalledSince = 0L else if (wakeStalledSince == 0L) wakeStalledSince = now
-        if (!WakeLockPolicy.hold(true, snapshot.playing, wakeStalledSince, now)) {
+        // Wanted (playing or recovering) but the media clock has not moved: bounded by WakeLockPolicy.
+        if (!WakeLockPolicy.hold(true, mediaClock.stalledSince(now), now)) {
             if (playbackWakeLock?.isHeld == true) {
                 wakeStallReleases++
                 releaseWakeLock("stalled-recovery")
@@ -548,6 +550,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
         }
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
+        mediaClock.onSample(s.id, s.posMs, ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback), s.buffering,
+            android.os.SystemClock.elapsedRealtime())
         updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))
         tracePlaybackPhase(s)
         if (quitRequested) {

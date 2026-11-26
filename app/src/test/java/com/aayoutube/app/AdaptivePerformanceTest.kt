@@ -179,18 +179,143 @@ class AdaptivePerformanceTest {
         assertTrue((PhoneMirrorPolicy.QUALITY_HEIGHT[PhoneMirrorPolicy.viewportCap(false, false, false, 4000, 4000)] ?: 0) <= 360)
     }
 
-    @Test fun wakeLockIsBoundedDuringStalledRecovery() {
-        assertFalse(WakeLockPolicy.hold(wanted = false, playing = true, stalledSince = 0, nowMs = 0))
-        assertTrue(WakeLockPolicy.hold(wanted = true, playing = true, stalledSince = 0, nowMs = 0))
-        assertTrue(WakeLockPolicy.hold(wanted = true, playing = false, stalledSince = 0, nowMs = 1_000))
-        assertTrue(WakeLockPolicy.hold(wanted = true, playing = false, stalledSince = 1_000, nowMs = 1_000 + WakeLockPolicy.STALL_LIMIT_MS - 1))
-        assertFalse(WakeLockPolicy.hold(wanted = true, playing = false, stalledSince = 1_000, nowMs = 1_000 + WakeLockPolicy.STALL_LIMIT_MS))
-        // Playing again: held regardless of an old stall.
-        assertTrue(WakeLockPolicy.hold(wanted = true, playing = true, stalledSince = 1_000, nowMs = 10_000_000))
+    @Test fun wakeLockIsBoundedByTheStalledMediaClock() {
+        assertFalse(WakeLockPolicy.hold(wanted = false, stalledSince = 0, nowMs = 0))
+        assertTrue(WakeLockPolicy.hold(wanted = true, stalledSince = 0, nowMs = 1_000))
+        assertTrue(WakeLockPolicy.hold(wanted = true, stalledSince = 1_000, nowMs = 1_000 + WakeLockPolicy.STALL_LIMIT_MS - 1))
+        assertFalse(WakeLockPolicy.hold(wanted = true, stalledSince = 1_000, nowMs = 1_000 + WakeLockPolicy.STALL_LIMIT_MS))
         assertTrue(WakeLockPolicy.needsRefresh(0, 5))
         assertFalse(WakeLockPolicy.needsRefresh(1_000, 1_000 + WakeLockPolicy.REFRESH_MS - 1))
         assertTrue(WakeLockPolicy.needsRefresh(1_000, 1_000 + WakeLockPolicy.REFRESH_MS))
         assertTrue(WakeLockPolicy.REFRESH_MS < WakeLockPolicy.TIMEOUT_MS)
+    }
+
+    /** Simulates the service: one state report, then the wake-lock decision. */
+    private fun holds(clock: MediaClockWatch, now: Long) =
+        WakeLockPolicy.hold(true, clock.stalledSince(now), now)
+
+    @Test fun bufferingPlayerReportingPlayingTrueLosesTheWakeLockAfterTheLimit() {
+        val c = MediaClockWatch()
+        c.onSample("v", 10_000, wantsPlay = true, isBuffering = false, nowMs = 0)
+        c.onSample("v", 20_000, wantsPlay = true, isBuffering = false, nowMs = 10_000)
+        // Stuck buffering: playing=true keeps arriving, the position never moves.
+        var t = 10_000L
+        while (t < 10_000 + WakeLockPolicy.STALL_LIMIT_MS + 20_000) {
+            t += 15_000
+            c.onSample("v", 20_000, wantsPlay = true, isBuffering = true, nowMs = t)
+        }
+        assertEquals(10_000L, c.stalledSince(t))
+        assertEquals(MediaClockWatch.State.STALLED, c.state(t))
+        assertFalse(holds(c, t))
+        // The clock moves again: held at once.
+        c.onSample("v", 21_000, wantsPlay = true, isBuffering = false, nowMs = t + 1_000)
+        assertEquals(0L, c.stalledSince(t + 1_000))
+        assertTrue(holds(c, t + 1_000))
+    }
+
+    @Test fun silentClockWithoutAnyReportsIsStalledToo() {
+        val c = MediaClockWatch()
+        val start = 1_000L
+        c.onSample("v", 0, wantsPlay = true, isBuffering = false, nowMs = start)
+        // No report at all (frozen renderer); the health tick asks.
+        assertTrue(holds(c, start + MediaClockWatch.GRACE_MS - 1))
+        assertEquals(MediaClockWatch.State.STALLED, c.state(start + MediaClockWatch.GRACE_MS))
+        assertTrue(holds(c, start + WakeLockPolicy.STALL_LIMIT_MS - 1))
+        assertFalse(holds(c, start + WakeLockPolicy.STALL_LIMIT_MS))
+    }
+
+    @Test fun progressingBackgroundPlaybackKeepsTheWakeLock() {
+        val c = MediaClockWatch()
+        // Background reports every 10 s, each 10 s further.
+        for (i in 0..60) c.onSample("v", i * 10_000L, wantsPlay = true, isBuffering = false, nowMs = i * 10_000L)
+        assertEquals(MediaClockWatch.State.PROGRESSING, c.state(600_000))
+        assertTrue(holds(c, 600_000))
+        // Small sub-step moves accumulate instead of being lost.
+        val d = MediaClockWatch()
+        d.onSample("v", 0, true, false, 0)
+        for (i in 1..200) d.onSample("v", i * 100L, true, false, i * 1_000L)
+        assertEquals(0L, d.stalledSince(200_000))
+    }
+
+    @Test fun recoveryWithoutPlaybackIsBoundedAndPauseIdles() {
+        val c = MediaClockWatch()
+        val start = 1_000L
+        // Recovering (wanted, not playing): the clock does not move.
+        c.onSample("v", 5_000, wantsPlay = true, isBuffering = false, nowMs = start)
+        assertFalse(holds(c, start + WakeLockPolicy.STALL_LIMIT_MS))
+        // Paused: idle, and a later Play gets a fresh grace period.
+        c.onSample("v", 5_000, wantsPlay = false, isBuffering = false, nowMs = start + WakeLockPolicy.STALL_LIMIT_MS + 1)
+        assertEquals(MediaClockWatch.State.IDLE, c.state(start + WakeLockPolicy.STALL_LIMIT_MS + 2))
+        val play = start + WakeLockPolicy.STALL_LIMIT_MS + 10_000
+        c.onSample("v", 5_000, wantsPlay = true, isBuffering = false, nowMs = play)
+        assertEquals(0L, c.stalledSince(play + MediaClockWatch.GRACE_MS - 1))
+        // A new video counts as progress.
+        c.onSample("w", 0, wantsPlay = true, isBuffering = true, nowMs = play + MediaClockWatch.GRACE_MS + 5)
+        assertEquals(MediaClockWatch.State.BUFFERING, c.state(play + MediaClockWatch.GRACE_MS + 6))
+    }
+
+    @Test fun clockTotalsSeparateBufferingFromStalledTime() {
+        val c = MediaClockWatch()
+        c.onSample("v", 0, wantsPlay = true, isBuffering = false, nowMs = 1_000)
+        c.onSample("v", 0, wantsPlay = true, isBuffering = true, nowMs = 11_000)
+        // 11 s..31 s buffering within grace; 31 s..51 s the clock is stalled.
+        val (buffering, stalled) = c.totals(51_000)
+        assertEquals(20_000L, buffering)
+        assertEquals(20_000L, stalled)
+        c.reset()
+        assertEquals(MediaClockWatch.State.IDLE, c.state(60_000))
+        assertEquals(0L to 0L, c.totals(70_000))
+    }
+
+    @Test fun sessionIgnoresEverythingOutsidePlayback() {
+        val s = PerformanceSession()
+        // Before a session (or after Quit): thermal/memory callbacks change nothing, no recovery tick.
+        val idle = s.evaluate(PerfSignals(thermalStatus = 3, memory = MemoryLevel.CRITICAL), 0)
+        assertEquals(PerfLevel.NORMAL, idle.level)
+        assertNull(idle.transition)
+        assertFalse(idle.needsRecoveryTick)
+        s.onDroppedFrames(90); s.onDroppedFrames(90)
+        assertEquals(PerfLevel.NORMAL, s.droppedLevel)
+        assertEquals(0L, s.primaryBufferingMs(true, 100))
+        s.start()
+        val hot = s.evaluate(PerfSignals(thermalStatus = 3), 1_000)
+        assertEquals(PerfLevel.SEVERE, hot.level)
+        assertTrue(hot.needsRecoveryTick)
+        // Quit: back to NORMAL, and a late thermal callback cannot restart the recovery tick.
+        s.stop()
+        val late = s.evaluate(PerfSignals(thermalStatus = 3), 2_000)
+        assertEquals(PerfLevel.NORMAL, late.level)
+        assertFalse(late.needsRecoveryTick)
+        assertEquals(PerfLevel.NORMAL, s.governor.level)
+    }
+
+    @Test fun rendererChangeDropsStaleDroppedFrameAndBufferingMeasurements() {
+        val s = PerformanceSession()
+        s.start()
+        s.onDroppedFrames(40); s.onDroppedFrames(40)
+        assertEquals(PerfLevel.HIGH, s.droppedLevel)
+        assertEquals(0L, s.primaryBufferingMs(true, 1_000))
+        assertEquals(9_000L, s.primaryBufferingMs(true, 10_000))
+        s.rendererChanged()
+        assertEquals(PerfLevel.NORMAL, s.droppedLevel)
+        assertEquals(0L, s.primaryBufferingMs(true, 11_000))
+        // One bad window of the new renderer is not sustained.
+        s.onDroppedFrames(40)
+        assertEquals(PerfLevel.NORMAL, s.droppedLevel)
+        // The dropped level reaches the governor through the session.
+        s.onDroppedFrames(40)
+        assertEquals(PerfLevel.HIGH, s.evaluate(PerfSignals(), 12_000).level)
+    }
+
+    @Test fun hiddenReleaseDeadlineOnlyMovesEarlier() {
+        val hiddenAt = 100_000L
+        val normal = hiddenAt + PhoneMirrorPolicy.HIDDEN_RELEASE_MS
+        assertEquals(hiddenAt + 10_000, HiddenReleasePolicy.deadline(hiddenAt, normal, PerfLevel.HIGH))
+        assertEquals(hiddenAt + 30_000, HiddenReleasePolicy.deadline(hiddenAt, normal, PerfLevel.ELEVATED))
+        // Cooling down never postpones an earlier deadline.
+        assertEquals(hiddenAt + 10_000, HiddenReleasePolicy.deadline(hiddenAt, hiddenAt + 10_000, PerfLevel.NORMAL))
+        // Pressure that rises after the shorter deadline already passed: due now (past).
+        assertTrue(HiddenReleasePolicy.deadline(hiddenAt, normal, PerfLevel.SEVERE) < hiddenAt + 45_000)
     }
 
     @Test fun positionPersistenceSavesTransportsImmediatelyAndPlaybackRarely() {

@@ -152,6 +152,7 @@ internal object PhoneMirror {
         main.removeCallbacks(syncTick)
         scheduler.clear()
         main.removeCallbacks(idleRelease)
+        releaseDeadline = 0L
         if (on) {
             stats.resumes++
             w.onResume()
@@ -169,12 +170,31 @@ internal object PhoneMirror {
             // Pausing a WebView does not promise the hardware decoder is freed: after a bounded
             // hidden period the whole secondary renderer is released.
             // Under pressure the unused renderer goes sooner (adaptive performance engine).
+            hiddenAt = SystemClock.elapsedRealtime()
             hiddenReleaseMs = AdaptivePerformancePolicy.hiddenSecondaryReleaseMs(PerformanceMonitor.evaluate())
+            releaseDeadline = hiddenAt + hiddenReleaseMs
             main.postDelayed(idleRelease, hiddenReleaseMs)
         }
     }
 
     private var hiddenReleaseMs = PhoneMirrorPolicy.HIDDEN_RELEASE_MS
+    private var hiddenAt = 0L
+    private var releaseDeadline = 0L
+
+    /**
+     * The engine's level rose while the renderer is hidden: an already scheduled release moves
+     * earlier (never later). Called on level transitions only.
+     */
+    internal fun onPerformanceLevel(level: PerfLevel) {
+        if (visible || web == null || releaseDeadline == 0L) return
+        val next = HiddenReleasePolicy.deadline(hiddenAt, releaseDeadline, level)
+        if (next >= releaseDeadline) return
+        releaseDeadline = next
+        hiddenReleaseMs = next - hiddenAt
+        main.removeCallbacks(idleRelease)
+        main.postDelayed(idleRelease, (next - SystemClock.elapsedRealtime()).coerceAtLeast(0L))
+        AppLog.add("MIRROR", "Hidden phone player release moved earlier: ${hiddenReleaseMs / 1000}s after hiding (level $level)")
+    }
     private val idleRelease = Runnable {
         if (!visible && web != null) {
             // No revision bump: nothing is composed while hidden, so nothing recreates the renderer.
@@ -308,6 +328,7 @@ internal object PhoneMirror {
         main.removeCallbacks(syncTick)
         scheduler.clear()
         main.removeCallbacks(idleRelease)
+        releaseDeadline = 0L
         hiddenFlag = true
         syncSeq++
         // Session-specific state must not leak into the next renderer.
@@ -722,6 +743,7 @@ internal object PhoneMirror {
                 WebViewCompat.isAudioMuted(w)
             }.getOrDefault(false)) {
             w.destroy()
+            PerformanceMonitor.diagnostics.secondaryReleases++  // allocated above: keep the counters balanced
             wrapper = null
             muteUnavailable.value = true
             wantVisible = false

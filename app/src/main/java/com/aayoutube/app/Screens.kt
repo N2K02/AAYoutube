@@ -700,7 +700,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val offline by WebHost.offline.collectAsState()
     val mode by WebHost.mode.collectAsState()
     val inPip by WebHost.inPip.collectAsState()
-    val snap by WebHost.snapshot.collectAsState()
+    // Position-free: play state, video and buffering recompose the pane; position reports do not
+    // (only LiveProgressLine reads them).
+    val snapFlow = remember { WebHost.snapshot.map { it.withoutPosition() }.distinctUntilChanged() }
+    val snap by snapFlow.collectAsState(WebHost.snapshot.value.withoutPosition())
     val browseOn by BrowseHost.created.collectAsState()
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
@@ -921,7 +924,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                         onClick = { WebHost.closePlayer() },
                         modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
                     ) { Icon(Icons.Filled.Close, contentDescription = "Close", modifier = Modifier.size(20.dp)) }
-                    LiveProgressLine(snap, paneShown, Modifier.align(Alignment.BottomStart))
+                    LiveProgressLine(paneShown, Modifier.align(Alignment.BottomStart))
                 }
             }
         }
@@ -1763,7 +1766,7 @@ private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visi
                     onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN },
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
                 ) { Icon(Icons.Filled.Close, contentDescription = "Close phone mini player", modifier = Modifier.size(20.dp)) }
-                LiveProgressLine(snap, visible, Modifier.align(Alignment.BottomStart))
+                LiveProgressLine(visible, Modifier.align(Alignment.BottomStart))
             }
         }
     }
@@ -1829,7 +1832,9 @@ private fun MirrorFallback(snap: Snap, reason: PhoneMirrorPolicy.Fallback, large
  * small scope, so ticks never recompose the surrounding player or screen.
  */
 @Composable
-private fun LiveProgressLine(snap: Snap, visible: Boolean, modifier: Modifier) {
+private fun LiveProgressLine(visible: Boolean, modifier: Modifier) {
+    // The only reader of position reports on the player: its own collection, its own scope.
+    val snap by WebHost.snapshot.collectAsState()
     val pos = rememberLivePosition(snap, visible)
     val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
     Box(modifier.fillMaxWidth(fraction).height(3.dp).background(Color(0xFFFF0033)))

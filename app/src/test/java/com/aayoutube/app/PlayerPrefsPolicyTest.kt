@@ -51,7 +51,7 @@ class PlayerPrefsPolicyTest {
         assertTrue(ui.contains("scrim.animateTo(0f, tween(240))"))
         assertFalse("WebView must stay opaque", ui.contains("playerMod.graphicsLayer { alpha = fade"))
         assertTrue("mini progress ticks only while playing, not buffering, and shown",
-            ui.contains("LiveProgressLine(snap, paneShown,") &&
+            ui.contains("LiveProgressLine(paneShown,") &&
                 ui.contains("if (!snap.playing || snap.buffering || !visible) return@LaunchedEffect"))
         // Speed memory ignores YouTube's reset on a new video; double tap keeps one jump.
         assertTrue(js.contains("now - loadAt < 3000"))

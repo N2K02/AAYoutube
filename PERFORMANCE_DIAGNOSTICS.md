@@ -81,8 +81,10 @@ how long the previous level lasted and every signal value.
 ### Measurements added
 
 * `PERF` (page window, 30 s; 60 s at HIGH+; 120 s with the screen off): `decodedFrames`,
-  `presentedFrames` (decoded − dropped), `stalls`/`stallMs` (audio interruption **estimate** from
-  `waiting` → `playing`; audible output is not measured), `dupReports` (bridge reports suppressed),
+  `presentedEstFrames` (decoded − dropped, an estimate), `displayedFrames` (compositor `presentedFrames` from one
+  `requestVideoFrameCallback` per window, −1 when unsupported or hidden; lags one window),
+  `bufferEvents`/`bufferMs` (`waiting` → `playing`) and `clockStallMs` (clock not moving although the element
+  claims enough data) — audio interruption estimates, audible output is not measured, `dupReports` (bridge reports suppressed),
   `domObserved` (false while the hidden page's MutationObserver is disconnected), `perfLevel`,
   `mirrorRenderer`.
 * `PERF engine …`: level, reason, renderer allocations/releases (primary and secondary separately,
@@ -95,7 +97,14 @@ how long the previous level lasted and every signal value.
 ### Power and CPU changes
 
 * CPU wake lock: always acquired with a 10-minute timeout, refreshed every 5 minutes while wanted
-  (state reports or the health tick); a recovery that has not produced playback for 3 minutes releases it.
+  (state reports or the health tick). Stalls are judged by the **media clock** (`MediaClockWatch`): when the
+  position has not moved for 3 minutes while playback is wanted — including a player stuck buffering that keeps
+  reporting `playing=true`, or a recovery that never started — the lock is released. `HEALTH` reports
+  `mediaClock=IDLE|PROGRESSING|BUFFERING|STALLED`, `clockBufferingMs` and `clockStalledMs` separately.
+* Engine lifecycle (`PerformanceSession`): runs only while a primary renderer exists; any release stops it,
+  late thermal/memory/frame callbacks are ignored, and a new renderer drops stale dropped-frame and buffering
+  measurements.
+* Hidden phone copy: if the level rises while it is hidden, the scheduled release moves earlier (never later).
 * Last position: Pause, Stop, Quit, end and new videos save at once; while playing every 15 s
   (30 s screen off), down from every 5 s.
 * Page script: the document MutationObserver is disconnected while nothing shows the page (a 12 s
@@ -115,9 +124,16 @@ how long the previous level lasted and every signal value.
   process); offload is not reachable from the app. Genuine audio-only or offloaded playback needs a native
   player fed with extracted stream URLs, which would replace the reliable YouTube engine. Not adopted;
   the retained audio-only renderer remains the audio path.
-* **Primary mini-player size ceiling**: lowering the phone mini player below 720p would switch quality on
-  every mini/full toggle, which existing behaviour deliberately avoids. Only the secondary phone copy is sized
-  to its view.
+* **Primary mini-player size ceiling** (adopted in the follow-up): applied only after the mini player stays
+  open for 20 s, then sized to the real player (240p ≤ 260 px, 360p ≤ 400 px, 480p ≤ 540 px, else 720p);
+  brief mini/full toggles never switch quality, and leaving the mini player restores the saved quality.
+* **Audio-only / offload, device check (Pixel 8 Pro, 26 Nov 2026)**: `dumpsys audio` shows the app's audio
+  focus entries come from Chromium's media session only (the app requests none itself). Offload eligibility is
+  decided by AudioFlinger per AudioTrack, and Chromium does not request offloaded/direct tracks for WebView
+  media, so there is nothing the app can enable. A genuine audio-only path would mean a native player on
+  extracted stream URLs: it bypasses YouTube's player (ads, sign-in, format changes) and would need its own
+  device validation suite. Decision: keep the existing engine; revisit only behind an opt-in flag that passes
+  the benchmark below on the device.
 
 ### Benchmark before adopting permanently
 

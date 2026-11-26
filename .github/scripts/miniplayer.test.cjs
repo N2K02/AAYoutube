@@ -2147,9 +2147,9 @@ test('diagnostics report decoded, presented frames and stall estimates', () => {
   p.runIntervals();
   const r = p.perfReports.at(-1);
   assert.ok(r, 'a playing page reports a diagnostics window');
-  for (const key of ['decoded', 'presented', 'stalls', 'stallMs', 'dupReports', 'observed', 'level'])
+  for (const key of ['decoded', 'presentedEst', 'displayed', 'bufferEvents', 'bufferMs', 'clockStallMs', 'dupReports', 'observed', 'level'])
     assert.ok(key in r, key);
-  assert.ok(r.presented <= r.decoded);
+  assert.ok(r.presentedEst <= r.decoded);
 });
 
 test('a stalled lyrics clock is sampled once, not every 250 ms', () => {
@@ -2164,4 +2164,80 @@ test('a stalled lyrics clock is sampled once, not every 250 ms', () => {
   p.video.readyState = 4;
   p.runIntervals();
   assert.equal(p.lyricReports.length, n + 1, 'moving clock reports again');
+});
+
+test('brief mini/full toggles never switch quality; a sustained mini player decodes for its size', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  const n = p.qualityCalls.length;
+  // Brief: open for 5 s, ticks run, back to full.
+  p.window.__aay.mini(true);
+  p.advance(5000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(p.qualityCalls.length, n, 'brief toggle: no quality switch');
+  assert.equal(p.window.__aay.miniSized(), '');
+  // Sustained: after 20 s the fake 320x180 player gets 240p.
+  p.window.__aay.mini(true);
+  p.advance(21000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.window.__aay.miniSized(), 'small');
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+  const sized = p.qualityCalls.length;
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.qualityCalls.length, sized, 'applied once, not on every tick');
+  // Back to full: the saved quality returns.
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.equal(p.window.__aay.miniSized(), '');
+});
+
+test('sustained mini sizing is skipped in PiP and on the car', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.pip(true);
+  p.advance(25000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.window.__aay.miniSized(), '');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+});
+
+test('diagnostics separate a silent clock stall from buffering and read displayed frames once per window', () => {
+  const p = playerPage();
+  let rvfc = 0, presented = 1000;
+  p.video.requestVideoFrameCallback = (cb) => { rvfc++; cb(0, { presentedFrames: presented }); };
+  p.flush();
+  p.advance(31000);
+  p.runIntervals(); // first window: baseline clock, one frame callback
+  // Clock frozen while claiming enough data (readyState 4, no 'waiting').
+  presented = 1600;
+  p.advance(31000);
+  p.runIntervals();
+  const stalled = p.perfReports.at(-1);
+  assert.ok(stalled.clockStallMs >= 30000, 'silent clock stall counted');
+  assert.equal(stalled.bufferMs, 0, 'not counted as buffering');
+  assert.equal(stalled.displayed, -1, 'no second compositor reading yet');
+  // Moving clock: no stall; displayed = frames between the last two compositor readings.
+  p.video.currentTime += 31;
+  p.advance(31000);
+  p.runIntervals();
+  assert.equal(p.perfReports.at(-1).clockStallMs, 0);
+  assert.equal(p.perfReports.at(-1).displayed, 600, 'compositor-presented frames between readings');
+  // Buffering: readyState < 3 is buffering, never a clock stall.
+  p.video.readyState = 2;
+  p.video.trigger('waiting');
+  p.advance(31000);
+  p.runIntervals();
+  const buffering = p.perfReports.at(-1);
+  assert.equal(buffering.clockStallMs, 0);
+  assert.ok(buffering.bufferMs >= 30000);
+  assert.ok(rvfc <= 4, 'one frame callback per window, never per frame');
 });

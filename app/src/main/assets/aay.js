@@ -224,7 +224,8 @@
   // Bounded, aggregated counters only: no page content, URLs or video identifiers.
   var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
-    lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0 };
+    lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0,
+    lastClock: -1, lastClockSrc: null, rvfcTotal: -1, rvfcPrev: -1 };
   /* Adaptive performance level from the app (0 normal, 1 elevated, 2 high, 3 severe):
    * scales nonessential DOM work, sets a primary quality ceiling (high 1080p, severe 720p;
    * Auto stays adaptive under it) and the diagnostics window. Playback events stay immediate. */
@@ -1877,6 +1878,7 @@
       perf.ticks++;
       perf.tickMs += Math.max(0, Date.now() - started);
       refreshPageObserver();
+      checkMiniSize();
     }
   }
   // YouTube mutates the page continuously, even when the player is unchanged.
@@ -1947,15 +1949,28 @@
       var dd = dropped >= 0 && perf.lastDropped >= 0 ? Math.max(0, dropped - perf.lastDropped) : 0;
       var droppedPct = df ? Math.round(Math.min(100, dd / df * 100)) : -1;
       var playing = !!(v && !v.paused && !v.ended);
+      // Media clock: a player claiming enough data (readyState >= 3, no 'waiting') whose clock
+      // still did not move is a silent clock stall, not buffering.
+      var ct = v && isFinite(v.currentTime) ? v.currentTime : -1;
+      var clockStallMs = 0;
+      if (playing && !v.seeking && v.readyState >= 3 && ct >= 0 && perf.lastClock >= 0 &&
+          perf.lastClockSrc === v && (ct - perf.lastClock) * 1000 < span * (v.playbackRate || 1) * 0.25)
+        clockStallMs = span;
+      // Actually displayed frames: one requestVideoFrameCallback per window reads the compositor's
+      // cumulative presentedFrames (no per-frame callback). -1 when unsupported or not rendered.
+      var displayed = perf.rvfcTotal >= 0 && perf.rvfcPrev >= 0 && perf.rvfcTotal >= perf.rvfcPrev ?
+        perf.rvfcTotal - perf.rvfcPrev : -1;
       if (playing && N && typeof N.perf === 'function') try {
         N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
           tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
           sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
-          // Decoded vs presented (decoded minus dropped) frames in this window.
-          decoded: df, presented: Math.max(0, df - dd),
-          stalls: perf.stalls, stallMs: perf.stallMs + (perf.stallAt ? now - perf.stallAt : 0),
+          // Decoded; presentedEst = decoded minus dropped (an estimate); displayed = compositor count.
+          decoded: df, presentedEst: Math.max(0, df - dd), displayed: displayed,
+          // Buffering ('waiting' -> 'playing') and silent clock stalls are reported separately.
+          bufferEvents: perf.stalls, bufferMs: perf.stallMs + (perf.stallAt ? now - perf.stallAt : 0),
+          clockStallMs: clockStallMs,
           dupReports: perf.dupReports, observed: pageObserved, level: perfState.level,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
           codec: codec, tier: tier, audioOnly: !!A.audioOnly }), BRIDGE_TOKEN);
@@ -1964,6 +1979,13 @@
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
       perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
       perf.dupReports = 0; perf.stalls = 0; perf.stallMs = 0; if (perf.stallAt) perf.stallAt = now;
+      perf.lastClock = ct; perf.lastClockSrc = v || null;
+      perf.rvfcPrev = perf.rvfcTotal;
+      if (playing && typeof v.requestVideoFrameCallback === 'function') try {
+        v.requestVideoFrameCallback(function (t, md) {
+          if (md && isFinite(md.presentedFrames)) perf.rvfcTotal = md.presentedFrames;
+        });
+      } catch (e) {}
     };
     var perfTimer = setInterval(perfSample, perfState.diagMs);
     perfState.restart = function () { clearInterval(perfTimer); perfTimer = setInterval(perfSample, perfState.diagMs); };
@@ -2575,6 +2597,10 @@
     var serial = ++miniExpandSerial;
     if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
+    miniSized.since = on ? Date.now() : 0;
+    var wasSized = miniSized.active;
+    miniSized.active = false;
+    if (wasSized) { qualityApply.key = ''; } // full player gets its quality back with the next apply
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
@@ -2672,6 +2698,36 @@
     qualityApply.key = '';
     applyPreferredQuality();
   };
+  /* Sustained size-based ceiling for the phone's own mini player. A brief mini/full toggle never
+   * switches quality: the size tier applies only after the mini player stayed open for
+   * MINI_SIZE_SETTLE_MS, and is checked on the normal tick (no extra timer). */
+  var MINI_SIZE_SETTLE_MS = 20000;
+  var miniSized = { since: 0, active: false, quality: '' };
+  function smallPlayerQuality() {
+    var v = getVideo();
+    if (!v || typeof v.getBoundingClientRect !== 'function') return '';
+    var r = null;
+    try { r = v.getBoundingClientRect(); } catch (e) {}
+    var dpr = window.devicePixelRatio || 1;
+    var shown = r && r.width > 0 && r.height > 0 ? Math.min(r.height, r.width * 9 / 16) * dpr : 0;
+    if (!shown) return '';
+    if (shown <= 260) return 'small';
+    if (shown <= 400) return 'medium';
+    if (shown <= 540) return 'large';
+    return '';
+  }
+  function checkMiniSize() {
+    if (miniSized.active || !miniSized.since || !A.isMini || A.inPip || A.isCar) return;
+    if (Date.now() - miniSized.since < MINI_SIZE_SETTLE_MS) return;
+    miniSized.quality = smallPlayerQuality();
+    miniSized.active = true;
+    if (!miniSized.quality) return; // unknown or large: keep the 720p small-window ceiling
+    console.log('[aay] mini player sustained: quality ceiling ' + miniSized.quality);
+    qualityApply.key = '';
+    applyPreferredQuality();
+  }
+  A.miniSized = function () { return miniSized.active ? miniSized.quality : ''; };
+
   function effectiveCap() {
     var cap = deviceCapH;
     if (thermalHot) cap = cap ? Math.min(cap, THERMAL_CAP) : THERMAL_CAP;
@@ -2786,6 +2842,10 @@
   function desiredQuality() {
     if (bgSaverActive()) return BG_SAVER_QUALITY;
     var q = capForDevice(savedQuality());
+    // Phone mini player shown for a sustained period: decode for its real size (240p-480p).
+    if (miniSized.active && A.isMini && !A.inPip && !A.isCar && miniSized.quality &&
+        (q === 'auto' || qualityOrder.indexOf(miniSized.quality) < qualityOrder.indexOf(q)))
+      return miniSized.quality;
     if ((A.inPip || A.isMini) && (q === 'auto' || qualityOrder.indexOf(q) > qualityOrder.indexOf(PIP_MAX_QUALITY)))
       return PIP_MAX_QUALITY;
     return q;

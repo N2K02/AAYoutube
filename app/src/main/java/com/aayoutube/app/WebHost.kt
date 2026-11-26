@@ -410,6 +410,7 @@ object WebHost {
             " directCarContext=" + inCarDisplay)
         webGeneration++
         PerformanceMonitor.diagnostics.rendererAllocations++
+        PerformanceMonitor.onPrimaryRendererCreated()
         bridgeToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         // Actual WebView geometry changes are a cheap proxy for potential
@@ -1286,8 +1287,10 @@ object WebHost {
                 "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
                 "frames=${metric("frames")} droppedPct=$droppedPct " +
-                "decodedFrames=${metric("decoded")} presentedFrames=${metric("presented")} " +
-                "stalls=${metric("stalls", 1_000)} stallMs=${metric("stallMs", 600_000)} " +
+                "decodedFrames=${metric("decoded")} presentedEstFrames=${metric("presentedEst")} " +
+                "displayedFrames=${d.optInt("displayed", -1).coerceIn(-1, 1_000_000)} " +
+                "bufferEvents=${metric("bufferEvents", 1_000)} bufferMs=${metric("bufferMs", 600_000)} " +
+                "clockStallMs=${metric("clockStallMs", 600_000)} " +
                 "dupReports=${metric("dupReports")} domObserved=${d.optBoolean("observed", true)} " +
                 "perfLevel=${PerformanceMonitor.level.value} mirrorRenderer=${PhoneMirror.rendererAllocated} " +
                 "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
@@ -1652,8 +1655,9 @@ object WebHost {
                 sessionResetUrl = null
             }
             PhoneMirror.release()
-            PerformanceMonitor.reset()
         }
+        // No renderer, no playback session: the performance engine stops with it (any release).
+        PerformanceMonitor.reset()
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
