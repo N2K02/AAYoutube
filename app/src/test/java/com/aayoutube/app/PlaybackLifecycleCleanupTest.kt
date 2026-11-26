@@ -25,17 +25,29 @@ class PlaybackLifecycleCleanupTest {
         assertTrue(unregister.contains("unregisterAudioPlaybackCallback(cb)"))
         assertTrue(unregister.contains("removeOnModeChangedListener(l)"))
         assertTrue(unregister.contains("holdWake.release()"))
-        assertTrue(web.contains("main.post { if (generation == webGeneration) startOtherMediaHold(\"page watchdog\") }"))
+        val hold = web.substringAfter("fun postOtherMediaHold(generation: Int) {")
+            .substringBefore("private val droppedResume")
+        assertTrue(hold.contains("main.post {"))
+        assertTrue(hold.contains("if (generation != webGeneration) return@post"))
+        assertTrue(hold.contains("!current.playing && !current.buffering && !current.userPaused"))
+        assertTrue(hold.contains("!current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertTrue(hold.contains("startOtherMediaHold(\"page watchdog\")"))
+        assertTrue(hold.indexOf("if (generation != webGeneration) return@post") <
+            hold.indexOf("startOtherMediaHold"))
+        assertTrue(hold.contains("window.__aay.mediaHold(false)"))
     }
 
     @Test fun manualPauseOrPlayCancelsAPendingAutomaticDecision() {
         val publish = web.substringAfter("private fun publish(incoming: Snap) {").substringBefore("val key =")
-        assertTrue(publish.contains("if (incoming.playing || !playbackWanted) {"))
+        assertTrue(publish.contains("if (incoming.playing || incoming.buffering || incoming.id != previous.id || !playbackWanted) {"))
+        assertTrue(publish.contains("main.removeCallbacks(droppedResume)"))
         assertTrue(publish.contains("main.removeCallbacks(droppedResumeJudge)"))
     }
 
     @Test fun thermalStatusReachesThePage() {
-        assertTrue(web.contains("pm.addThermalStatusListener(app.mainExecutor)"))
+        assertTrue(web.contains("pm.addThermalStatusListener(app.mainExecutor, listener)"))
+        assertTrue(web.contains("removeThermalStatusListener(listener)"))
+        assertTrue(web.contains("if (thermalListener != null && web != null)"))
         assertTrue(web.contains("window.__aay.thermal(\$status)"))
         assertTrue(web.contains(".put(\"thermal\", thermalStatus())"))
     }

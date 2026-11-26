@@ -25,7 +25,11 @@ class MiniPlayerTransitionContractTest {
         assertFalse(pane.contains("scaleX = 1f + (miniScaleX"))
         assertFalse(pane.contains("scaleY = 1f + (miniScaleY"))
         assertFalse(pane.contains("animateFloatAsState("))
-        assertTrue(pane.contains("if (browseOn && !inPip)"))
+        assertTrue(pane.contains("if (browseOn && !inPip && (!projectedToCar || onCar))"))
+        assertTrue(pane.contains("if (projectedToCar && !onCar) return@LaunchedEffect"))
+        assertTrue("a late projection never steals the car player",
+            pane.contains("Box(Modifier.fillMaxSize().background(Color.Black))"))
+        assertTrue(pane.contains("if (!projectedToCar || onCar) key(version)"))
         assertTrue(pane.contains("if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause()"))
         // A mini video can move beneath either controls rail; no reserved side strip.
         assertTrue(pane.contains("val minX = edge"))
@@ -40,7 +44,7 @@ class MiniPlayerTransitionContractTest {
         assertTrue(activity.contains("builder.setSourceRectHint(bounds)"))
         assertTrue(activity.contains("setAspectRatio(Rational(16, 9))"))
         assertTrue(activity.contains("watchTabVisible"))
-        assertTrue(activity.contains("if (!entered) WebHost.pip(false)"))
+        assertTrue(activity.contains("if (!entered && !WebHost.phonePreviewOnly) WebHost.pip(false)"))
         assertTrue(activity.contains("WebHost.pip(false) // Clear an interrupted PiP entry"))
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("w.getGlobalVisibleRect(out)"))

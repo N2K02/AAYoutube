@@ -1,0 +1,320 @@
+package com.aayoutube.app
+
+/**
+ * Pure (Android-free) decisions for the shared player while Android Auto
+ * projects it. Kept separate from WebHost/Compose so they are unit-testable.
+ */
+
+/** Drops the same selection arriving again through another callback path
+ * (page click bridge, shouldOverrideUrlLoading, doUpdateVisitedHistory). */
+internal class SelectionDeduper(private val windowMs: Long = 1_500L) {
+    private var lastKey = ""
+    private var lastAt = 0L
+    private var seen = false
+
+    fun accept(key: String, nowMs: Long): Boolean {
+        if (key.isBlank()) return true
+        if (seen && key == lastKey && nowMs - lastAt in 0 until windowMs) return false
+        seen = true
+        lastKey = key
+        lastAt = nowMs
+        return true
+    }
+
+    fun reset() { seen = false; lastKey = ""; lastAt = 0L }
+
+    companion object {
+        /** Identity of a selection: video + playlist + start time, or the route for other pages.
+         * A timestamp link is an intentional seek, so it is a different selection. */
+        fun key(path: String, videoId: String?, list: String?, startMs: Long? = null): String = when {
+            !videoId.isNullOrBlank() -> "v=$videoId|list=${list.orEmpty()}|t=${startMs ?: -1}"
+            path.startsWith("/shorts/") || path.startsWith("/live/") -> path
+            else -> ""
+        }
+    }
+}
+
+/** Whether a newly selected watch URL is the video that is already loaded. */
+internal object SelectedVideoReuse {
+    fun reuse(currentId: String, onWatchPage: Boolean, selectedId: String?,
+              selectedList: String?, currentList: String?, explicitPaused: Boolean): Boolean =
+        onWatchPage && !explicitPaused && currentId.isNotBlank() && selectedId == currentId &&
+            (selectedList.isNullOrBlank() || selectedList == currentList)
+}
+
+/** YouTube's t= / start= parameter: "90", "90s", "1m30s", "1h2m3s". */
+internal object TimestampParam {
+    private val part = Regex("(\\d+)([hms])")
+    fun parseMs(value: String?): Long? {
+        val v = value?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= 16 } ?: return null
+        val maxSeconds = Long.MAX_VALUE / 1000
+        v.toLongOrNull()?.let { return if (it in 0..maxSeconds) it * 1000 else null }
+        if (!Regex("(\\d+[hms])+").matches(v)) return null
+        var sec = 0L
+        var previousUnit = 4_000L
+        for (m in part.findAll(v)) {
+            val n = m.groupValues[1].toLongOrNull() ?: return null
+            val unit = when (m.groupValues[2]) { "h" -> 3600L; "m" -> 60L; else -> 1L }
+            if (unit >= previousUnit || n > (maxSeconds - sec) / unit) return null
+            previousUnit = unit
+            sec += n * unit
+        }
+        return sec * 1000
+    }
+}
+
+/** Navigating a browse page to the address it already shows is a wasted load. */
+internal object BrowseNavigation {
+    fun sameDestination(current: String?, target: String): Boolean {
+        if (current.isNullOrBlank()) return false
+        fun norm(u: String): List<String?>? = runCatching {
+            val uri = java.net.URI(u)
+            val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+            val host = uri.host?.lowercase() ?: return@runCatching null
+            val path = uri.rawPath.orEmpty().ifBlank { "/" }
+            val port = if ((scheme == "https" && uri.port == 443) || (scheme == "http" && uri.port == 80)) -1 else uri.port
+            listOf(scheme, host, port.toString(), uri.rawUserInfo, path, uri.rawQuery)
+        }.getOrNull()
+        val a = norm(current) ?: return false
+        return a == norm(target)
+    }
+}
+
+/**
+ * Car renderer reuse. A live renderer moved between two car windows paints
+ * black, so a window change normally gets a fresh renderer. A renderer that was
+ * retained for audio after its window closed is not bound to any window: reuse
+ * it (no reload, buffers kept) and verify the picture afterwards instead.
+ */
+internal object CarRendererReusePolicy {
+    const val VERIFY_DELAYS_MS = 1_800L
+    const val MAX_VERIFY_SAMPLES = 3
+    /** Consecutive black samples (while the clock advances) before recovery. */
+    const val BLACK_SAMPLES_TO_RECOVER = 2
+    const val DARK_PERCENT_BLACK = 98
+    const val RECOVERY_COOLDOWN_MS = 60_000L
+    /** Time for YouTube's controls to paint before the second (discriminating) sample. */
+    const val CONTROLS_PAINT_MS = 600L
+    /** With YouTube's white controls shown, a painting surface is never this dark. */
+    const val DARK_PERCENT_DEAD_SURFACE = 100
+
+    fun reason(createdDisplay: Int?, targetDisplay: Int?, boundWindow: Int?, targetWindow: Int?,
+               retainedDetached: Boolean, forced: String? = null, verifiedTrial: Boolean = false): String? = when {
+        forced != null -> forced
+        retainedDetached ->
+            if (PlayerDisplayPolicy.shouldRecreate(createdDisplay, targetDisplay) && !verifiedTrial) "display" else null
+        else -> PlayerDisplayPolicy.carRecreateReason(createdDisplay, targetDisplay, boundWindow, targetWindow)
+    }
+
+    /** A bounded trial is only safe with a detached, playing car-origin renderer and a recovery owner. */
+    fun canTrial(created: Int?, target: Int?, detached: Boolean, playing: Boolean, hasRecovery: Boolean,
+                 now: Long, lastFailed: Long): Boolean = detached && playing && hasRecovery &&
+        created != null && target != null && created > 0 && target > 0 && created != target &&
+        (lastFailed == 0L || now - lastFailed >= RECOVERY_COOLDOWN_MS)
+
+    /** A trial must show both a progressing decoder and nonblack output; uncertainty is not success. */
+    fun trialVerified(advancing: Boolean, decoding: Boolean, darkPercent: Int?): Boolean =
+        advancing && decoding && darkPercent != null && darkPercent < DARK_PERCENT_BLACK
+
+    /** Preserve explicit timestamp navigation instead of restoring an older snapshot over it. */
+    fun restorePosition(incomingId: String?, outgoingId: String?, currentId: String, position: Long,
+                        ended: Boolean, explicitStart: Long?): Long? =
+        position.takeIf { incomingId != null && incomingId == outgoingId && incomingId == currentId &&
+            position >= 10_000L && !ended && explicitStart == null }
+
+    /** A sample counts as black only when the video is genuinely presenting. */
+    fun blackSample(darkPercent: Int?, playing: Boolean, buffering: Boolean, advancing: Boolean): Boolean =
+        darkPercent != null && darkPercent >= DARK_PERCENT_BLACK && playing && !buffering && advancing
+
+    /** Dark scene vs. dead surface: shown controls must add visible pixels. */
+    fun stillBlackWithControls(darkPercent: Int?): Boolean =
+        darkPercent != null && darkPercent >= DARK_PERCENT_DEAD_SURFACE
+
+    fun shouldRecover(consecutiveBlack: Int, nowMs: Long, lastRecoveryAtMs: Long): Boolean =
+        consecutiveBlack >= BLACK_SAMPLES_TO_RECOVER &&
+            (lastRecoveryAtMs == 0L || nowMs - lastRecoveryAtMs >= RECOVERY_COOLDOWN_MS)
+}
+
+/** Percentage of near-black pixels in a small ARGB sample. */
+internal object FrameDarkness {
+    fun percent(pixels: IntArray): Int {
+        if (pixels.isEmpty()) return 100
+        var dark = 0
+        for (p in pixels) {
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            // Rec.601 luma, integer form.
+            if ((r * 299 + g * 587 + b * 114) / 1000 < 18) dark++
+        }
+        return dark * 100 / pixels.size
+    }
+}
+
+/** Car-window health captures: bounded in time and in outstanding buffers. */
+/** Rate-limited main-process pressure, not renderer CPU or hardware GPU utilisation. */
+internal class ProcessPressurePolicy {
+    private var streak = 0
+    private var sampledAt = Long.MIN_VALUE / 2
+    fun update(cpuPercent: Int, nowMs: Long) {
+        if (cpuPercent < 0) return
+        if (nowMs - sampledAt > 75_000L) streak = 0
+        sampledAt = nowMs
+        streak = if (cpuPercent >= 120) (streak + 1).coerceAtMost(2) else 0
+    }
+    fun active(nowMs: Long): Boolean = streak >= 2 && nowMs - sampledAt in 0..75_000L
+    fun reset() { streak = 0; sampledAt = Long.MIN_VALUE / 2 }
+}
+
+internal object CaptureBudget {
+    /** A PixelCopy whose callback never arrived must not block later captures... */
+    const val STUCK_REQUEST_MS = 1_000L
+    /** ...but stuck requests still hold a bitmap until Android answers: cap them. */
+    const val MAX_OUTSTANDING = 2
+
+    fun requestStuck(startedAtMs: Long, nowMs: Long) = startedAtMs != 0L && nowMs - startedAtMs >= STUCK_REQUEST_MS
+    fun mayStart(outstanding: Int, lastStartedAtMs: Long, nowMs: Long): Boolean = when {
+        outstanding <= 0 -> true
+        outstanding >= MAX_OUTSTANDING -> false
+        else -> requestStuck(lastStartedAtMs, nowMs)
+    }
+}
+
+/** Nested enum class: referencing it does not initialise the WebHost object. */
+private typealias Mode = WebHost.PlayerMode
+
+/** The phone's own player UI while the car owns (or retains) the single engine. */
+internal object ProjectedPhoneNav {
+    fun home(hasVideo: Boolean) = if (hasVideo) Mode.MINI else Mode.HIDDEN
+
+    /** Back: full player shrinks; otherwise browse history, then Home. */
+    sealed interface Back {
+        data object Minimize : Back
+        data object BrowseHistory : Back
+        data object Home : Back
+    }
+    fun back(mode: Mode, browseCanGoBack: Boolean): Back = when {
+        mode == Mode.FULL -> Back.Minimize
+        browseCanGoBack -> Back.BrowseHistory
+        else -> Back.Home
+    }
+
+    /** Mode to show when the shared video changes or disappears. */
+    fun onVideoChanged(mode: Mode, hasVideo: Boolean): Mode = when {
+        !hasVideo && mode != Mode.HIDDEN -> Mode.HIDDEN
+        hasVideo && mode == Mode.HIDDEN -> Mode.MINI
+        else -> mode
+    }
+}
+
+/**
+ * Measures Music<->Video handoffs. "Complete" only when the media clock is
+ * really advancing again, never on a transient playing callback.
+ */
+internal class ModeTransitionMeter(private val timeoutMs: Long = 30_000L) {
+    sealed interface Event {
+        data class Buffering(val direction: String, val elapsedMs: Long) : Event
+        data class Completed(val direction: String, val elapsedMs: Long, val interruptionMs: Long,
+                             val bufferingMs: Long, val rendererRecreated: Boolean) : Event
+        data class Cancelled(val direction: String, val elapsedMs: Long, val reason: String) : Event
+    }
+
+    private var active = false
+    private var direction = ""
+    private var videoId = ""
+    private var startPos = 0L
+    private var startedAt = 0L
+    private var generation = 0
+    private var bufferingSince = 0L
+    private var bufferingTotal = 0L
+    private var bufferingReported = false
+    private var stalledSince = 0L
+
+    val running: Boolean get() = active
+
+    enum class Start { STARTED, DUPLICATE, SUPERSEDED }
+
+    /**
+     * The same direction while one is running is a duplicate (ignored); the other direction
+     * supersedes it (reported by the caller), then a new measurement starts.
+     */
+    fun start(direction: String, videoId: String, positionMs: Long, generation: Int,
+              playing: Boolean, nowMs: Long): Start {
+        if (active && direction == this.direction && videoId == this.videoId && nowMs - startedAt <= timeoutMs) {
+            return Start.DUPLICATE
+        }
+        val superseded = active
+        active = videoId.isNotBlank()
+        this.direction = direction
+        this.videoId = videoId
+        startPos = positionMs
+        startedAt = nowMs
+        this.generation = generation
+        bufferingSince = 0L
+        bufferingTotal = 0L
+        bufferingReported = false
+        stalledSince = if (playing) 0L else nowMs
+        return if (superseded) Start.SUPERSEDED else Start.STARTED
+    }
+
+    val currentDirection: String get() = direction
+    fun elapsed(nowMs: Long) = nowMs - startedAt
+
+    fun cancel() { active = false }
+
+    fun expire(nowMs: Long): Event.Cancelled? {
+        if (!active || nowMs - startedAt < timeoutMs) return null
+        active = false
+        return Event.Cancelled(direction, nowMs - startedAt, "timeout")
+    }
+
+    fun onState(id: String, playing: Boolean, buffering: Boolean, userPaused: Boolean, ended: Boolean,
+                positionMs: Long, generation: Int, nowMs: Long): Event? {
+        if (!active) return null
+        expire(nowMs)?.let { return it }
+        val elapsed = nowMs - startedAt
+        if (id != videoId || userPaused || ended) {
+            active = false
+            val reason = when {
+                id != videoId -> "video-changed"
+                userPaused -> "user-paused"
+                ended -> "ended"
+                else -> "timeout"
+            }
+            return Event.Cancelled(direction, elapsed, reason)
+        }
+        if (!playing || buffering) { if (stalledSince == 0L) stalledSince = nowMs }
+        if (buffering) {
+            if (bufferingSince == 0L) bufferingSince = nowMs
+            if (!bufferingReported) {
+                bufferingReported = true
+                return Event.Buffering(direction, elapsed)
+            }
+            return null
+        }
+        if (bufferingSince != 0L) {
+            bufferingTotal += nowMs - bufferingSince
+            bufferingSince = 0L
+        }
+        if (playing && positionMs > startPos) {
+            active = false
+            val interruption = if (stalledSince == 0L) 0L else nowMs - stalledSince
+            return Event.Completed(direction, elapsed, interruption, bufferingTotal,
+                generation != this.generation)
+        }
+        return null
+    }
+}
+
+/** androidx.car.app CarConnection types: 0 not connected, 1 native, 2 projection. */
+internal object CarConnectionPolicy {
+    const val NOT_CONNECTED = 0
+    fun disconnected(previous: Int, current: Int): Boolean =
+        current == NOT_CONNECTED && previous > NOT_CONNECTED
+}
+
+/** A reported recovery is real only if the media clock itself is playing at or past the reported position. */
+internal object HandoffConfirm {
+    fun confirmed(clockPlaying: Boolean?, clockMs: Long?, reportedMs: Long): Boolean =
+        clockPlaying == true && clockMs != null && clockMs + 250 >= reportedMs
+}

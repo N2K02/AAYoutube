@@ -52,7 +52,13 @@ class ControlsEdgeDragTest {
         val gesture = src("app/src/main/java/com/aayoutube/app/ControlsEdgeDrag.kt")
         assertTrue(gesture.contains("detectDragGestures(onDragEnd = { commit() }, onDragCancel = { commit() })"))
         assertTrue(gesture.contains("if (landscape) d.x else d.y"))
-        for (f in listOf("Screens.kt", "LegacyProjectionActivity.kt"))
-            assertTrue(f, src("app/src/main/java/com/aayoutube/app/$f").contains(".then(railDrag).zIndex(20f)"))
+        val phone = src("app/src/main/java/com/aayoutube/app/Screens.kt")
+        val car = src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
+        val bar = src("app/src/main/java/com/aayoutube/app/FloatingVideoBar.kt")
+        assertTrue(phone.contains("val (railAlign, railDrag) = rememberEdgeDrag("))
+        assertTrue(phone.contains("modifier = railDrag,"))
+        assertTrue(bar.contains("modifier = Modifier.wrapContentSize().then(modifier)"))
+        assertTrue(car.contains("val (railAlign, railDrag) = rememberEdgeDrag("))
+        assertTrue(car.contains(".then(railDrag).zIndex(20f)"))
     }
 }

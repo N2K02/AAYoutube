@@ -20,6 +20,7 @@ function playerPage(options = {}) {
   const qualityCalls = [];
   const qualityStorage = new Map();
   const perfReports = [];
+  const observers = [];
   const localStorage = {
     getItem(key) { return qualityStorage.get(key) || null; },
     setItem(key, value) { qualityStorage.set(key, String(value)); },
@@ -154,7 +155,11 @@ function playerPage(options = {}) {
     navigator, localStorage,
     history: { pushState() {}, replaceState() {} },
     Document: Doc, HTMLMediaElement: Media, MediaSession: class {},
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class {
+      constructor() { this.active = false; observers.push(this); }
+      observe(target) { this.active = true; this.target = target; }
+      disconnect() { this.active = false; }
+    },
     URL, console, Promise, Error, DOMException, TextEncoder,
     crypto: { subtle: { digest() { return Promise.resolve(new Uint8Array(32).buffer); } } },
     fetch(url) {
@@ -174,6 +179,7 @@ function playerPage(options = {}) {
   return {
     domNodes: dom ? dom.nodes : null,
     MediaSource: FakeMediaSource,
+    observers,
     window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage, perfReports,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     advance(ms) { clock.t += ms; },
@@ -188,7 +194,7 @@ function playerPage(options = {}) {
     get nextVideoCalls() { return nextVideoCalls; },
     get previousVideoCalls() { return previousVideoCalls; },
     emit(type, event) {
-      for (const fn of callbacks.get(type) || []) fn(event);
+      for (const fn of callbacks.get(type) || []) fn({ type, ...event });
     },
     flush() {
       let budget = 100;
@@ -313,6 +319,74 @@ test('car mini player recovers an unexpected pause but honours explicit pause', 
   p.window.__aay.cmd('pause');
   p.runIntervals();
   assert.equal(p.video.paused, true, 'mini player must honour the user pause');
+});
+
+test('car video to audio handoff recovers before the normal watchdog interval', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.window.__aay.car(false);
+  p.window.__aay.setBg(true);
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, false, 'handoff must recover without waiting five seconds');
+});
+
+test('surface-detach pause during a mode handoff resumes within about 300 ms', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(300);
+  p.flush();
+  assert.equal(p.video.paused, false);
+});
+
+test('retained audio mode preserves quality, position and explicit pause', () => {
+  const p = playerPage({ car: true, quality: true });
+  p.flush();
+  const n = p.qualityCalls.length;
+  p.video.currentTime = 42;
+  p.window.__aay.modeTransit();
+  p.window.__aay.audioMode(true);
+  p.window.__aay.car(false);
+  p.window.__aay.setBg(true);
+  p.advance(2000);
+  p.runIntervals();
+  assert.equal(p.qualityCalls.length, n, 'audio mode does not request a different stream');
+  assert.equal(p.video.currentTime, 42, 'handoff does not seek');
+  assert.equal(p.video.paused, false);
+  p.window.__aay.cmd('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'explicit pause remains authoritative');
+});
+
+test('car handoff recovery never overrides explicit Pause', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.window.__aay.cmd('pause');
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, true);
+});
+
+test('car handoff recovery respects other active audio', () => {
+  const other = { active: false };
+  const p = playerPage({ car: true, otherMedia: other });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  other.active = true;
+  p.advance(800);
+  p.flush();
+  assert.equal(p.video.paused, true);
 });
 
 test('pause caused by another app playing media is not resumed until it stops', () => {
@@ -1028,7 +1102,7 @@ test('trusted YouTube Pause is authoritative even with background protection ena
   p.window.AAYNative.userPause = () => nativePauses.push(true);
   p.window.__aay.setBg(true);
   p.runIntervals(); // remember that playback was requested
-  p.emit('pointerdown', { isTrusted: true, target: { closest: () => ({}) } });
+  p.emit('pointerdown', { isTrusted: true, target: { closest: selector => selector.includes('.ytp-play-button') ? {} : null } });
   p.video.pause();
   assert.equal(p.video.paused, true, 'trusted page Pause must bypass the pause interceptor');
   assert.equal(nativePauses.length, 1, 'the native media owner must know this pause was intentional');
@@ -1078,7 +1152,9 @@ test('same-video document reload can recover the position through the native bri
   p.video.currentTime = 0;
   p.video.readyState = 1;
   p.window.__aay.restoreAt('86p7SP34qSc', 145.5);
-  assert.ok(p.video.currentTime >= 145, 'same-video document reload should seek back');
+  assert.equal(p.video.currentTime, 0, 'give the player time to restore itself');
+  p.advance(1100); p.flush();
+  assert.ok(p.video.currentTime >= 145, 'fallback restores when the player has not recovered');
   p.video.currentTime = 0;
   p.window.__aay.restoreAt('different-video-id', 220);
   assert.equal(p.video.currentTime, 0, 'never restore a different video ID');
@@ -1153,7 +1229,7 @@ test('anonymous center div tap resumes an explicitly paused video', () => {
   p.video.paused = true;
   p.flush();
   // YouTube renders the center Play overlay as an anonymous div without selectors.
-  p.emit('pointerdown', {
+  p.emit('click', {
     isTrusted: true, clientX: 160, clientY: 90,
     target: { tagName: 'DIV', closest: () => null },
   });
@@ -1162,6 +1238,48 @@ test('anonymous center div tap resumes an explicitly paused video', () => {
   assert.equal(p.video.paused, false, 'real video-area Play tap must not be force-paused');
   p.runIntervals();
   assert.equal(p.video.paused, false, 'watchdog also respects resumed play');
+});
+
+test('dialog and scrim taps over the video do not release explicit pause', () => {
+  for (const event of ['pointerdown', 'click']) {
+    const p = playerPage({ paused: true, car: true });
+    p.video.paused = true;
+    p.flush();
+    p.emit(event, {
+      isTrusted: true, clientX: 160, clientY: 90,
+      target: { tagName: 'DIV', closest: selector => selector.includes('ytw-scrim') ? {} : null },
+    });
+    p.video.play();
+    p.video.trigger('play');
+    assert.equal(p.video.paused, true, 'overlay must not permit autoplay');
+  }
+});
+
+test('pointerdown and click on one Play control do not arm an opposite pause', () => {
+  const p = playerPage({ paused: true });
+  p.video.paused = true;
+  p.flush();
+  p.window.__aay.setBg(true);
+  const target = { closest: selector => selector.includes('.ytp-play-button') ? {} : null };
+  p.emit('pointerdown', { type: 'pointerdown', isTrusted: true, target });
+  p.video.play();
+  p.video.trigger('play');
+  p.emit('click', { type: 'click', isTrusted: true, target });
+  p.video.pause();
+  assert.equal(p.video.paused, false, 'the duplicate click must not authorize Pause');
+});
+
+test('pointerdown alone does not release an explicit pause', () => {
+  const p = playerPage({ paused: true, car: true });
+  p.video.paused = true;
+  p.flush();
+  p.emit('pointerdown', {
+    isTrusted: true, clientX: 160, clientY: 90,
+    target: { tagName: 'DIV', closest: () => null },
+  });
+  p.video.play();
+  p.video.trigger('play');
+  assert.equal(p.video.paused, true, 'a drag start must not permit autoplay');
 });
 
 test('outside video tap does not override an explicit pause', () => {
@@ -1280,6 +1398,26 @@ test('Next rebinds a replacement video element in mini-player and PiP', () => {
   }
 });
 
+test('retired video events cannot change the active replacement playback state', () => {
+  const p = playerPage();
+  p.flush();
+  const old = p.video;
+  const next = p.replaceVideo();
+  p.emit('loadstart', { target: next });
+  p.flush();
+  next.paused = false;
+  next.trigger('play');
+  p.flush();
+  old.paused = true;
+  old.ended = true;
+  for (const event of ['pause', 'ended', 'loadedmetadata', 'timeupdate', 'emptied']) {
+    old.trigger(event);
+  }
+  p.flush();
+  assert.equal(next.paused, false, 'retired events must not pause the replacement');
+  assert.equal(p.stateReports.at(-1).playing, true, 'media session must keep the active playback state');
+});
+
 test('PiP Next repairs the picture even if Chromium marks the page hidden', () => {
   const p = playerPage({ quality: true });
   let id = '86p7SP34qSc';
@@ -1357,6 +1495,29 @@ test('YouTube shown as paused while the video plays is told to play (centre butt
   p.window.__aay.mini(false);
 });
 
+
+test('blocked pause storms cannot reset player reconciliation cooldown', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2;
+  player.playVideo = () => { repairs++; p.video.pause(); };
+  p.window.__aay.mini(true);
+  p.runIntervals();
+  assert.equal(repairs, 1);
+  for (let i = 0; i < 40; i++) {
+    p.video.pause();
+    p.advance(250);
+    p.flush();
+    p.runIntervals();
+  }
+  assert.equal(repairs, 1, 'blocked pauses cannot cause a Play repair storm');
+  assert.equal(p.video.paused, false, 'audio continues playing');
+  p.advance(2000);
+  p.runIntervals();
+  assert.equal(repairs, 2, 'repair remains available after cooldown');
+});
 
 test('phone center Play resumes after a previous explicit native Pause', () => {
   const p = playerPage();
@@ -1728,12 +1889,6 @@ test('paused video produces no periodic performance bridge reports', () => {
   assert.equal(p.perfReports.length, 0);
 });
 
-test('audio DSP reports graph state, not an invented CPU percentage', () => {
-  const eq = fs.readFileSync('app/src/main/assets/aay_eq.js', 'utf8');
-  assert.match(eq, /A\.eqPerf = function \(\)/);
-  assert.match(eq, /needsRoute\(\) \? 'dsp' : 'bypass'/);
-  assert.doesNotMatch(eq, /A\.eqCpuPct/);
-});
 
 test('saved 1080p is a maximum, a 720p-only video plays 720p and next 1080p video restores it', () => {
   const p = playerPage({ quality: true, cfg: { preferredQuality: 'hd1080' } });
@@ -1912,4 +2067,244 @@ test('an unrelated tap or same-video navigation never starts a paused video', ()
   } });
   p.emitWindow('yt-navigate-finish', {});
   assert.equal(p.video.paused, true, 'reselecting same route is not a new video');
+});
+
+test('document restore does not force a second seek when YouTube restores the timestamp', () => {
+  const p = playerPage(); p.flush();
+  p.video.currentTime = 0; p.video.readyState = 1;
+  p.window.__aay.restoreAt('86p7SP34qSc', 145.5);
+  p.video.currentTime = 146;
+  p.advance(1100); p.flush();
+  assert.equal(p.video.currentTime, 146);
+});
+
+test('adaptive performance level sets primary quality ceilings and keeps Auto adaptive', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'auto' } });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  const calls = p.qualityCalls.length;
+  p.window.__aay.perfLevel(1);
+  assert.equal(p.qualityCalls.length, calls, 'elevated changes no quality');
+  p.window.__aay.perfLevel(2);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.perfLevel(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  const severe = p.qualityCalls.length;
+  p.window.__aay.perfLevel(3);
+  assert.equal(p.qualityCalls.length, severe, 'repeated level never switches quality again');
+  p.window.__aay.perfLevel(2);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.perfLevel(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+});
+
+test('adaptive ceiling never raises a lower saved quality', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'large' } });
+  p.flush();
+  const before = p.qualityCalls.at(-1);
+  p.window.__aay.perfLevel(3);
+  assert.deepEqual(p.qualityCalls.at(-1), before);
+});
+
+test('page mutation observer is suspended while hidden and restored when visible', () => {
+  const p = playerPage();
+  p.flush();
+  const page = p.observers.find((o) => o.target === p.document.documentElement);
+  assert.ok(page, 'document observer exists');
+  assert.equal(page.active, true);
+  p.window.__aay.setBg(true);
+  assert.equal(page.active, false, 'hidden page builds no mutation records');
+  assert.equal(p.window.__aay.pageObserved(), false);
+  p.window.__aay.setBg(false);
+  assert.equal(page.active, true);
+  assert.equal(p.window.__aay.pageObserved(), true);
+});
+
+test('unchanged state is not sent across the bridge again within 15 s', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.flush();
+  const sent = p.stateReports.length;
+  p.video.trigger('pause');
+  p.flush();
+  assert.equal(p.stateReports.length, sent, 'duplicate state suppressed');
+  p.advance(16000);
+  p.video.trigger('pause');
+  p.flush();
+  assert.equal(p.stateReports.length, sent + 1, 'heartbeat after the repeat window');
+  p.video.paused = false;
+  p.video.trigger('play');
+  p.flush();
+  assert.equal(p.stateReports.at(-1).playing, true, 'a change is sent at once');
+});
+
+test('diagnostics report decoded, presented frames and stall estimates', () => {
+  const p = playerPage();
+  p.flush();
+  p.advance(31000);
+  p.runIntervals();
+  const r = p.perfReports.at(-1);
+  assert.ok(r, 'a playing page reports a diagnostics window');
+  for (const key of ['decoded', 'presentedEst', 'displayed', 'bufferEvents', 'bufferMs', 'clockStallMs', 'dupReports', 'observed', 'level'])
+    assert.ok(key in r, key);
+  assert.ok(r.presentedEst <= r.decoded);
+});
+
+test('a stalled lyrics clock is sampled once, not every 250 ms', () => {
+  const p = playerPage();
+  p.window.__aay.lyricsSync(true);
+  p.video.readyState = 2;
+  p.runIntervals();
+  const n = p.lyricReports.length;
+  p.runIntervals();
+  p.runIntervals();
+  assert.equal(p.lyricReports.length, n, 'unchanged buffering sample is not resent');
+  p.video.readyState = 4;
+  p.runIntervals();
+  assert.equal(p.lyricReports.length, n + 1, 'moving clock reports again');
+});
+
+test('brief mini/full toggles never switch quality; a sustained mini player decodes for its size', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  const n = p.qualityCalls.length;
+  // Brief: open for 5 s, ticks run, back to full.
+  p.window.__aay.mini(true);
+  p.advance(5000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(p.qualityCalls.length, n, 'brief toggle: no quality switch');
+  assert.equal(p.window.__aay.miniSized(), '');
+  // Sustained: after 20 s the fake 320x180 player gets 240p.
+  p.window.__aay.mini(true);
+  p.advance(21000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.window.__aay.miniSized(), 'small');
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+  const sized = p.qualityCalls.length;
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.qualityCalls.length, sized, 'applied once, not on every tick');
+  // Back to full: the saved quality returns.
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+  assert.equal(p.window.__aay.miniSized(), '');
+});
+
+test('sustained mini sizing is skipped in PiP and on the car', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.window.__aay.pip(true);
+  p.advance(25000);
+  p.emitWindow('yt-navigate-finish');
+  p.flush();
+  assert.equal(p.window.__aay.miniSized(), '');
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+});
+
+test('diagnostics separate a silent clock stall from buffering and read displayed frames once per window', () => {
+  const p = playerPage();
+  let rvfc = 0, presented = 1000;
+  p.video.requestVideoFrameCallback = (cb) => { rvfc++; cb(0, { presentedFrames: presented }); };
+  p.flush();
+  p.advance(31000);
+  p.runIntervals(); // first window: baseline clock, one frame callback
+  // Clock frozen while claiming enough data (readyState 4, no 'waiting').
+  presented = 1600;
+  p.advance(31000);
+  p.runIntervals();
+  const stalled = p.perfReports.at(-1);
+  assert.ok(stalled.clockStallMs >= 30000, 'silent clock stall counted');
+  assert.equal(stalled.bufferMs, 0, 'not counted as buffering');
+  assert.equal(stalled.displayed, -1, 'no second compositor reading yet');
+  // Moving clock: no stall; displayed = frames between the last two compositor readings.
+  p.video.currentTime += 31;
+  p.advance(31000);
+  p.runIntervals();
+  assert.equal(p.perfReports.at(-1).clockStallMs, 0);
+  assert.equal(p.perfReports.at(-1).displayed, 600, 'compositor-presented frames between readings');
+  // Buffering: readyState < 3 is buffering, never a clock stall.
+  p.video.readyState = 2;
+  p.video.trigger('waiting');
+  p.advance(31000);
+  p.runIntervals();
+  const buffering = p.perfReports.at(-1);
+  assert.equal(buffering.clockStallMs, 0);
+  assert.ok(buffering.bufferMs >= 30000);
+  assert.ok(rvfc <= 4, 'one frame callback per window, never per frame');
+});
+
+test('mini size is evaluated by its own timer when no DOM mutation or tick happens', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.advance(20000);
+  p.flush(); // only the settle timer runs: no mutations, no navigation, no tick trigger
+  assert.equal(p.window.__aay.miniSized(), 'small');
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+});
+
+test('mini size measurement retries while dimensions are unavailable, a bounded number of times', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  let calls = 0;
+  p.video.getBoundingClientRect = () => (++calls <= 2 ? { width: 0, height: 0 } : { width: 320, height: 180 });
+  p.window.__aay.mini(true);
+  p.advance(20000);
+  p.flush(); // settle timer: 0x0, retry, 0x0, retry, measured
+  assert.equal(calls, 3);
+  assert.equal(p.window.__aay.miniSized(), 'small');
+
+  const q = playerPage({ quality: true });
+  q.flush();
+  let tries = 0;
+  q.video.getBoundingClientRect = () => { tries++; return { width: 0, height: 0 }; };
+  q.window.__aay.mini(true);
+  q.advance(20000);
+  q.flush(); // never measurable: stops after the retries, no endless timer chain
+  // First measurement plus 6 retries (one more read may come from the layout code).
+  assert.ok(tries >= 7 && tries <= 8, 'bounded retries: ' + tries);
+  const after = tries;
+  q.flush();
+  assert.equal(tries, after, 'nothing left scheduled');
+  assert.equal(q.window.__aay.miniSized(), '');
+  const n = q.qualityCalls.length;
+  q.window.__aay.mini(false);
+  q.flush();
+  assert.ok(q.qualityCalls.length - n <= 1);
+});
+
+test('at most one outstanding frame callback; a new video element cancels and invalidates it', () => {
+  const p = playerPage();
+  const requested = [], cancelled = [];
+  let next = 1;
+  const neverFires = (video) => {
+    video.requestVideoFrameCallback = () => { const h = next++; requested.push(h); return h; };
+    video.cancelVideoFrameCallback = (h) => cancelled.push(h);
+  };
+  neverFires(p.video); // e.g. hidden video: the compositor never presents a frame
+  p.flush();
+  for (let i = 0; i < 4; i++) { p.advance(31000); p.runIntervals(); }
+  assert.equal(requested.length, 1, 'no pile-up across windows');
+  // Element replaced: the old request is cancelled, old readings are not reused.
+  const fresh = p.replaceVideo();
+  fresh.currentTime = 5;
+  let presented = 50;
+  fresh.requestVideoFrameCallback = (cb) => { const h = next++; requested.push(h); cb(0, { presentedFrames: presented }); return h; };
+  p.advance(31000); p.runIntervals();
+  assert.deepEqual(cancelled, [1]);
+  assert.equal(p.perfReports.at(-1).displayed, -1, 'obsolete samples invalidated');
+  presented = 80;
+  p.advance(31000); p.runIntervals();
+  presented = 140;
+  p.advance(31000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).displayed, 30, 'new element readings only');
 });

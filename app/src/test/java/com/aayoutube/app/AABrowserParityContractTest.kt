@@ -27,7 +27,7 @@ class AABrowserParityContractTest {
         assertEquals("window", PlayerDisplayPolicy.carRecreateReason(7, 7, 11, 12))
         assertNull("same car window keeps its renderer", PlayerDisplayPolicy.carRecreateReason(7, 7, 11, 11))
         assertTrue("and the phone never shows a car-born one", PlayerDisplayPolicy.shouldRecreate(7, 0))
-        val bind = host.substringAfter("fun attachToCarWindow(context: Context, frame: ViewGroup): WebView {").substringBefore("fun claimCarHost")
+        val bind = host.substringAfter("fun attachToCarWindow(").substringBefore("fun claimCarHost")
         assertTrue(bind.contains("if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)"))
     }
 

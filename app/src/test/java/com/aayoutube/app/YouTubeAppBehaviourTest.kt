@@ -19,9 +19,9 @@ class YouTubeAppBehaviourTest {
     private val js = src("app/src/main/assets/aay.js")
 
     private fun back(
-        equalizer: Boolean = false, fullscreen: Boolean = false, landFill: Boolean = false,
+        fullscreen: Boolean = false, landFill: Boolean = false,
         settingsTab: Boolean = false, watchTab: Boolean = true, full: Boolean = true, watchPage: Boolean = true,
-    ) = PlayerNavigationPolicy.back(equalizer, fullscreen, landFill, settingsTab, watchTab, full, watchPage)
+    ) = PlayerNavigationPolicy.back(fullscreen, landFill, settingsTab, watchTab, full, watchPage)
 
     // ---- Home ----------------------------------------------------------------
 
@@ -48,7 +48,6 @@ class YouTubeAppBehaviourTest {
     // ---- Back ----------------------------------------------------------------
 
     @Test fun backLeavesOneLayerAtATime() {
-        assertEquals(Back.CloseEqualizer, back(equalizer = true, fullscreen = true, landFill = true))
         assertEquals(Back.ExitFullscreen, back(fullscreen = true, landFill = true))
         assertEquals(Back.ShowWatchPage, back(landFill = true))
         assertEquals(Back.Mini, back())
@@ -89,7 +88,9 @@ class YouTubeAppBehaviourTest {
         assertTrue(mini.contains("detectTapGestures(onTap = { WebHost.expandPlayer() })"))
         assertTrue(mini.contains("WebHost.cmd(if (snap.playing) \"pause\" else \"play\")"))
         assertTrue(mini.contains("onClick = { WebHost.closePlayer() }"))
-        assertTrue(mini.contains("fillMaxWidth(fraction)"))
+        // The progress line keeps its own clock scope (no recomposition of the whole player).
+        assertTrue(mini.contains("LiveProgressLine(paneShown, Modifier.align(Alignment.BottomStart))"))
+        assertTrue(ui.substringAfter("private fun LiveProgressLine(").contains("fillMaxWidth(fraction)"))
         assertTrue("draggable", mini.contains("detectDragGestures("))
     }
 

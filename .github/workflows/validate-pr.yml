@@ -20,7 +20,8 @@ jobs:
       - name: Verify injected JavaScript and mini-player behavior
         run: |
           node --check app/src/main/assets/aay.js
-          node --test .github/scripts/miniplayer.test.cjs
+          node --check app/src/main/assets/mirror.js
+          node --test .github/scripts/miniplayer.test.cjs .github/scripts/mirror.test.cjs
       - name: Compile and test without publishing
         env:
           N2K02_PACKAGES_TOKEN: ${{ secrets.N2K02_PACKAGES_TOKEN }}

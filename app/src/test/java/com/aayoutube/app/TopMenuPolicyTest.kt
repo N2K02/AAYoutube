@@ -37,7 +37,7 @@ class TopMenuPolicyTest {
         assertFalse(root.contains("Scaffold("))
         assertTrue(screen.contains("delay(timeout)"))
         assertTrue(screen.contains("TopMenuPolicy.timeoutMillis(flags.topMenuTimeoutSeconds)"))
-        assertTrue(screen.contains("WebPane(Modifier.fillMaxSize())"))
+        assertTrue(screen.contains("WebPane(Modifier.fillMaxSize(), previewVisible = watchTab)"))
     }
     @Test fun carAndPhoneShareFeatureAndRestoreByTouch() {
         val legacy = read("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")

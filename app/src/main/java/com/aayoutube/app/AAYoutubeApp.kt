@@ -11,10 +11,18 @@ class AAYoutubeApp : Application() {
         SleepTimer.init(this)
         Features.init(this)
         LyricsPrefs.init(this)
-        AAYSoundFx.init(this)
+        val migrations = getSharedPreferences("app_migrations", MODE_PRIVATE)
+        RetiredSoundMigration.run(
+            completed = migrations.getBoolean("retired_sound_v1", false),
+            hasLegacySettings = { getSharedPreferences("aay_sound_fx", MODE_PRIVATE).all.isNotEmpty() },
+            deleteLegacySettings = { deleteSharedPreferences("aay_sound_fx") },
+            markCompleted = { migrations.edit().putBoolean("retired_sound_v1", true).apply() },
+        )
         Library.init(this)
         WebHost.init(this)
         BrowseHost.init(this)
+        PhoneMirror.init(this)
+        PerformanceMonitor.init(this)
     }
 
     /**
@@ -24,6 +32,8 @@ class AAYoutubeApp : Application() {
      */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        PhoneMirror.onTrimMemory(level)
+        PerformanceMonitor.onTrimMemory()
         if (MemoryTrimPolicy.releaseBrowse(level, WebHost.mode.value != WebHost.PlayerMode.FULL))
             BrowseHost.release()
     }

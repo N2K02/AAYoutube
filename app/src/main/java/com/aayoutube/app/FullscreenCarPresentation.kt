@@ -392,7 +392,8 @@ internal class FullscreenCarPresentation(
 
         val displayCtx = projectionContext(frame)
 
-        val player = WebHost.attachToCarWindow(displayCtx, frame)
+        val player = WebHost.attachToCarWindow(displayCtx, frame) { bindWebView() }
+        CarPhonePreview.bind(carToken, window, frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))
@@ -446,6 +447,7 @@ internal class FullscreenCarPresentation(
     }
 
     override fun onStop() {
+        CarPhonePreview.unbind(carToken)
         if (!isDestroyed) lifecycleRegistry.currentState = Lifecycle.State.CREATED
         super.onStop()
     }

@@ -63,14 +63,21 @@ class PlaybackService : MediaBrowserServiceCompat() {
         AppLog.add("HEALTH", "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)} " +
             "mainCpuPct=$cpuPercent avgCpuPct=$cpuAverage peakCpuPct=$cpuPeak " +
             "musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
-            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground bound=$bound")
+            "wakeHeld=${playbackWakeLock?.isHeld == true} wakeHeldMs=${wakeHeldMs(now)} " +
+            "wakeAcquisitions=$wakeAcquisitions wakeStallReleases=$wakeStallReleases " +
+            "mediaClock=${mediaClock.state(now)} clockBufferingMs=${mediaClock.totals(now).first} " +
+            "clockStalledMs=${mediaClock.totals(now).second} " +
+            "perfLevel=${PerformanceMonitor.level.value} foreground=$foreground bound=$bound")
     }
     private val healthTick = object : Runnable {
         override fun run() {
             if (shuttingDown || !foreground) return
             logHealth()
             scheduleDemoteIfNeeded(snapshot) // re-check even if no new state arrived
-            handler.postDelayed(this, 60_000L)
+            // Bounded wake lock: refresh its timeout or end a stalled recovery's hold.
+            updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(snapshot, recoveringPlayback))
+            // Screen off: fewer diagnostic wake-ups (60 s on, 180 s off).
+            handler.postDelayed(this, AdaptivePerformancePolicy.healthIntervalMs(PerformanceMonitor.screenOn()))
         }
     }
     private fun startHealthTicker() {
@@ -132,20 +139,89 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // A WebView is not a native MediaPlayer. Prevent CPU sleep while its
     // stream is playing or recovering, without keeping the display awake.
     private var playbackWakeLock: PowerManager.WakeLock? = null
+    // Wake-lock audit: when the current hold began, total held time, and stalled-recovery bound.
+    private var wakeAcquiredAt = 0L
+    private var wakeRefreshedAt = 0L
+    private var wakeHeldTotalMs = 0L
+    private var wakeAcquisitions = 0
+    private var wakeStallReleases = 0
+    // Media clock progression: playing=true alone does not prove playback (stuck buffering reports it too).
+    private val mediaClock = MediaClockWatch()
+    private fun wakeHeldMs(now: Long) = wakeHeldTotalMs + currentHoldMs(now)
+    /** A hold whose refreshes stopped ended at its timeout, not now. */
+    private fun currentHoldMs(now: Long): Long = if (wakeAcquiredAt <= 0L) 0L
+        else (minOf(now, wakeRefreshedAt + WakeLockPolicy.TIMEOUT_MS) - wakeAcquiredAt).coerceAtLeast(0L)
+
+    private fun releaseWakeLock(reason: String) {
+        playbackWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+        if (wakeAcquiredAt > 0L) {
+            val held = currentHoldMs(android.os.SystemClock.elapsedRealtime())
+            wakeHeldTotalMs += held
+            AppLog.add("POWER", "Background audio CPU wake lock released reason=$reason heldMs=$held")
+        }
+        wakeAcquiredAt = 0L
+        wakeRefreshedAt = 0L
+    }
+
+    /** Absolute (elapsedRealtime) time of the scheduled stall release; 0 = none. */
+    private var stallReleaseAt = 0L
+    private val stallRelease = Runnable {
+        stallReleaseAt = 0L
+        updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(snapshot, recoveringPlayback))
+    }
+
+    /**
+     * Re-arms the stall release only when its deadline moved (clock progress pushes it later).
+     * The handler's uptime clock runs because the wake lock itself keeps the CPU awake.
+     */
+    private fun scheduleStallRelease(now: Long) {
+        val due = WakeLockPolicy.releaseDueAt(mediaClock.progressAt())
+        if (due == stallReleaseAt) return
+        handler.removeCallbacks(stallRelease)
+        stallReleaseAt = due
+        if (due > 0L) handler.postDelayed(stallRelease, WakeLockPolicy.delayUntil(due, now))
+    }
+
+    private fun cancelStallRelease() {
+        handler.removeCallbacks(stallRelease)
+        stallReleaseAt = 0L
+    }
 
     private fun updatePlaybackWakeLock(active: Boolean) {
+        val now = android.os.SystemClock.elapsedRealtime()
         if (!active || quitRequested || shuttingDown) {
-            playbackWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+            mediaClock.onSample(snapshot.id, snapshot.posMs, wantsPlay = false, isBuffering = false, nowMs = now)
+            cancelStallRelease()
+            releaseWakeLock("not-wanted")
             return
         }
+        // Wanted (playing or recovering) but the media clock has not moved: bounded by WakeLockPolicy.
+        if (!WakeLockPolicy.hold(true, mediaClock.stalledSince(now), now)) {
+            cancelStallRelease()
+            if (playbackWakeLock?.isHeld == true) {
+                wakeStallReleases++
+                releaseWakeLock("stalled-recovery")
+            }
+            return
+        }
+        // The stall limit has its own deadline: the health tick may be 3 minutes apart (screen off).
+        scheduleStallRelease(now)
         runCatching {
             val lock = playbackWakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AAYouTube:BackgroundAudio")
                 .apply { setReferenceCounted(false) }
                 .also { playbackWakeLock = it }
             if (!lock.isHeld) {
-                lock.acquire()
-                AppLog.add("POWER", "Background audio CPU wake lock acquired")
+                // Never unbounded: the timeout ends the hold if refreshes ever stop.
+                lock.acquire(WakeLockPolicy.TIMEOUT_MS)
+                if (wakeAcquiredAt > 0L) wakeHeldTotalMs += currentHoldMs(now) // the previous hold timed out
+                wakeAcquiredAt = now
+                wakeRefreshedAt = now
+                wakeAcquisitions++
+                AppLog.add("POWER", "Background audio CPU wake lock acquired timeoutMs=${WakeLockPolicy.TIMEOUT_MS}")
+            } else if (WakeLockPolicy.needsRefresh(wakeRefreshedAt, now)) {
+                lock.acquire(WakeLockPolicy.TIMEOUT_MS)   // not reference counted: extends the timeout
+                wakeRefreshedAt = now
             }
         }.onFailure { AppLog.add("POWER", "Audio wake lock unavailable: ${it.javaClass.simpleName}") }
     }
@@ -181,6 +257,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
+    private var lastSavedAt = 0L
     private var lastSavedId = ""
     private var idleSince = 0L
     private var shuttingDown = false
@@ -431,7 +508,9 @@ class PlaybackService : MediaBrowserServiceCompat() {
             !s.rate.isFinite() -> 1f
             else -> s.rate.coerceIn(0.1f, 4f)
         }
-        val queueChanged = queueGate.update(s.queue)
+        val queueChanged = queueGate.update(s.queue, retainDuringTransition =
+            !s.userPaused && !s.ended && (s.buffering || s.recovering ||
+                transportSkips.hasPending(android.os.SystemClock.elapsedRealtime())))
         if (queueChanged) {
             // Android Auto's Now Playing queue is a native MediaSession queue, not
             // just browse-only "Up next" children.
@@ -488,14 +567,19 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastRecentId = s.id
                 notifyChildrenChanged("recent")
             }
-            if (lastSavedId != s.id || lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || (!s.playing && lastSavedPosition != s.posMs)) {
+            // Pause, Stop, Quit, end and a new video save at once; playback every 15 s (30 s screen off).
+            val savedNow = android.os.SystemClock.elapsedRealtime()
+            if (PositionPersistPolicy.shouldSave(lastSavedId, lastSavedPosition, lastSavedAt, s, savedNow, PerformanceMonitor::screenOn)) {
                 Library.saveLast(s)
                 lastSavedPosition = s.posMs
                 lastSavedId = s.id
+                lastSavedAt = savedNow
             }
         }
         if (s.playing) recoveringPlayback = false
         rememberPlaybackForSystemRestart(s)
+        mediaClock.onSample(s.id, s.posMs, ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback), s.buffering,
+            android.os.SystemClock.elapsedRealtime())
         updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback))
         tracePlaybackPhase(s)
         if (quitRequested) {
@@ -523,7 +607,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // suddenly playing from the phone speaker. Treated as a deliberate pause.
     private val noisyReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested)) return
+            if (!NoisyAudioPolicy.shouldPause(intent?.action, snapshot.playing, quitRequested,
+                    recovering = recoveringPlayback || snapshot.recovering || snapshot.held)) return
             AppLog.add("MEDIA", "Audio output disconnected (headphones/Bluetooth): pausing")
             runCatching { session.controller.transportControls.pause() }
         }
@@ -591,6 +676,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     if (target != null) {
                         AppLog.add("MEDIA", "Next: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else if (transportSkips.hasPending(android.os.SystemClock.elapsedRealtime())) {
+                        AppLog.add("MEDIA", "Next: pending native queue boundary; awaiting playback")
                     } else {
                         AppLog.add("MEDIA", "Next: YouTube player fallback")
                         send(Msg.NEXT)
@@ -610,6 +697,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     if (target != null) {
                         AppLog.add("MEDIA", "Previous: native queue target=$target from=${snapshot.id}")
                         send(Msg.OPEN, Bundle().apply { putString("id", target) })
+                    } else if (transportSkips.hasPending(now)) {
+                        AppLog.add("MEDIA", "Previous: pending native queue boundary; awaiting playback")
                     } else {
                         AppLog.add("MEDIA", "Previous: YouTube player fallback")
                         send(Msg.PREV)
@@ -725,6 +814,11 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 carAttached = true
                 handler.removeCallbacks(demoteForeground)
                 handler.removeCallbacks(idleStop)
+                if (!quitRequested && (snapshot.playing || recoveringPlayback || snapshot.recovering)) {
+                    // Reconnect to the existing renderer; never reopen a video just for a car attach.
+                    ensureWeb()
+                    if (bound && !awaitingRegistration) send(Msg.SYNC)
+                }
             }
             ACTION_CAR_DETACHED -> {
                 carAttached = false

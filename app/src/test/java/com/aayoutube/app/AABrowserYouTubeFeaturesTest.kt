@@ -37,7 +37,7 @@ class AABrowserYouTubeFeaturesTest {
         assertTrue(src("app/src/main/java/com/aayoutube/app/Screens.kt")
             .contains("if (VideoFitPolicy.buttonShown(filled = landFill, playing = snap.playing))"))
         assertTrue(src("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")
-            .contains("if (VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing))"))
+            .contains("val fitShown = VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing)"))
     }
 
     @Test fun carMiniPlayerMatchesThePhone() {

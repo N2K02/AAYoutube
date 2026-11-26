@@ -44,7 +44,7 @@ class LyricsVideoIdentityContractTest {
         assertTrue(screens.contains("remember(lyricsRequest) { mutableStateOf(LyricsContent()) }"))
         assertTrue(screens.contains("LaunchedEffect(lyricsRequest)"))
         assertTrue(screens.contains("foundLyrics.foundFor(lyricsRequest.videoId)"))
-        assertTrue(screens.contains("key(lyricsRequest) { LyricsOverlay"))
+        assertTrue(screens.contains("key(lyricsRequest) { LiveLyricsOverlay"))
         assertTrue(host.contains("selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()"))
         assertTrue(host.contains("if (request.isForMainFrame) noteSelectedLyricsRoute(uri)"))
         assertTrue(host.contains("noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())"))
@@ -69,7 +69,7 @@ class LyricsVideoIdentityContractTest {
     @Test fun routeAndTimeEventsRefreshPlaybackSnapshots() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("v.addEventListener('timeupdate', function () {"))
-        assertTrue(js.contains("now - lastProgressReportAt > (A.isBg && !A.isCar ? BG_PROGRESS_MS : 1400)"))
+        assertTrue(js.contains("now - lastProgressReportAt > ((A.isBg || A.audioOnly) && !A.isCar ? BG_PROGRESS_MS : 1400)"))
         assertTrue(js.contains("window.addEventListener('yt-navigate-finish', function () {"))
         assertTrue(js.contains("lastNonCriticalDomAt = 0;"))
         assertTrue(js.contains("schedTick();\n    schedReport(0);"))

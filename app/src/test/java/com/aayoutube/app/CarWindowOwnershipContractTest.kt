@@ -64,11 +64,11 @@ class CarWindowOwnershipContractTest {
 
     @Test fun replacementCarWindowGetsFreshRendererAtSamePosition() {
         val host = web
-        val bind = host.substringAfter("fun attachToCarWindow(context: Context, frame: ViewGroup): WebView {")
+        val bind = host.substringAfter("fun attachToCarWindow(")
             .substringBefore("fun claimCarHost(")
         assertTrue(bind.contains("frame.windowToken?.let { System.identityHashCode(it) }"))
-        assertTrue(bind.contains("PlayerDisplayPolicy.carRecreateReason("))
-        assertTrue(bind.contains("webDisplayId, targetDisplay, carWindowId, targetWindow)"))
+        assertTrue(bind.contains("CarRendererReusePolicy.reason("))
+        assertTrue(bind.contains("webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced, trial)"))
         assertTrue(bind.indexOf("recreateRenderer(context, targetDisplay ?: -1, reason)") < bind.indexOf("carWindowId = targetWindow"))
         // A new renderer, a phone attach and Quit all forget the car window.
         assertTrue(host.substringAfter("private fun ensureWeb(").substringBefore("val w = BackgroundWebView(context)")
@@ -90,7 +90,7 @@ class CarWindowOwnershipContractTest {
     @Test fun quitClearsCarHostOwnership() {
         val release = web.substringAfter("fun release(preserveCarOwners: Boolean = false) {")
             .substringBefore("fun onLinkUnbound()")
-        val owners = release.substringAfter("if (!preserveCarOwners) {").substringBefore("}")
+        val owners = release.substringAfterLast("if (!preserveCarOwners) {").substringBefore("}")
         assertTrue(owners.contains("carHosts.clear()"))
         assertTrue(owners.contains("activeCarHost.value = null"))
     }
@@ -126,7 +126,7 @@ class CarWindowOwnershipContractTest {
      */
     @Test fun carVideoPageIsNotCoveredByWrapperBoxes() {
         val js = source("app/src/main/assets/aay.js")
-        assertTrue(js.contains("var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;"))
+        assertTrue(js.contains("var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS;"))
         assertTrue(js.contains("'html.aay-car .aay-car-off:not(#aay-x):not(#aay-y){position:static!important;z-index:auto!important;'"))
         assertTrue(js.contains("mark(w, 'aay-car-off', !hasVideo && !hasControls);"))
         assertTrue(js.contains("mark(w, 'aay-car-clear', !hasVideo && hasControls);"))

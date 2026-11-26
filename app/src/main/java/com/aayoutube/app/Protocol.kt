@@ -71,6 +71,9 @@ data class Snap(
     /** Playlist / Mix / Up next, including the current video. Empty: only the current video. */
     val queue: List<QItem> = emptyList(),
 ) {
+    /** Same state without the moving position: for UI that must not recompose on every report. */
+    fun withoutPosition(): Snap = if (posMs == 0L) this else copy(posMs = 0L)
+
     fun toBundle(): Bundle = Bundle().apply {
         putString("id", id)
         putString("title", title)

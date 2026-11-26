@@ -50,15 +50,13 @@ class MediaInterruptionRegressionTest {
         assertEquals(android.media.AudioManager.ACTION_AUDIO_BECOMING_NOISY, a)
     }
 
-    @Test fun wiringSilencesOwnAudioAndWakesOnChanges() {
+    @Test fun wiringWaitsForPlaybackStateAndWakesOnChanges() {
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("window.__aay.eqIdleNow()"))
         assertTrue(web.contains("main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)"))
         assertTrue(web.contains("am.registerAudioPlaybackCallback(cb, main)"))
         assertTrue(web.contains("am.addOnModeChangedListener(app.mainExecutor, l)"))
         assertTrue(web.contains("holdWake.acquire(OtherMediaHoldPolicy.WAKE_CHECK_MS)"))
         assertTrue(web.contains("held = otherMediaHeldSince != 0L && !incoming.playing"))
-        assertTrue(read("app/src/main/assets/aay_eq.js").contains("A.eqIdleNow = function ()"))
         val service = read("app/src/main/java/com/aayoutube/app/PlaybackService.kt")
         assertTrue(service.contains("ACTION_AUDIO_BECOMING_NOISY"))
         assertTrue(service.contains("ForegroundDemotePolicy.wantsWakeLock(s, recoveringPlayback)"))
@@ -66,9 +64,40 @@ class MediaInterruptionRegressionTest {
         assertTrue(protocol.contains("putBoolean(\"held\", held)"))
     }
 
+    @Test fun delayedMediaHoldCannotInterruptRecoveredOrBufferingPlayback() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("if (generation != webGeneration) return@post"))
+        assertTrue(web.contains("!current.playing && !current.buffering && !current.userPaused"))
+        assertTrue(web.contains("current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertTrue(web.contains("else if (otherMediaHeldSince == 0L)"))
+        assertTrue(web.contains("window.__aay.mediaHold(false)"))
+        assertEquals(2, Regex("s.playing \\|\\| s.buffering \\|\\| !playbackWanted").findAll(web).count())
+    }
+
+    @Test fun noisyRouteCancelsRecoveryEvenWithoutActivePlayback() {
+        val action = NoisyAudioPolicy.ACTION
+        assertTrue(NoisyAudioPolicy.shouldPause(action, false, false, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause(action, false, true, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause("other", false, false, recovering = true))
+        assertFalse(NoisyAudioPolicy.shouldPause(action, false, false, recovering = false))
+    }
+
     @Test fun overloadFallbackIsWired() {
         val js = read("app/src/main/assets/aay.js")
         assertTrue(js.contains("try { overloadCheck(getVideo()); } catch (e) {}"))
         assertTrue(js.contains("var q = capForDevice(savedQuality());"))
+    }
+    @Test fun staleRecoveryIsCancelledWhenVideoOrRendererChanges() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("cancelOtherMediaWork(\"Renderer display changed\")"))
+        assertTrue(web.contains("incoming.buffering || incoming.id != previous.id || !playbackWanted"))
+        assertTrue(web.contains("incoming.playing || incoming.id != previous.id || !playbackWanted"))
+    }
+    @Test fun recoveryBudgetIsNotSharedAcrossDifferentVideos() {
+        val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
+        assertTrue(web.contains("if (incoming.id != previous.id) resetResumeBudget()"))
+        assertTrue(web.contains("resumeWindowAt = 0L"))
+        assertTrue(web.contains("unregisterThermalWatch()\n        resetResumeBudget()"))
+        assertTrue(web.contains("removeThermalStatusListener(listener)"))
     }
 }
