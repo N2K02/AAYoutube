@@ -94,6 +94,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -1230,6 +1231,8 @@ fun FeaturesPage() {
 @Composable
 private fun NativeAudioPage() {
     val flags by Features.state.collectAsState()
+    var endpoint by rememberSaveable(flags.nativeAudioProviderUrl) { mutableStateOf(flags.nativeAudioProviderUrl) }
+    val validEndpoint = AuthorizedAudioProvider.normalizeEndpoint(endpoint)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1264,13 +1267,22 @@ private fun NativeAudioPage() {
                 headlineContent = { Text("Stream source") },
                 supportingContent = {
                     Text(
-                        if (StreamProviders.current === NoStreamProvider)
-                            "None installed: the web player is used for every video."
-                        else "Authorized source: ${StreamProviders.current.id}"
+                        if (flags.nativeAudioProviderUrl.isBlank()) "No source configured. Web playback remains available."
+                        else "Authorized HTTPS resolver configured."
                     )
                 },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
+        }
+        Card {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = endpoint, onValueChange = { endpoint = it }, label = { Text("Authorized HTTPS resolver URL") }, singleLine = true, isError = endpoint.isNotBlank() && validEndpoint == null, modifier = Modifier.fillMaxWidth())
+                Text("Use only a trusted source authorized for direct playback. The resolver receives the video ID, never YouTube login cookies.", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = validEndpoint != null && validEndpoint != flags.nativeAudioProviderUrl, onClick = { Features.update { it.copy(nativeAudioProviderUrl = validEndpoint.orEmpty()) }; NativePlayback.onVisibilityChanged() }) { Text("Save") }
+                    OutlinedButton(onClick = { endpoint = ""; Features.update { it.copy(nativeAudioProviderUrl = "") }; NativePlayback.onVisibilityChanged() }) { Text("Clear") }
+                }
+            }
         }
     }
 }

@@ -31,6 +31,7 @@ internal object NativePlayback {
     private var capabilities: AudioCapabilities? = null
     private var capabilitiesRoute: AudioRoute? = null
     private var attemptedVideo = ""
+    private var configuredProviderUrl: String? = null
     private var resolveSerial = 0
     private var nativePos = 0L
     private var nativePlaying = false
@@ -38,6 +39,7 @@ internal object NativePlayback {
 
     fun init(application: Application) {
         app = application
+        syncProvider()
         val prefs = application.getSharedPreferences("aay_native_audio", Context.MODE_PRIVATE)
         breaker = OffloadFailureBreaker(object : LongStore {
             override fun get(key: String) = prefs.getLong(key, 0L)
@@ -75,6 +77,15 @@ internal object NativePlayback {
         return web
     }
 
+    private fun syncProvider() {
+        val url = Features.current.nativeAudioProviderUrl
+        if (configuredProviderUrl == url) return
+        configuredProviderUrl = url
+        returnToWeb("provider-changed")
+        val provider = AuthorizedAudioProvider.create(url)
+        if (provider == null) StreamProviders.reset() else StreamProviders.register(provider)
+    }
+
     private fun audioOnlyAllowed(): Boolean = PlaybackHandoffPolicy.audioOnlyAllowed(
         Features.current.nativeAudio, Features.current.backgroundPlay, WebHost.shown,
         WebHost.inPip.value, WebHost.carProjectionActive() || WebHost.carDisplay,
@@ -82,10 +93,12 @@ internal object NativePlayback {
 
     /** Returning to any visible video surface cancels resolution/preparation or returns to video. */
     fun onVisibilityChanged() {
+        syncProvider()
         if (!audioOnlyAllowed()) returnToWeb("video-visible-or-disabled")
     }
 
     private fun maybeHandoff(s: Snap) {
+        syncProvider()
         if (!audioOnlyAllowed()) return
         if (s.id == attemptedVideo) return
         val decision = PlaybackHandoffPolicy.canHandToNative(s, featureOn = true)

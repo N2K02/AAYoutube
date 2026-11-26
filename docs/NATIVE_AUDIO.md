@@ -6,7 +6,7 @@ default and the fallback for everything.
 ## Status
 
 The engine, ownership coordinator and capability/offload probes are experimental; real-device handoff and offload verification remain required.
-**No stream source ships**: `StreamProviders.current` is `NoStreamProvider`, so with the switch on
+**No default stream service is configured**: `StreamProviders.current` is `NoStreamProvider`, so with the switch on
 the app logs `NATIVE-AUDIO engine=web reason=NO_PROVIDER` once per video and the WebView keeps
 playing. NewPipeExtractor, InnerTune and OuterTune are GPL-3.0 (this repository is MIT) and extracting
 YouTube stream URLs bypasses YouTube's own player; they were used as architectural references only
@@ -63,3 +63,13 @@ Requires an authorized provider. Same track, volume, route and start temperature
 3. Offload: `offloadActive=true` and `offloadSleeping=true` with the screen off; no underruns.
 4. Interruptions: incoming call, navigation prompt, Bluetooth disconnect/reconnect, Android Auto
    connect/disconnect, next/prev, seek, Quit — never two audible engines, position and pause preserved.
+
+## Configuring an authorized HTTPS resolver
+
+Settings → Native audio engine → Authorized HTTPS resolver URL. Save the URL and enable the engine. Only background audio requests use this source; GET `?videoId=ID` sends no YouTube credentials. Use an operator-controlled catalog of content licensed for separate audio playback, returning the matching track. Unknown IDs return 404. Example (illustrative URLs, not a running service):
+
+```json
+{"videoId":"abc","authorized":true,"durationMs":120000,"audio":[{"url":"https://media.example.org/track.m4a","mimeType":"audio/mp4","codecs":"mp4a.40.2","bitrate":128000,"sampleRate":44100,"channels":2,"expiresAtMs":0}]}
+```
+
+The resolver must use HTTPS without redirects; audio URLs must be HTTPS. No custom headers, credentials or stream URLs are logged by the provider. Missing, invalid or unauthorized manifests fall back to WebView. The authorization field is an operator assertion, not automatic verification of rights. The official YouTube API does not offer general separate audio playback. Native offload remains unverified until a real source is configured and tested.

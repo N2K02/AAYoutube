@@ -61,6 +61,7 @@ data class FeatureFlags(
      * source; without one the WebView engine keeps playing.
      */
     val nativeAudio: Boolean = false,
+    val nativeAudioProviderUrl: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -142,6 +143,7 @@ object Features {
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
             hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
             nativeAudio = prefs.getBoolean("nativeAudio", d.nativeAudio),
+            nativeAudioProviderUrl = AuthorizedAudioProvider.normalizeEndpoint(prefs.getString("nativeAudioProviderUrl", "").orEmpty()).orEmpty(),
         )
     }
 
@@ -151,7 +153,8 @@ object Features {
                 preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality),
                 playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(it.playbackSpeed),
                 seekSeconds = PlayerPrefsPolicy.normalizeSeek(it.seekSeconds),
-                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions))
+                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions),
+                nativeAudioProviderUrl = AuthorizedAudioProvider.normalizeEndpoint(it.nativeAudioProviderUrl).orEmpty())
         }
         _state.value = n
         prefs.edit()
@@ -183,6 +186,7 @@ object Features {
             .putBoolean("hideComments", n.hideComments)
             .putBoolean("hideEndCards", n.hideEndCards)
             .putBoolean("nativeAudio", n.nativeAudio)
+            .putString("nativeAudioProviderUrl", n.nativeAudioProviderUrl)
             .apply()
     }
 }

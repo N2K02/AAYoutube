@@ -125,6 +125,7 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:${v["coroutines"]}")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
 
  // Opt-in compile-only shared library evaluation; no production runtime cutover.
