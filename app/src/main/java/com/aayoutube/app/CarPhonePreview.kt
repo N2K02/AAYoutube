@@ -19,7 +19,9 @@ internal object CarPhonePreview {
     private data class Source(val owner: String, val window: WeakReference<Window>, val view: WeakReference<View>)
     private var source: Source? = null
     private var inFlight = false
-    const val INTERVAL_MS = 250L
+    const val INTERVAL_MS = 500L
+    fun intervalMs(compact: Boolean, failures: Int): Long =
+        if (failures >= 3) 4000L else if (compact) 1500L else INTERVAL_MS
 
     fun bind(owner: String, window: Window?, view: View) {
         if (window != null && WebHost.isActiveCarHost(owner))
@@ -35,7 +37,7 @@ internal object CarPhonePreview {
 
     suspend fun frame(): Bitmap? {
         val s = source ?: return null
-        if (inFlight || !WebHost.isActiveCarHost(s.owner)) return null
+        if (inFlight || !WebHost.carShown || WebHost.carAudioRetained.value || !WebHost.isActiveCarHost(s.owner)) return null
         val window = s.window.get() ?: return null
         val view = s.view.get() ?: return null
         if (!view.isAttachedToWindow || view.width <= 0 || view.height <= 0) return null
