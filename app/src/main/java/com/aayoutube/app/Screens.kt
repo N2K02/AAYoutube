@@ -1580,7 +1580,8 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     val activity = LocalContext.current.findActivity()
     val pip = activity?.previewPip?.value == true
     val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
-    val browsing = phoneMode != WebHost.PlayerMode.FULL && !pip
+    // MINI = mini player (CarSyncedWatchScreen compact); HIDDEN = browse WebView; FULL = full watch
+    val browsing = phoneMode == WebHost.PlayerMode.HIDDEN && !pip
     LaunchedEffect(snap.id) {
         if (snap.id.isBlank() && phoneMode == WebHost.PlayerMode.FULL) BrowseHost.phoneHome()
         else if (snap.id.isNotBlank() && phoneMode == WebHost.PlayerMode.HIDDEN)
@@ -1594,9 +1595,10 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     DisposableEffect(Unit) { onDispose { BrowseHost.phone.pause() } }
     Box(modifier.background(MaterialTheme.colorScheme.background)) {
         if (browsing) {
+            // Browse WebView (user navigating YouTube on phone)
             key(revision) {
                 AndroidView(
-                    modifier = Modifier.fillMaxSize().padding(bottom = if (phoneMode == WebHost.PlayerMode.MINI) 100.dp else 0.dp),
+                    modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         FrameLayout(ctx).also { frame ->
                             frame.addView(BrowseHost.phone.attach(ctx), FrameLayout.LayoutParams(-1, -1))
@@ -1605,27 +1607,17 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
                     onRelease = { BrowseHost.phone.detach(it) },
                 )
             }
-            if (phoneMode == WebHost.PlayerMode.MINI && snap.id.isNotBlank()) {
-                Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp),
-                    tonalElevation = 3.dp) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CarSyncedWatchScreen(snap, visible, Modifier.width(142.dp).fillMaxHeight(),
-                            compact = true, onExpand = { BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL })
-                        Text(snap.title, modifier = Modifier.weight(1f).clickable {
-                            BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL
-                        }.padding(8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") }) {
-                            Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = if (snap.playing) "Pause" else "Play")
-                        }
-                        IconButton(onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close phone mini player")
-                        }
-                    }
-                }
-            }
+        } else if (phoneMode == WebHost.PlayerMode.MINI && snap.id.isNotBlank() && !pip) {
+            // Mini player: CarSyncedWatchScreen with controls + Browse button to return to browsing
+            CarSyncedWatchScreen(snap, visible, Modifier.fillMaxSize(),
+                compact = false, pip = false,
+                onExpand = { BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL },
+                onHome = { BrowseHost.phoneHome() },
+                onBrowse = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN })
         } else {
-            CarSyncedWatchScreen(snap, visible, Modifier.fillMaxSize(), pip = pip)
+            // FULL watch or PiP
+            CarSyncedWatchScreen(snap, visible, Modifier.fillMaxSize(), pip = pip,
+                onHome = { BrowseHost.phoneHome() })
         }
     }
 }
@@ -1634,7 +1626,8 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
 @Composable
 private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifier = Modifier,
     compact: Boolean = false, pip: Boolean = false, onExpand: () -> Unit = {},
-    onHome: () -> Unit = { BrowseHost.phoneHome() }) {
+    onHome: () -> Unit = { BrowseHost.phoneHome() },
+    onBrowse: (() -> Unit)? = null) {
     val activity = LocalContext.current.findActivity()
     val lifecycleState = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
     val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED ||
@@ -1711,6 +1704,11 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
                 }
                 IconButton(onClick = onHome) {
                     Icon(Icons.Filled.Home, contentDescription = "YouTube home")
+                }
+                if (onBrowse != null) {
+                    IconButton(onClick = onBrowse) {
+                        Icon(Icons.Filled.Search, contentDescription = "Browse YouTube")
+                    }
                 }
             }
         }
