@@ -577,9 +577,12 @@ object WebHost {
         forcedCarRecreate = null
         // A retained (audio-only) renderer is in no window: reuse it with its buffers.
         val detachedReuse = web != null && retainedRendererDetached && web?.parent == null
+        val trial = forced == null && CarRendererReusePolicy.canTrial(webDisplayId, targetDisplay,
+            detachedReuse, snapshot.value.playing && !snapshot.value.buffering && !snapshot.value.userPaused,
+            rebind != null && activeCarHost.value != null, SystemClock.elapsedRealtime(), lastCrossDisplayFailureAt)
         val reason = if (web == null) null else CarRendererReusePolicy.reason(
-            webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced)
-        val reused = reason == null && detachedReuse && carWindowId != null && carWindowId != targetWindow
+            webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced, trial)
+        val reused = reason == null && detachedReuse && (trial || (carWindowId != null && carWindowId != targetWindow))
         retainedRendererDetached = false
         if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)
         val w = ensureWeb(context)
@@ -593,7 +596,7 @@ object WebHost {
             " renderer=" + (reason?.let { "new($it)" } ?: if (reused) "reused(retained)" else "kept"))
         if (reused) {
             w.onResume(); w.resumeTimers(); w.invalidate()
-            scheduleCarRenderVerify()
+            scheduleCarRenderVerify(trial)
         }
         return w
     }
@@ -602,6 +605,9 @@ object WebHost {
     private var carRebind: (() -> Unit)? = null
     private var carRebindOwner: String? = null
     private var lastCarRenderRecoveryAt = 0L
+    private var lastCrossDisplayFailureAt = 0L
+    private var carVerifyEpoch = 0L
+    private var crossDisplayTrial = false
     private var carVerifySamples = 0
     private var carBlackSamples = 0
     private var carVerifyGeneration = 0
@@ -610,6 +616,7 @@ object WebHost {
         override fun run() {
             val w = web ?: return
             if (!carShown || carVerifyGeneration != webGeneration) return
+            val epoch = carVerifyEpoch
             // The real media clock and decoder counters, not the sparse snapshot reports.
             w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
                 "document.querySelector('video');if(!v)return null;return JSON.stringify([" +
@@ -617,17 +624,18 @@ object WebHost {
                 val a = runCatching {
                     org.json.JSONArray(org.json.JSONTokener(raw).nextValue() as String)
                 }.getOrNull()
-                sampleCarRender(a?.optLong(0, -1L) ?: -1L, a?.optLong(1, -1L) ?: -1L, a?.optInt(2, 0) ?: 0)
+                if (web === w && verifyStillOwned(epoch))
+                    sampleCarRender(a?.optLong(0, -1L) ?: -1L, a?.optLong(1, -1L) ?: -1L, a?.optInt(2, 0) ?: 0, epoch)
             }
         }
     }
     private var carVerifyLastFrames = -1L
     private var carVerifyOwner: String? = null
-    private fun verifyStillOwned(): Boolean =
-        carShown && carVerifyGeneration == webGeneration && activeCarHost.value == carVerifyOwner
+    private fun verifyStillOwned(epoch: Long): Boolean =
+        epoch == carVerifyEpoch && carShown && carVerifyGeneration == webGeneration && activeCarHost.value == carVerifyOwner
 
-    private fun sampleCarRender(clockMs: Long, decodedFrames: Long, videoWidth: Int) {
-        if (!verifyStillOwned()) return
+    private fun sampleCarRender(clockMs: Long, decodedFrames: Long, videoWidth: Int, epoch: Long) {
+        if (!verifyStillOwned(epoch)) return
         val s = snapshot.value
         val advancing = clockMs >= 0 && carVerifyLastPos >= 0 && clockMs > carVerifyLastPos
         // Healthy decoder + advancing clock + black window = a paint failure, not a decode stall.
@@ -637,32 +645,41 @@ object WebHost {
         carVerifyLastFrames = decodedFrames
         scope.launch {
             val dark = CarPhonePreview.darkPercent()
-            if (!verifyStillOwned()) return@launch
+            if (!verifyStillOwned(epoch)) return@launch
             var black = CarRendererReusePolicy.blackSample(dark, s.playing, s.buffering, advancing && decoding)
             if (black) {
                 // A dark scene still shows YouTube's bright controls; a dead surface does not.
                 js("window.__aay&&window.__aay.showCarControls&&window.__aay.showCarControls()")
                 delay(CarRendererReusePolicy.CONTROLS_PAINT_MS)
-                if (!verifyStillOwned()) return@launch
+                if (!verifyStillOwned(epoch)) return@launch
                 val withControls = CarPhonePreview.darkPercent()
                 black = CarRendererReusePolicy.stillBlackWithControls(withControls)
                 AppLog.add("CAR", "Reused renderer black check with controls dark=${withControls ?: -1}% black=$black")
+            }
+            if (crossDisplayTrial && CarRendererReusePolicy.trialVerified(advancing, decoding, dark)) {
+                crossDisplayTrial = false
+                AppLog.add("CAR", "Cross-display retained renderer verified; buffers preserved")
+                return@launch
             }
             carBlackSamples = if (black) carBlackSamples + 1 else 0
             carVerifySamples++
             AppLog.add("CAR", "Reused renderer check sample=$carVerifySamples dark=${dark ?: -1}% " +
                 "playing=${s.playing} advancing=$advancing decoding=$decoding black=$black")
             val now = SystemClock.elapsedRealtime()
-            if (CarRendererReusePolicy.shouldRecover(carBlackSamples, now, lastCarRenderRecoveryAt)) {
+            if ((crossDisplayTrial && carVerifySamples >= CarRendererReusePolicy.MAX_VERIFY_SAMPLES) ||
+                CarRendererReusePolicy.shouldRecover(carBlackSamples, now, lastCarRenderRecoveryAt)) {
                 val rebind = carRebind
                 if (rebind == null || carRebindOwner != carVerifyOwner) {
                     AppLog.add("CAR", "Renderer recovery skipped: car window no longer owns the player")
                     return@launch
                 }
                 lastCarRenderRecoveryAt = now
+                if (crossDisplayTrial) lastCrossDisplayFailureAt = now
+                val trialFailed = crossDisplayTrial
+                crossDisplayTrial = false
                 carBlackSamples = 0
                 AppLog.add("CAR", "Reused renderer paints black: safe renderer recovery")
-                forcedCarRecreate = "window-black"
+                forcedCarRecreate = if (trialFailed) "cross-display-unverified" else "window-black"
                 rebind()
                 // Never leave a forced reason for an unrelated later bind.
                 forcedCarRecreate = null
@@ -672,8 +689,10 @@ object WebHost {
             } else AppLog.add("CAR", "Reused renderer check finished blackSamples=$carBlackSamples")
         }
     }
-    private fun scheduleCarRenderVerify() {
+    private fun scheduleCarRenderVerify(trial: Boolean = false) {
         main.removeCallbacks(carRenderVerify)
+        crossDisplayTrial = trial
+        carVerifyEpoch++
         carVerifySamples = 0
         carBlackSamples = 0
         carVerifyLastPos = -1L
@@ -700,6 +719,12 @@ object WebHost {
 
     /** An old car activity's teardown must not take the player from the newer one. */
     fun releaseCarHost(token: String) {
+        if (carVerifyOwner == token) {
+            carVerifyEpoch++
+            crossDisplayTrial = false
+            main.removeCallbacks(carRenderVerify)
+        }
+        if (carRebindOwner == token) { carRebind = null; carRebindOwner = null }
         val wasActive = carHosts.isActive(token)
         val next = carHosts.release(token)
         activeCarHost.value = carHosts.active
@@ -728,7 +753,7 @@ object WebHost {
                 now - userPausedAt > 8_000)
         val restored = if (isWatch && state.id.isNotBlank()) {
             uri!!.buildUpon().clearQuery().apply {
-                uri.queryParameterNames.filterNot { it == "t" || it == "aay" }.forEach { key ->
+                uri.queryParameterNames.filterNot { it == "t" || it == "start" || it == "aay" }.forEach { key ->
                     uri.getQueryParameters(key).forEach { value -> appendQueryParameter(key, value) }
                 }
                 if (state.posMs > 0) appendQueryParameter("t", "${state.posMs / 1000}s")
@@ -1547,6 +1572,8 @@ object WebHost {
         carRebind = null
         carRebindOwner = null
         main.removeCallbacks(carRenderVerify)
+        carVerifyEpoch++
+        crossDisplayTrial = false
         exitFullscreen()
         val w = web
         web = null
@@ -2235,9 +2262,11 @@ object WebHost {
                 send(Msg.STATE, Snap().toBundle())
                 AppLog.add("PLAY", "Navigation cleared previous media session")
             }
-            sameVideoReloadPosition = if (incomingId != null && incomingId == outgoingId &&
-                incomingId == previous.id && previous.posMs >= 10_000L && !previous.ended)
-                incomingId to previous.posMs else null
+            val explicitStart = runCatching { Uri.parse(url).let {
+                TimestampParam.parseMs(it.getQueryParameter("t") ?: it.getQueryParameter("start"))
+            } }.getOrNull()
+            sameVideoReloadPosition = CarRendererReusePolicy.restorePosition(incomingId, outgoingId,
+                previous.id, previous.posMs, previous.ended, explicitStart)?.let { previous.id to it }
             AppLog.add("PAGE", "Started host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}" +
                 if (sameVideoReloadPosition != null) " (same-video position retained)" else "")
             lyricsClock.value = LyricsClock()

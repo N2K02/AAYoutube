@@ -293,4 +293,33 @@ class ProjectedPlaybackPolicyTest {
         assertTrue(st.back()); assertTrue("back to the menu", st.open)
         assertTrue(st.back()); assertFalse("closed", st.open)
     }
+
+    @Test fun crossDisplayTrialRequiresRetainedCarOriginAndRecoveryOwner() {
+        val now = 100_000L
+        assertTrue(CarRendererReusePolicy.canTrial(670, 671, true, true, true, now, 0))
+        assertFalse(CarRendererReusePolicy.canTrial(0, 670, true, true, true, now, 0))
+        assertFalse(CarRendererReusePolicy.canTrial(670, 671, false, true, true, now, 0))
+        assertFalse(CarRendererReusePolicy.canTrial(670, 671, true, false, true, now, 0))
+        assertFalse(CarRendererReusePolicy.canTrial(670, 671, true, true, false, now, 0))
+        assertFalse(CarRendererReusePolicy.canTrial(670, 671, true, true, true, now, 99_000))
+        assertNull(CarRendererReusePolicy.reason(670, 671, 1, 2, true, verifiedTrial = true))
+        assertEquals("display", CarRendererReusePolicy.reason(670, 671, 1, 2, true))
+        assertEquals("window-black", CarRendererReusePolicy.reason(670, 671, 1, 2, true, "window-black", true))
+    }
+
+    @Test fun reuseTrialMustProveVisibleAdvancingFrames() {
+        assertTrue(CarRendererReusePolicy.trialVerified(true, true, 40))
+        assertFalse(CarRendererReusePolicy.trialVerified(false, true, 40))
+        assertFalse(CarRendererReusePolicy.trialVerified(true, false, 40))
+        assertFalse(CarRendererReusePolicy.trialVerified(true, true, null))
+        assertFalse(CarRendererReusePolicy.trialVerified(true, true, 100))
+    }
+
+    @Test fun timestampNavigationNeverGetsOverwrittenByOldPosition() {
+        assertNull(CarRendererReusePolicy.restorePosition("v", "v", "v", 320_000, false, 320_000))
+        assertNull(CarRendererReusePolicy.restorePosition("v", "v", "v", 320_000, false, 0))
+        assertNull(CarRendererReusePolicy.restorePosition("new", "v", "v", 320_000, false, null))
+        assertNull(CarRendererReusePolicy.restorePosition("v", "v", "v", 320_000, true, null))
+        assertEquals(320_000L, CarRendererReusePolicy.restorePosition("v", "v", "v", 320_000, false, null))
+    }
 }

@@ -307,7 +307,9 @@
     A.audioOnly = next;
     console.log('[aay] audio-only mode=' + next);
     // Leaving audio-only: catch up with the DOM once (car/phone layout, ads, dialogs).
-    if (!next) { lastNonCriticalDomAt = 0; schedTick(); }
+    if (!next) lastNonCriticalDomAt = 0;
+    if (tickTimer) { clearTimeout(tickTimer); tickTimer = 0; }
+    schedTick();
   };
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
@@ -1540,7 +1542,7 @@
   }
   function restoreAfterSourceChange(v) {
     var pending = qualityState.reset;
-    if (!pending || !v || v.readyState < 1) return;
+    if (!pending || !v || v.readyState < 1 || v.seeking) return;
     if (Date.now() - pending.started > 12000 || pending.id !== qualityVideoId() ||
         v.ended || Date.now() - qualityState.seekAt < 3500) {
       qualityState.reset = null;
@@ -1575,7 +1577,7 @@
     if (BROWSE || !id || id !== qualityVideoId() || !isFinite(seconds) || seconds < 10) return;
     qualityState.id = id;
     qualityState.position = Math.max(qualityState.position, seconds);
-    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0, waited: true }; // new document: YouTube will not restore
+    qualityState.reset = { id: id, seconds: seconds, started: Date.now(), tries: 0 }; // allow YouTube's own timestamp restore first
     console.log('[aay] same-video document reload: restoring ' + Math.round(seconds) + 's');
     restoreAfterSourceChange(getVideo());
   };

@@ -86,12 +86,28 @@ internal object CarRendererReusePolicy {
     const val DARK_PERCENT_DEAD_SURFACE = 100
 
     fun reason(createdDisplay: Int?, targetDisplay: Int?, boundWindow: Int?, targetWindow: Int?,
-               retainedDetached: Boolean, forced: String? = null): String? = when {
+               retainedDetached: Boolean, forced: String? = null, verifiedTrial: Boolean = false): String? = when {
         forced != null -> forced
         retainedDetached ->
-            if (PlayerDisplayPolicy.shouldRecreate(createdDisplay, targetDisplay)) "display" else null
+            if (PlayerDisplayPolicy.shouldRecreate(createdDisplay, targetDisplay) && !verifiedTrial) "display" else null
         else -> PlayerDisplayPolicy.carRecreateReason(createdDisplay, targetDisplay, boundWindow, targetWindow)
     }
+
+    /** A bounded trial is only safe with a detached, playing car-origin renderer and a recovery owner. */
+    fun canTrial(created: Int?, target: Int?, detached: Boolean, playing: Boolean, hasRecovery: Boolean,
+                 now: Long, lastFailed: Long): Boolean = detached && playing && hasRecovery &&
+        created != null && target != null && created > 0 && target > 0 && created != target &&
+        (lastFailed == 0L || now - lastFailed >= RECOVERY_COOLDOWN_MS)
+
+    /** A trial must show both a progressing decoder and nonblack output; uncertainty is not success. */
+    fun trialVerified(advancing: Boolean, decoding: Boolean, darkPercent: Int?): Boolean =
+        advancing && decoding && darkPercent != null && darkPercent < DARK_PERCENT_BLACK
+
+    /** Preserve explicit timestamp navigation instead of restoring an older snapshot over it. */
+    fun restorePosition(incomingId: String?, outgoingId: String?, currentId: String, position: Long,
+                        ended: Boolean, explicitStart: Long?): Long? =
+        position.takeIf { incomingId != null && incomingId == outgoingId && incomingId == currentId &&
+            position >= 10_000L && !ended && explicitStart == null }
 
     /** A sample counts as black only when the video is genuinely presenting. */
     fun blackSample(darkPercent: Int?, playing: Boolean, buffering: Boolean, advancing: Boolean): Boolean =

@@ -18,7 +18,7 @@ class AdditionalWebHardeningContractTest {
         assertTrue(player.contains("uri.userInfo == null && uri.port == -1"))
         assertTrue(player.contains("pendingUrl ?: savedUrl()"))
         assertTrue(player.contains("if (!isSafePageUrl(url))"))
-        assertTrue(browse.contains("if (!WebHost.isSafePageUrl(url)) return"))
+        assertTrue(browse.contains("if (WebHost.sessionClearing || !WebHost.isSafePageUrl(url)) return"))
         assertTrue(browse.contains("pendingUrl?.takeIf(WebHost::isSafePageUrl)"))
         assertTrue(browse.contains("!WebHost.isSafePageUrl(url) || !isVideo(uri)"))
     }
