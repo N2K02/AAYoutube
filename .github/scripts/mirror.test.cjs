@@ -25,6 +25,7 @@ function page(options = {}) {
   let nextTimer = 1;
   const bridgeCalls = [];
   const intents = [];
+  const navigations = [];
   const windowListeners = new Map();
   const posted = [];
   let pathname = options.pathname || '/watch';
@@ -100,7 +101,7 @@ function page(options = {}) {
   const sandbox = {
     HTMLMediaElement: FakeMedia,
     document,
-    location: { get search() { return search; }, get pathname() { return pathname; } },
+    location: { get search() { return search; }, get pathname() { return pathname; }, assign: (url) => navigations.push(url) },
     URLSearchParams,
     Promise,
     Event: class { constructor(t) { this.type = t; } },
@@ -580,4 +581,19 @@ test('rejected native navigation does not consume the click', () => {
   let prevented = false;
   p.fire('click', link, { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, false);
+});
+
+test('acknowledged link waits for authorization before navigating once', () => {
+  const p = page();
+  const navigations = [];
+  p.sandbox.location.assign = url => navigations.push(url);
+  let request;
+  p.sandbox.AAYMirror.intentRequest = (url, token, doc, req) => { request = req; return true; };
+  const link = { tagName: 'A', href: 'https://m.youtube.com/watch?v=BBBBBBBBBBB&t=42',
+    closest: (sel) => /^a\[href\]/.test(sel) ? link : null };
+  p.fire('click', link, { preventDefault() {}, stopImmediatePropagation() {} });
+  assert.equal(navigations.length, 0);
+  p.M.navigationResult(p.M.doc, request, true);
+  p.M.navigationResult(p.M.doc, request, true);
+  assert.deepEqual(navigations, [link.href]);
 });

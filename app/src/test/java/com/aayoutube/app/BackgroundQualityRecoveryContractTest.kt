@@ -143,8 +143,8 @@ class BackgroundQualityRecoveryContractTest {
 
     @Test fun delayedLogoutCannotReloadReplacementOrQuitWebView() {
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("val serial = ++sessionSerial"))
-        assertTrue(web.contains("if (serial != sessionSerial || !sessionClearing) return@post"))
+        assertTrue(web.contains("val serial = sessionGate.begin() ?: return"))
+        assertTrue(web.contains("if (!sessionGate.cookiesFinished(serial)) return@post"))
         assertTrue(web.contains("main.removeCallbacks(sessionResetTimeout)"))
         assertTrue(web.contains("return@post"))
         assertTrue(web.contains("mainFrameAllowsPlayback = false"))

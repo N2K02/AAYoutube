@@ -16,7 +16,6 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -80,11 +79,8 @@ internal object PhoneMirror {
     private val nav = NavAuthorizer()
     private val transport = TransportGuard()
     private var syncStartedAt = 0L
-    private var customView: View? = null
-    private var fullscreenOwner: Activity? = null
-    private var fullscreenClosing = false
+    private val fullscreen = MirrorFullscreen()
     private var qualityViolations = 0
-    private var customCallback: WebChromeClient.CustomViewCallback? = null
     private val crashGuard = RateGuard(PhoneMirrorPolicy.MAX_CRASHES, PhoneMirrorPolicy.CRASH_WINDOW_MS)
     private val reloadGuard = RateGuard(PhoneMirrorPolicy.MAX_RELOADS, PhoneMirrorPolicy.RELOAD_WINDOW_MS)
     val stats = MirrorSyncStats()
@@ -112,7 +108,7 @@ internal object PhoneMirror {
     fun attach(context: Context): View {
         if (!supported || muteUnavailable.value) return View(context)
         val w = web ?: create(context) ?: return View(context)
-        if (fullscreenOwner != null && fullscreenOwner !== activityOf(context)) hideCustomView()
+        fullscreen.detachUnless(activityOf(context))
         wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
         return w
@@ -327,7 +323,7 @@ internal object PhoneMirror {
         hideCustomView()
         val w = web
         web = null
-        fullscreenClosing = false
+        fullscreen.reset()
         generation++
         syncInFlight = false
         runCatching { handler?.remove() }
@@ -614,22 +610,9 @@ internal object PhoneMirror {
     private fun current(w: WebView, t: String) =
         web === w && token == t && visible && !suspended.value && !signingOut && !adHeld && !WebHost.sessionClearing
 
-    fun exitFullscreen(owner: Activity): Boolean {
-        if (fullscreenOwner !== owner || customView == null) return false
-        hideCustomView()
-        return true
-    }
+    fun exitFullscreen(owner: Activity): Boolean = fullscreen.exit(owner)
 
-    private fun hideCustomView() {
-        val v = customView ?: return
-        val callback = customCallback
-        customView = null
-        customCallback = null
-        fullscreenOwner = null
-        fullscreenClosing = callback != null
-        (v.parent as? ViewGroup)?.removeView(v)
-        callback?.onCustomViewHidden()
-    }
+    private fun hideCustomView() = fullscreen.hide()
 
     private fun activityOf(c: Context?): Activity? {
         var x = c
@@ -712,24 +695,11 @@ internal object PhoneMirror {
         // YouTube's own fullscreen button works inside the phone player.
         w.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-                if (!current(w, t) || customView != null || fullscreenClosing) { callback.onCustomViewHidden(); return }
-                val owner = activityOf(wrapper?.baseContext)
-                val host = owner?.window?.decorView as? ViewGroup
-                if (owner == null || host == null || owner.isFinishing || owner.isDestroyed) { callback.onCustomViewHidden(); return }
-                fullscreenOwner = owner
-                customView = view
-                customCallback = callback
-                host.addView(view, ViewGroup.LayoutParams(-1, -1))
+                fullscreen.show(activityOf(wrapper?.baseContext), view, callback, current(w, t))
             }
 
             override fun onHideCustomView() {
-                if (web !== w) return
-                if (fullscreenClosing) { fullscreenClosing = false; return }
-                val v = customView ?: return
-                customView = null
-                customCallback = null
-                fullscreenOwner = null
-                (v.parent as? ViewGroup)?.removeView(v)
+                if (web === w) fullscreen.onHidden()
             }
 
             override fun getDefaultVideoPoster() =
@@ -759,7 +729,7 @@ internal object PhoneMirror {
                     onNavigatedTo(destination, alreadyShown = true)
                 // A new document invalidates the previous page's navigation and transport authorisation.
                 hideCustomView()
-                fullscreenClosing = false
+                fullscreen.reset()
                 generation++
                 syncSeq++
                 syncInFlight = false
@@ -810,147 +780,6 @@ internal object PhoneMirror {
         // A recreated renderer picks up where the UI wants it (visible) without waiting for a UI change.
         main.post { applyVisible() }
         return w
-    }
-}
-
-/**
- * What the mirror page script can call. Every command names the document that sent it (a new
- * document invalidates older ones), carries an increasing sequence number and the video it saw.
- */
-internal class MirrorBridge(
-    private val token: String,
-    private val isHidden: () -> Boolean,
-    private val onControl: (action: String, value: Long, videoId: String) -> Unit,
-    private val onIntent: (url: String) -> Unit = {},
-    private val dispatch: (() -> Unit) -> Unit = { it() },
-    private val initialQuality: () -> String = { "" },
-    private val canAcceptNavigation: () -> Boolean = { true },
-    private val onLinkResult: (doc: Int, request: String, accepted: Boolean) -> Unit = { _, _, _ -> },
-    private val dispatchLink: (() -> Unit) -> Unit = dispatch,
-) {
-    private var currentDoc = 0
-    private var lastSeq = 0L
-
-    /** A new document asks first: while hidden or suspended it starts stopped and cannot autoplay. */
-    @JavascriptInterface
-    fun hidden(): Boolean = isHidden()
-
-    @JavascriptInterface
-    fun initialCap(): String = initialQuality()
-
-    /** A new document registers itself; commands from any earlier document are rejected from now on. */
-    @JavascriptInterface
-    @Synchronized
-    fun open(providedToken: String?): Int {
-        if (providedToken != token) return 0
-        lastSeq = 0L
-        return ++currentDoc
-    }
-
-    @JavascriptInterface
-    @Synchronized
-    fun control(action: String, value: Double, providedToken: String?, doc: Int, seq: Double, videoId: String?) {
-        if (providedToken != token || action !in PhoneMirrorPolicy.ACTIONS) return
-        if (doc == 0 || doc != currentDoc) return
-        if (!seq.isFinite() || seq.toLong() <= lastSeq) return
-        if (!value.isFinite() || value < 0.0 || value > PhoneMirrorPolicy.MAX_POSITION_MS) return
-        lastSeq = seq.toLong()
-        dispatch { synchronized(this) {
-            if (doc == currentDoc) onControl(action, value.toLong(), videoId.orEmpty())
-        } }
-    }
-
-    /** The user clicked a link inside the player page: what they chose, not just that they tapped. */
-    @JavascriptInterface
-    @Synchronized
-    fun intent(url: String?, providedToken: String?, doc: Int): Boolean {
-        if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
-        if (!canAcceptNavigation() || !PhoneMirrorPolicy.supportedLink(url)) return false
-        return queueIntent(url, doc, "")
-    }
-
-    @JavascriptInterface
-    @Synchronized
-    fun intentRequest(url: String?, providedToken: String?, doc: Int, request: String?): Boolean {
-        if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
-        if (request.isNullOrBlank() || request.length > 64 || !canAcceptNavigation() || !PhoneMirrorPolicy.supportedLink(url)) return false
-        return queueIntent(url, doc, request)
-    }
-
-    private fun queueIntent(url: String, doc: Int, request: String): Boolean {
-        dispatchLink {
-            val accepted = synchronized(this) {
-                if (doc != currentDoc || !canAcceptNavigation()) false else {
-                    onIntent(url)
-                    true
-                }
-            }
-            if (request.isNotEmpty()) onLinkResult(doc, request, accepted)
-        }
-        return true
-    }
-}
-
-/** At most [max] events inside a sliding window. */
-internal class RateGuard(private val max: Int, private val windowMs: Long) {
-    private val times = ArrayDeque<Long>()
-
-    /** Records an event; false once more than [max] fall inside the window. */
-    fun record(nowMs: Long): Boolean {
-        while (times.isNotEmpty() && nowMs - times.first() > windowMs) times.removeFirst()
-        if (times.size >= max) return false
-        times.addLast(nowMs)
-        return true
-    }
-
-    fun nextAllowedAt(nowMs: Long): Long =
-        if (times.size < max) nowMs else maxOf(nowMs, times.first() + windowMs + 1L)
-
-    fun reset() = times.clear()
-}
-
-/** Ignores the same transport command repeated inside a short window (touch + click, double delivery). */
-internal class TransportGuard(private val windowMs: Long = 500L) {
-    private var lastAction = ""
-    private var lastAt = Long.MIN_VALUE / 2
-
-    fun accept(action: String, nowMs: Long): Boolean {
-        if (action == lastAction && nowMs - lastAt in 0 until windowMs) return false
-        lastAction = action
-        lastAt = nowMs
-        return true
-    }
-
-    fun reset() { lastAction = ""; lastAt = Long.MIN_VALUE / 2 }
-}
-
-/**
- * Navigation on the mirror page counts as the user's choice only when it matches what they just
- * tapped, and only once. A link click names its destination; a bare tap is a short fallback.
- */
-internal class NavAuthorizer {
-    private var intentAt = Long.MIN_VALUE / 2
-    private var intentId: String? = null
-    private var hasIntent = false
-
-    fun onTap(nowMs: Long) { reset() }
-
-    fun onIntent(destinationId: String?, nowMs: Long) { hasIntent = true; intentId = destinationId; intentAt = nowMs }
-
-    /** [destinationId] is the video ID, or null for a non-video page (Home, Search). Consumed on success. */
-    fun authorize(destinationId: String?, nowMs: Long): Boolean {
-        val ok = matches(destinationId, nowMs)
-        if (ok) reset()
-        return ok
-    }
-
-    fun matches(destinationId: String?, nowMs: Long): Boolean =
-        hasIntent && destinationId != null && nowMs - intentAt in 0..INTENT_MS && intentId == destinationId
-
-    fun reset() { hasIntent = false; intentId = null; intentAt = Long.MIN_VALUE / 2 }
-
-    companion object {
-        const val INTENT_MS = 3_000L
     }
 }
 

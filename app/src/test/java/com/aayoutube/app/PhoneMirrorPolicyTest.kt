@@ -435,7 +435,7 @@ class PhoneMirrorPolicyTest {
     @Test fun accountResetCannotFinishWhileCookieRemovalIsPending() {
         val source = listOf(java.io.File("app/src/main/java/com/aayoutube/app/WebHost.kt"),
             java.io.File("../app/src/main/java/com/aayoutube/app/WebHost.kt")).first { it.isFile }.readText()
-        assertTrue(source.contains("!sessionHomePending || sessionCookiePending"))
+        assertTrue(source.contains("if (!sessionGate.finish()) return"))
         assertTrue(source.contains("url == sessionResetUrl && view.url == url"))
         assertTrue(source.contains("if (!sessionCookiePending)"))
     }

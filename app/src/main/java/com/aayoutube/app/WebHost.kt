@@ -618,7 +618,8 @@ object WebHost {
     private var lastCarRenderRecoveryAt = 0L
     private var lastCrossDisplayFailureAt = 0L
     private var carVerifyEpoch = 0L
-    private var crossDisplayTrial = false
+    private val displayTrial = RendererTrial()
+    private val crossDisplayTrial: Boolean get() = displayTrial.active
     private var carTrialTimeout: Runnable? = null
     private var carVerifySamples = 0
     private var carBlackSamples = 0
@@ -669,10 +670,9 @@ object WebHost {
                 AppLog.add("CAR", "Reused renderer black check with controls dark=${withControls ?: -1}% black=$black")
             }
             if (crossDisplayTrial && CarRendererReusePolicy.trialVerified(advancing, decoding, dark)) {
-                crossDisplayTrial = false
+                finishDisplayTrial("verified")
                 carTrialTimeout?.let(main::removeCallbacks)
                 carTrialTimeout = null
-                AppLog.add("CAR", "Cross-display retained renderer verified; buffers preserved")
                 return@launch
             }
             carBlackSamples = if (black) carBlackSamples + 1 else 0
@@ -690,7 +690,7 @@ object WebHost {
                 lastCarRenderRecoveryAt = now
                 if (crossDisplayTrial) lastCrossDisplayFailureAt = now
                 val trialFailed = crossDisplayTrial
-                crossDisplayTrial = false
+                finishDisplayTrial("unverified")
                 carTrialTimeout?.let(main::removeCallbacks)
                 carTrialTimeout = null
                 carBlackSamples = 0
@@ -705,9 +705,19 @@ object WebHost {
             } else AppLog.add("CAR", "Reused renderer check finished blackSamples=$carBlackSamples")
         }
     }
+    private fun finishDisplayTrial(reason: String) {
+        displayTrial.finish(SystemClock.elapsedRealtime())?.let { elapsed ->
+            AppLog.add("CAR", "Cross-display trial result=$reason elapsedMs=$elapsed generation=$webGeneration")
+        }
+    }
+
     private fun scheduleCarRenderVerify(trial: Boolean = false) {
         main.removeCallbacks(carRenderVerify)
-        crossDisplayTrial = trial
+        finishDisplayTrial("superseded")
+        if (trial) {
+            displayTrial.start(SystemClock.elapsedRealtime())
+            AppLog.add("CAR", "Cross-display trial start generation=$webGeneration display=$carBoundDisplayId")
+        }
         carVerifyEpoch++
         carVerifySamples = 0
         carBlackSamples = 0
@@ -721,7 +731,7 @@ object WebHost {
             val epoch = carVerifyEpoch
             val timeout = Runnable {
                 if (crossDisplayTrial && verifyStillOwned(epoch) && carRebindOwner == carVerifyOwner) {
-                    crossDisplayTrial = false
+                    finishDisplayTrial("timeout")
                     carVerifyEpoch++
                     main.removeCallbacks(carRenderVerify)
                     lastCrossDisplayFailureAt = SystemClock.elapsedRealtime()
@@ -731,7 +741,7 @@ object WebHost {
                 }
             }
             carTrialTimeout = timeout
-            main.postDelayed(timeout, 8_000L)
+            main.postDelayed(timeout, RendererTrial.TIMEOUT_MS)
         }
         main.postDelayed(carRenderVerify, CarRendererReusePolicy.VERIFY_DELAYS_MS)
     }
@@ -755,7 +765,7 @@ object WebHost {
     fun releaseCarHost(token: String) {
         if (carVerifyOwner == token) {
             carVerifyEpoch++
-            crossDisplayTrial = false
+            finishDisplayTrial("owner-released")
             main.removeCallbacks(carRenderVerify)
             carTrialTimeout?.let(main::removeCallbacks)
             carTrialTimeout = null
@@ -1408,11 +1418,10 @@ object WebHost {
 
     /** Sign out and forget everything the page stored, including the mini-player browser.
      * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
-    @Volatile var sessionClearing = false
-        private set
-    private var sessionSerial = 0L
-    private var sessionHomePending = false
-    private var sessionCookiePending = false
+    private val sessionGate = SessionResetGate()
+    val sessionClearing: Boolean get() = sessionGate.clearing
+    private val sessionHomePending: Boolean get() = sessionGate.homePending
+    private val sessionCookiePending: Boolean get() = sessionGate.cookiePending
     private var sessionResetUrl: String? = null
     private val sessionResetTimeout = Runnable {
         if (sessionClearing) {
@@ -1425,7 +1434,6 @@ object WebHost {
             if (sessionCookiePending) {
                 AppLog.add("ACCOUNT", "Cookie removal still pending; authentication remains blocked")
             } else {
-                sessionHomePending = true
                 finishSessionReset()
             }
         }
@@ -1444,21 +1452,16 @@ object WebHost {
     }
 
     private fun finishSessionReset() {
-        if (!sessionClearing || !sessionHomePending || sessionCookiePending) return
+        if (!sessionGate.finish()) return
         main.removeCallbacks(sessionResetTimeout)
-        sessionHomePending = false
         sessionResetUrl = null
-        sessionClearing = false
         BrowseHost.onSessionCleared()
     }
 
     fun clearSession() {
         if (sessionClearing) return
-        val serial = ++sessionSerial
         cmd("pause")
-        sessionClearing = true
-        sessionHomePending = false
-        sessionCookiePending = true
+        val serial = sessionGate.begin() ?: return
         sessionResetUrl = null
         // The phone's secondary player stops and drops pending work before any data is cleared.
         PhoneMirror.beginSignOut()
@@ -1471,13 +1474,11 @@ object WebHost {
         youtubeAccount.value = YouTubeAccountState.CHECKING
         CookieManager.getInstance().removeAllCookies {
             main.post {
-                if (serial != sessionSerial || !sessionClearing) return@post
-                sessionCookiePending = false
+                if (!sessionGate.cookiesFinished(serial)) return@post
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
                 resetSessionPlayback()
                 youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
-                sessionHomePending = true
                 sessionResetUrl = Uri.parse(home()).buildUpon().appendQueryParameter("aay_reset", serial.toString()).build().toString()
                 main.removeCallbacks(sessionResetTimeout)
                 main.postDelayed(sessionResetTimeout, 20_000L)
@@ -1587,9 +1588,7 @@ object WebHost {
         if (!preserveCarOwners) {
             if (!sessionCookiePending) {
                 main.removeCallbacks(sessionResetTimeout)
-                sessionSerial++
-                sessionClearing = false
-                sessionHomePending = false
+                sessionGate.cancelIfSafe()
                 sessionResetUrl = null
             }
             PhoneMirror.release()
@@ -1612,7 +1611,7 @@ object WebHost {
         carRebindOwner = null
         main.removeCallbacks(carRenderVerify)
         carVerifyEpoch++
-        crossDisplayTrial = false
+        finishDisplayTrial("renderer-released")
         carTrialTimeout?.let(main::removeCallbacks)
         carTrialTimeout = null
         exitFullscreen()
