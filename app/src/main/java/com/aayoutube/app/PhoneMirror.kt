@@ -774,7 +774,8 @@ internal class MirrorLoadGate(
         if (pressure) lastPressureAt = nowMs
         state = when {
             severe || nowMs - lastSevereAt < stableMs -> State.SUSPENDED
-            pressure || nowMs - lastPressureAt < stableMs -> State.DEGRADED
+            // Back from a suspension quality returns gradually: a second calm period at reduced quality.
+            pressure || nowMs - lastPressureAt < stableMs || nowMs - lastSevereAt < stableMs * 2 -> State.DEGRADED
             else -> State.NORMAL
         }
         return state
