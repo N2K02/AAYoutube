@@ -113,7 +113,7 @@ class PhoneMirrorPolicyTest {
         assertEquals(1_666L, s.avgDriftMs())
         s.pauses++; s.resumes++; s.crashes++; s.recoveries++; s.duplicates++
         val line = s.summary()
-        listOf("syncs=3", "driftMaxMs=4000", "nudges=1", "seeks=1", "ads=1", "pauses=1", "resumes=1",
+        listOf("steadySyncs=3", "driftMaxMs=4000", "nudges=1", "seeks=1", "ads=1", "pauses=1", "resumes=1",
             "crashes(total)=1", "recoveries(total)=1", "duplicateNavBlocked=1").forEach { assertTrue(it, line.contains(it)) }
         s.reset()
         assertTrue(s.isEmpty())
