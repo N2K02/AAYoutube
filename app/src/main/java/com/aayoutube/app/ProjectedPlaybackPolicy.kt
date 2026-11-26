@@ -24,9 +24,10 @@ internal class SelectionDeduper(private val windowMs: Long = 1_500L) {
     fun reset() { seen = false; lastKey = ""; lastAt = 0L }
 
     companion object {
-        /** Identity of a selection: video + playlist, or the route for other pages. */
-        fun key(path: String, videoId: String?, list: String?): String = when {
-            !videoId.isNullOrBlank() -> "v=$videoId|list=${list.orEmpty()}"
+        /** Identity of a selection: video + playlist + start time, or the route for other pages.
+         * A timestamp link is an intentional seek, so it is a different selection. */
+        fun key(path: String, videoId: String?, list: String?, startMs: Long? = null): String = when {
+            !videoId.isNullOrBlank() -> "v=$videoId|list=${list.orEmpty()}|t=${startMs ?: -1}"
             path.startsWith("/shorts/") || path.startsWith("/live/") -> path
             else -> ""
         }
@@ -39,6 +40,22 @@ internal object SelectedVideoReuse {
               selectedList: String?, currentList: String?, explicitPaused: Boolean): Boolean =
         onWatchPage && !explicitPaused && currentId.isNotBlank() && selectedId == currentId &&
             (selectedList.isNullOrBlank() || selectedList == currentList)
+}
+
+/** YouTube's t= / start= parameter: "90", "90s", "1m30s", "1h2m3s". */
+internal object TimestampParam {
+    private val part = Regex("(\\d+)([hms])")
+    fun parseMs(value: String?): Long? {
+        val v = value?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= 16 } ?: return null
+        v.toLongOrNull()?.let { return if (it >= 0) it * 1000 else null }
+        if (!Regex("(\\d+[hms])+").matches(v)) return null
+        var sec = 0L
+        for (m in part.findAll(v)) {
+            val n = m.groupValues[1].toLong()
+            sec += when (m.groupValues[2]) { "h" -> n * 3600; "m" -> n * 60; else -> n }
+        }
+        return sec * 1000
+    }
 }
 
 /** Navigating a browse page to the address it already shows is a wasted load. */
@@ -63,6 +80,10 @@ internal object CarRendererReusePolicy {
     const val BLACK_SAMPLES_TO_RECOVER = 2
     const val DARK_PERCENT_BLACK = 98
     const val RECOVERY_COOLDOWN_MS = 60_000L
+    /** Time for YouTube's controls to paint before the second (discriminating) sample. */
+    const val CONTROLS_PAINT_MS = 600L
+    /** With YouTube's white controls shown, a painting surface is never this dark. */
+    const val DARK_PERCENT_DEAD_SURFACE = 100
 
     fun reason(createdDisplay: Int?, targetDisplay: Int?, boundWindow: Int?, targetWindow: Int?,
                retainedDetached: Boolean, forced: String? = null): String? = when {
@@ -75,6 +96,10 @@ internal object CarRendererReusePolicy {
     /** A sample counts as black only when the video is genuinely presenting. */
     fun blackSample(darkPercent: Int?, playing: Boolean, buffering: Boolean, advancing: Boolean): Boolean =
         darkPercent != null && darkPercent >= DARK_PERCENT_BLACK && playing && !buffering && advancing
+
+    /** Dark scene vs. dead surface: shown controls must add visible pixels. */
+    fun stillBlackWithControls(darkPercent: Int?): Boolean =
+        darkPercent != null && darkPercent >= DARK_PERCENT_DEAD_SURFACE
 
     fun shouldRecover(consecutiveBlack: Int, nowMs: Long, lastRecoveryAtMs: Long): Boolean =
         consecutiveBlack >= BLACK_SAMPLES_TO_RECOVER &&
@@ -97,17 +122,19 @@ internal object FrameDarkness {
     }
 }
 
-/** Phone preview pacing and validity. */
-internal object PreviewFramePolicy {
-    const val CAPTURE_WIDTH_FULL = 480
-    const val CAPTURE_WIDTH_COMPACT = 320
-    /** A PixelCopy whose callback never arrived must not block later captures. */
+/** Car-window health captures: bounded in time and in outstanding buffers. */
+internal object CaptureBudget {
+    /** A PixelCopy whose callback never arrived must not block later captures... */
     const val STUCK_REQUEST_MS = 1_000L
+    /** ...but stuck requests still hold a bitmap until Android answers: cap them. */
+    const val MAX_OUTSTANDING = 2
 
-    fun captureWidth(compact: Boolean) = if (compact) CAPTURE_WIDTH_COMPACT else CAPTURE_WIDTH_FULL
-    /** Keep the last good frame instead of flashing a black one. */
-    fun accept(darkPercent: Int) = darkPercent < CarRendererReusePolicy.DARK_PERCENT_BLACK
     fun requestStuck(startedAtMs: Long, nowMs: Long) = startedAtMs != 0L && nowMs - startedAtMs >= STUCK_REQUEST_MS
+    fun mayStart(outstanding: Int, lastStartedAtMs: Long, nowMs: Long): Boolean = when {
+        outstanding <= 0 -> true
+        outstanding >= MAX_OUTSTANDING -> false
+        else -> requestStuck(lastStartedAtMs, nowMs)
+    }
 }
 
 /** Nested enum class: referencing it does not initialise the WebHost object. */

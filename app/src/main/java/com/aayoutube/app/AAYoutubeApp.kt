@@ -21,6 +21,7 @@ class AAYoutubeApp : Application() {
         Library.init(this)
         WebHost.init(this)
         BrowseHost.init(this)
+        PhoneMirror.init(this)
     }
 
     /**

@@ -27,7 +27,8 @@ class MiniPlayerTransitionContractTest {
         assertFalse(pane.contains("animateFloatAsState("))
         assertTrue(pane.contains("if (browseOn && !inPip && (!projectedToCar || onCar))"))
         assertTrue(pane.contains("if (projectedToCar && !onCar) return@LaunchedEffect"))
-        assertTrue(pane.contains("CarSyncedWatchScreen(snap = snap, visible = previewVisible && !inPip"))
+        assertTrue("a late projection never steals the car player",
+            pane.contains("Box(Modifier.fillMaxSize().background(Color.Black))"))
         assertTrue(pane.contains("if (!projectedToCar || onCar) key(version)"))
         assertTrue(pane.contains("if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause()"))
         // A mini video can move beneath either controls rail; no reserved side strip.

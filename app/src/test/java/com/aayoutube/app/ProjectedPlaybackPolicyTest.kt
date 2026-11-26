@@ -109,23 +109,48 @@ class ProjectedPlaybackPolicyTest {
         assertEquals(100, FrameDarkness.percent(IntArray(0)))
     }
 
-    // ------------------------------------------------------------ preview
+    // ------------------------------------------------------------ timestamps / mirror
 
-    @Test fun previewRejectsBlackFramesAndRecoversStuckRequests() {
-        assertFalse(PreviewFramePolicy.accept(100))
-        assertTrue(PreviewFramePolicy.accept(40))
-        assertFalse(PreviewFramePolicy.requestStuck(0, 99_999))
-        assertFalse(PreviewFramePolicy.requestStuck(1_000, 1_500))
-        assertTrue(PreviewFramePolicy.requestStuck(1_000, 2_000))
-        assertTrue(PreviewFramePolicy.captureWidth(true) < PreviewFramePolicy.captureWidth(false))
+    @Test fun timestampSelectionsAreIntentionalAndDistinct() {
+        val d = SelectionDeduper()
+        assertTrue(d.accept(SelectionDeduper.key("/watch", "abcdefghijk", null, null), 0))
+        assertTrue("same video at a timestamp is a seek, not a duplicate",
+            d.accept(SelectionDeduper.key("/watch", "abcdefghijk", null, 90_000), 10))
+        assertFalse(d.accept(SelectionDeduper.key("/watch", "abcdefghijk", null, 90_000), 20))
     }
 
-    @Test fun previewPacingSlowsDownInMiniAndAfterFailures() {
-        assertEquals(CarPhonePreview.INTERVAL_MS, CarPhonePreview.intervalMs(false, 0))
-        assertTrue(CarPhonePreview.intervalMs(true, 0) > CarPhonePreview.intervalMs(false, 0))
-        assertTrue(CarPhonePreview.intervalMs(false, 3) > CarPhonePreview.intervalMs(true, 2))
-        assertFalse("hidden", CarPhonePreview.allowed(true, true, false, true))
-        assertFalse("paused or buffering", CarPhonePreview.allowed(true, false, true, true))
+    @Test fun youTubeTimestampFormatsParse() {
+        assertEquals(90_000L, TimestampParam.parseMs("90"))
+        assertEquals(90_000L, TimestampParam.parseMs("90s"))
+        assertEquals(90_000L, TimestampParam.parseMs("1m30s"))
+        assertEquals(3_723_000L, TimestampParam.parseMs("1h2m3s"))
+        assertNull(TimestampParam.parseMs(null))
+        assertNull(TimestampParam.parseMs(""))
+        assertNull(TimestampParam.parseMs("abc"))
+        assertNull(TimestampParam.parseMs("-5"))
+        assertNull(TimestampParam.parseMs("1x"))
+    }
+
+    @Test fun darkSceneIsNotADeadSurfaceOnceControlsAreShown() {
+        assertFalse("bright controls painted", CarRendererReusePolicy.stillBlackWithControls(97))
+        assertTrue(CarRendererReusePolicy.stillBlackWithControls(100))
+        assertFalse("no capture: never recover blindly", CarRendererReusePolicy.stillBlackWithControls(null))
+    }
+
+    @Test fun mirrorLoadsOnlyPlainVideoIds() {
+        assertEquals("https://m.youtube.com/watch?v=abcdefghijk&list=PL_x-1&t=90s",
+            PhoneMirrorPolicy.watchUrl("https://m.youtube.com/", "abcdefghijk", "PL_x-1", 90_500))
+        assertEquals("https://m.youtube.com/watch?v=abcdefghijk",
+            PhoneMirrorPolicy.watchUrl("https://m.youtube.com/", "abcdefghijk", "bad&list", 500))
+        assertNull(PhoneMirrorPolicy.watchUrl("https://m.youtube.com/", "abc\"&x=1", null, 0))
+        assertNull(PhoneMirrorPolicy.watchUrl("https://m.youtube.com/", "", null, 0))
+    }
+
+    @Test fun mirrorAutoplayIsNotAUserSelection() {
+        assertFalse(PhoneMirrorPolicy.userSelection(0, 10_000))
+        assertTrue(PhoneMirrorPolicy.userSelection(9_000, 10_000))
+        assertFalse(PhoneMirrorPolicy.userSelection(1_000, 10_000))
+        assertEquals(setOf("play", "pause", "seek"), PhoneMirrorPolicy.ACTIONS)
     }
 
     // ------------------------------------------------------------ phone navigation

@@ -312,6 +312,7 @@ object BrowseHost : BrowseSession() {
     }
     override fun release() {
         phone.release()
+        PhoneMirror.release()
         phoneMode.value = WebHost.PlayerMode.FULL
         super.release()
     }

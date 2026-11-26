@@ -4,16 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CarPhonePreviewTest {
-    @Test fun previewOnlyRunsDuringVisibleProjectedPlayback() {
-        for (projected in listOf(false, true))
-            for (playing in listOf(false, true))
-                for (visible in listOf(false, true))
-                    for (selected in listOf(false, true))
-                        assertEquals(projected && playing && visible && selected,
-                            CarPhonePreview.allowed(projected, playing, visible, selected))
+    @Test fun outstandingCaptureBuffersAreBounded() {
+        assertTrue(CaptureBudget.mayStart(0, 0, 0))
+        assertFalse("one in flight, not yet stuck", CaptureBudget.mayStart(1, 1_000, 1_500))
+        assertTrue("one stuck request may be replaced", CaptureBudget.mayStart(1, 1_000, 2_000))
+        assertFalse("never more than the cap", CaptureBudget.mayStart(CaptureBudget.MAX_OUTSTANDING, 1_000, 99_000))
     }
-    @Test fun previewHasBoundedResolutionAndRate() {
-        assertEquals(480 to 270, PlayerTransitionPolicy.captureSize(1920, 1080, 480))
-        assertTrue(CarPhonePreview.INTERVAL_MS >= 250L)
+    @Test fun healthSampleHasBoundedResolution() {
+        assertEquals(64 to 36, PlayerTransitionPolicy.captureSize(1920, 1080, 64))
     }
 }

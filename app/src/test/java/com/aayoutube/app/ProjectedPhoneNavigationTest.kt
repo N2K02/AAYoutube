@@ -19,12 +19,17 @@ class ProjectedPhoneNavigationTest {
         assertTrue(browser.contains("phone.release()"))
         assertTrue(browser.contains("phone.onSessionCleared()"))
         val pane = read("Screens.kt").substringAfter("private fun ProjectedPhonePane(")
-            .substringBefore("private fun CarSyncedWatchScreen(")
+            .substringBefore("private fun rememberLivePosition(")
         assertTrue(pane.contains("BrowseHost.phone.attach(ctx)"))
         assertTrue(pane.contains("BrowseHost.phone.detach(it)"))
         assertTrue(pane.contains("BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN"))
         assertFalse(pane.contains("WebHost.enterMini()"))
         assertFalse(pane.contains("WebHost.closePlayer()"))
+        // The phone shows the original YouTube player, decoding only while shown, released after projection.
+        assertTrue(pane.contains("PhoneMirror.attach(ctx)"))
+        assertTrue(pane.contains("PhoneMirror.setVisible(mirrorShown && started && (visible || pip))"))
+        assertTrue(pane.contains("PhoneMirror.release()"))
+        assertFalse("no PixelCopy preview loop on the phone", pane.contains("CarPhonePreview"))
     }
 
     @Test fun phonePipDoesNotChangeProjectedPlayer() {

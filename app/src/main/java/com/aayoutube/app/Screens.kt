@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.InstallMobile
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -868,8 +867,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     onRelease = { WebHost.detach(it) },
                 )
             } else {
-                // A projection may begin between compositions; retain a safe preview.
-                CarSyncedWatchScreen(snap = snap, visible = previewVisible && !inPip, modifier = Modifier.fillMaxSize())
+                // A projection may begin between compositions: never steal the car's player.
+                Box(Modifier.fillMaxSize().background(Color.Black))
             }
 
             if (scrim.value > 0f && !onCar) Box(
@@ -899,8 +898,11 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             if (layoutSmall) {
                 // Progress: the page reports now and then; move it along in between.
                 var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
-                LaunchedEffect(snap) {
-                    if (!snap.playing) return@LaunchedEffect
+                // Tick only while the screen is shown: no wake-ups behind a stopped activity.
+                val paneLifecycle = context.findActivity()?.lifecycle?.currentStateFlow?.collectAsState()?.value
+                val paneShown = paneLifecycle?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
+                LaunchedEffect(snap, paneShown) {
+                    if (!snap.playing || !paneShown) return@LaunchedEffect
                     while (true) {
                         now = android.os.SystemClock.elapsedRealtime()
                         delay(500)
@@ -1581,34 +1583,49 @@ fun InfoPage() {
 }
 
 /**
- * The phone's own YouTube-like UI while Android Auto owns (or retains) the single
- * playback engine. Browsing and the player mode are independent of the car;
- * every control drives the one shared player. Never attaches a second decoder.
- *  - FULL: synced player (live preview or artwork) with seek and transport.
- *  - MINI: the phone's browse page with a floating, draggable mini-player above it.
- *  - HIDDEN: browse page only.
+ * The phone while Android Auto owns (or retains) the single audible engine:
+ * the original YouTube player (PhoneMirror: muted, clock-synced, decodes only
+ * while shown) with the same Full / mini-player / PiP modes as without the car.
+ * Browsing is independent; every control drives the one shared engine.
+ *  - FULL: YouTube's own watch page and player.
+ *  - MINI: the browse page with the floating, draggable mini-player above it.
+ *  - HIDDEN: browse page only (the mirror stops decoding).
  */
 @Composable
 private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier) {
     val phoneMode by BrowseHost.phoneMode.collectAsState()
     val revision by BrowseHost.phone.revision.collectAsState()
+    val mirrorRevision by PhoneMirror.revision.collectAsState()
     val activity = LocalContext.current.findActivity()
     val pip = activity?.previewPip?.value == true
     val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
-    val browsing = phoneMode != WebHost.PlayerMode.FULL && !pip
+    val started = lifecycle?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
+    val resumed = lifecycle == androidx.lifecycle.Lifecycle.State.RESUMED
     val hasVideo = snap.id.isNotBlank()
+    val browsing = phoneMode != WebHost.PlayerMode.FULL && !pip
+    val mirrorShown = hasVideo && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+    val small = phoneMode == WebHost.PlayerMode.MINI && !pip
     LaunchedEffect(hasVideo) {
         val next = ProjectedPhoneNav.onVideoChanged(BrowseHost.phoneMode.value, hasVideo)
         if (next != BrowseHost.phoneMode.value) {
             if (next == WebHost.PlayerMode.HIDDEN) BrowseHost.phoneHome() else BrowseHost.phoneMini()
         }
     }
-    LaunchedEffect(browsing, visible, lifecycle) {
-        if (browsing && visible && lifecycle == androidx.lifecycle.Lifecycle.State.RESUMED)
-            BrowseHost.phone.resume()
-        else BrowseHost.phone.pause()
+    LaunchedEffect(browsing, visible, resumed) {
+        if (browsing && visible && resumed) BrowseHost.phone.resume() else BrowseHost.phone.pause()
     }
-    DisposableEffect(Unit) { onDispose { BrowseHost.phone.pause() } }
+    // Decode on the phone only while its video is actually on screen (PiP counts).
+    LaunchedEffect(mirrorShown, visible, started, pip) {
+        PhoneMirror.setVisible(mirrorShown && started && (visible || pip))
+    }
+    LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
+    DisposableEffect(Unit) {
+        onDispose {
+            BrowseHost.phone.pause()
+            // Projection ended: free the phone decoder and its renderer.
+            PhoneMirror.release()
+        }
+    }
     Box(modifier.background(MaterialTheme.colorScheme.background)) {
         if (browsing) {
             key(revision) {
@@ -1622,19 +1639,15 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
                     onRelease = { BrowseHost.phone.detach(it) },
                 )
             }
-            if (phoneMode == WebHost.PlayerMode.MINI && hasVideo) {
-                ProjectedFloatingMini(snap, visible)
-            }
-        } else {
-            CarSyncedWatchScreen(snap, visible, Modifier.fillMaxSize(), pip = pip,
-                onMinimize = { BrowseHost.phoneMini() })
         }
+        if (mirrorShown) ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = visible && resumed,
+            revision = mirrorRevision)
     }
 }
 
-/** Floating mini-player over the phone's browse page, like the YouTube app's. */
+/** The mirror WebView, resized (never re-parented) between full and mini. */
 @Composable
-private fun ProjectedFloatingMini(snap: Snap, visible: Boolean) {
+private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visible: Boolean, revision: Int) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
     val density = LocalDensity.current
@@ -1651,53 +1664,69 @@ private fun ProjectedFloatingMini(snap: Snap, visible: Boolean) {
         val maxY = (constraints.maxHeight - hPx - edge - ytMenu).coerceAtLeast(edge)
         val px = edge + (maxX - edge) * mx
         val py = edge + (maxY - edge) * my
-        val expand = { BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL }
-        Box(
-            Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }
-                .size(miniW, miniH)
-                .zIndex(10f)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.Black)
-                .pointerInput(maxX, maxY) {
-                    detectDragGestures(
-                        onDragEnd = { prefs.edit().putFloat("miniX", mx).putFloat("miniY", my).apply() },
-                    ) { change, drag ->
-                        change.consume()
-                        mx = (mx + drag.x / (maxX - edge).coerceAtLeast(1f)).coerceIn(0f, 1f)
-                        my = (my + drag.y / (maxY - edge).coerceAtLeast(1f)).coerceIn(0f, 1f)
+        val frameMod = when {
+            pip -> Modifier.fillMaxSize()
+            small -> Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH).zIndex(10f)
+            else -> Modifier.fillMaxSize().statusBarsPadding()
+        }
+        key(revision) {
+            AndroidView(
+                modifier = frameMod,
+                factory = { ctx ->
+                    FrameLayout(ctx).also { frame ->
+                        frame.addView(PhoneMirror.attach(ctx), FrameLayout.LayoutParams(-1, -1))
                     }
-                }
-                .pointerInput(Unit) { detectTapGestures(onTap = { expand() }) },
-        ) {
-            CarSyncedVideo(snap, visible, compact = true, pip = false, modifier = Modifier.fillMaxSize())
-            androidx.compose.material3.FilledTonalIconButton(
-                onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
-                modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(36.dp),
+                },
+                onRelease = { PhoneMirror.detach(it) },
+            )
+        }
+        if (small) {
+            // Touch layer like the YouTube app's mini-player: drag to move, tap to expand.
+            Box(
+                Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }
+                    .size(miniW, miniH)
+                    .zIndex(11f)
+                    .pointerInput(maxX, maxY) {
+                        detectDragGestures(
+                            onDragEnd = { prefs.edit().putFloat("miniX", mx).putFloat("miniY", my).apply() },
+                        ) { change, drag ->
+                            change.consume()
+                            mx = (mx + drag.x / (maxX - edge).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            my = (my + drag.y / (maxY - edge).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                        }
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL })
+                    },
             ) {
-                Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (snap.playing) "Pause" else "Play", modifier = Modifier.size(20.dp))
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(36.dp),
+                ) {
+                    Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (snap.playing) "Pause" else "Play", modifier = Modifier.size(20.dp))
+                }
+                // Close hides the phone's mini-player only; the car keeps playing.
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
+                ) { Icon(Icons.Filled.Close, contentDescription = "Close phone mini player", modifier = Modifier.size(20.dp)) }
+                val pos = rememberLivePosition(snap, visible)
+                val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
+                    .background(Color(0xFFFF0033)))
             }
-            // Close hides the phone's mini-player only; the car keeps playing.
-            androidx.compose.material3.FilledTonalIconButton(
-                onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN },
-                modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
-            ) { Icon(Icons.Filled.Close, contentDescription = "Close phone mini player", modifier = Modifier.size(20.dp)) }
-            val fraction = rememberLivePosition(snap).let { pos ->
-                if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
-            }
-            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
-                .background(Color(0xFFFF0033)))
         }
     }
 }
 
-/** Snapshot position advanced locally between the page's sparse reports. */
+/** Snapshot position advanced locally between reports; ticks only while visible. */
 @Composable
-private fun rememberLivePosition(snap: Snap): Long {
+private fun rememberLivePosition(snap: Snap, visible: Boolean): Long {
     var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
     val seenAt = remember(snap) { android.os.SystemClock.elapsedRealtime() }
-    LaunchedEffect(snap.playing, snap.id) {
-        if (!snap.playing) return@LaunchedEffect
+    LaunchedEffect(snap.playing, snap.id, visible) {
+        if (!snap.playing || !visible) return@LaunchedEffect
         while (true) {
             now = android.os.SystemClock.elapsedRealtime()
             delay(500)
@@ -1706,140 +1735,6 @@ private fun rememberLivePosition(snap: Snap): Long {
     val pos = if (snap.playing && !snap.buffering) snap.posMs + ((now - seenAt).coerceAtLeast(0) * snap.rate).toLong()
         else snap.posMs
     return if (snap.durMs > 0) pos.coerceAtMost(snap.durMs) else pos
-}
-
-/** The car video on the phone: a bounded PixelCopy preview, else the artwork. */
-@Composable
-private fun CarSyncedVideo(snap: Snap, visible: Boolean, compact: Boolean, pip: Boolean, modifier: Modifier) {
-    val activity = LocalContext.current.findActivity()
-    val lifecycleState = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
-    val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED ||
-        (pip && lifecycleState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true)
-    val projected by WebHost.carProjectionActive.collectAsState()
-    val audioRetained by WebHost.carAudioRetained.collectAsState()
-    val artwork = rememberArtwork(snap)
-    var frame by remember(snap.id, projected) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    // Hidden, paused, buffering or audio-only: no capture work at all.
-    LaunchedEffect(snap.id, snap.playing, snap.buffering, visible, resumed, projected, compact) {
-        if (!CarPhonePreview.allowed(projected, snap.playing && !snap.buffering, resumed, visible)) return@LaunchedEffect
-        var failures = 0
-        while (true) {
-            val next = CarPhonePreview.frame(compact)
-            if (next != null) {
-                failures = 0
-                frame = next
-            } else {
-                failures++
-                // Keep the last good frame briefly; then fall back to artwork.
-                if (failures >= 3) frame = null
-            }
-            delay(CarPhonePreview.intervalMs(compact, failures))
-        }
-    }
-    val displayed = frame
-    DisposableEffect(displayed) {
-        onDispose {
-            // Compose may still draw the previous bitmap for a frame.
-            displayed?.let { old ->
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    if (!old.isRecycled) old.recycle()
-                }, 500L)
-            }
-        }
-    }
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
-        val image = displayed ?: artwork
-        if (image != null && !image.isRecycled) {
-            androidx.compose.foundation.Image(
-                bitmap = image.asImageBitmap(),
-                contentDescription = if (displayed != null) "Android Auto video preview" else "Video artwork",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = if (displayed != null) androidx.compose.ui.layout.ContentScale.Fit
-                    else androidx.compose.ui.layout.ContentScale.Crop,
-            )
-        }
-        if (displayed == null && !compact && !pip) {
-            // Small, non-blocking status chip; the controls stay usable.
-            Text(if (audioRetained) "Playing as music" else "Playing on Android Auto",
-                color = Color.White, style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp))
-        }
-    }
-}
-
-/** Full phone player for the car's single engine: preview, seek and transport. */
-@Composable
-private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifier = Modifier,
-    pip: Boolean = false, onMinimize: () -> Unit = { BrowseHost.phoneMini() }) {
-    val audioRetained by WebHost.carAudioRetained.collectAsState()
-    Column(modifier.background(MaterialTheme.colorScheme.background),
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        if (!pip) Row(Modifier.fillMaxWidth().statusBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onMinimize) {
-                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Minimise player")
-            }
-            Spacer(Modifier.weight(1f))
-            if (audioRetained) androidx.compose.material3.TextButton(onClick = { WebHost.restorePhoneVideo() }) {
-                Text("Show video on phone")
-            }
-        }
-        CarSyncedVideo(snap, visible, compact = false, pip = pip,
-            modifier = if (pip) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-        if (!pip) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(snap.title.ifBlank { "Android Auto" }, style = MaterialTheme.typography.titleMedium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (snap.artist.isNotBlank()) Text(snap.artist, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-            val live = rememberLivePosition(snap)
-            if (snap.durMs > 0 && !snap.live) {
-                var dragging by remember(snap.id) { mutableStateOf<Float?>(null) }
-                val fraction = dragging ?: (live.toFloat() / snap.durMs).coerceIn(0f, 1f)
-                androidx.compose.material3.Slider(
-                    value = fraction,
-                    onValueChange = { dragging = it },
-                    onValueChangeFinished = {
-                        dragging?.let { WebHost.seekTo((it * snap.durMs).toLong()) }
-                        dragging = null
-                    },
-                    enabled = snap.id.isNotBlank() && !snap.ad,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                )
-                Row(Modifier.fillMaxWidth()) {
-                    Text(formatClock(((dragging ?: 0f) * snap.durMs).toLong().takeIf { dragging != null } ?: live),
-                        style = MaterialTheme.typography.labelSmall)
-                    Spacer(Modifier.weight(1f))
-                    Text(formatClock(snap.durMs), style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { WebHost.cmd("prev") }, enabled = snap.id.isNotBlank()) {
-                    Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous video")
-                }
-                IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
-                    enabled = snap.id.isNotBlank()) {
-                    Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (snap.playing) "Pause" else "Play")
-                }
-                IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.id.isNotBlank()) {
-                    Icon(Icons.Filled.SkipNext, contentDescription = "Next video")
-                }
-                IconButton(onClick = { BrowseHost.phoneHome() }) {
-                    Icon(Icons.Filled.Home, contentDescription = "YouTube home")
-                }
-            }
-        }
-    }
-}
-
-private fun formatClock(ms: Long): String {
-    val total = (ms / 1000).coerceAtLeast(0)
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
 /** The one button style used everywhere in the app: filled, icon then label (like "Check again"). */

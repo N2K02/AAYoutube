@@ -22,10 +22,10 @@ class CarAudioHandoffContractTest {
         assertTrue(read("Screens.kt").contains("if ((projectedToCar || audioRetained) && !onCar)"))
     }
 
-    @Test fun previewBudgetReducesWorkInMiniAndOnFailure() {
-        assertTrue(CarPhonePreview.intervalMs(false, 0) >= 500L)
-        assertTrue(CarPhonePreview.intervalMs(true, 0) > CarPhonePreview.intervalMs(false, 0))
-        assertTrue(CarPhonePreview.intervalMs(false, 3) > CarPhonePreview.intervalMs(true, 0))
-        assertFalse(CarPhonePreview.allowed(false, true, true, true))
+    @Test fun disconnectBeforeTeardownDoesNotRetainAudio() {
+        val web = read("WebHost.kt")
+        val handoff = web.substringAfter("fun showOnCar(").substringBefore("fun requestReattachment()")
+        assertTrue(handoff.contains("playbackWanted && !carDisconnected &&"))
+        assertTrue(handoff.contains("if (alreadyProjected && !carShown && carDisconnected) main.post { onCarDisconnected() }"))
     }
 }
