@@ -315,6 +315,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Projection root display=" + display +
             " player display=" + childDisplay +
             " size=" + frame.width + "x" + frame.height)
+        CarPhonePreview.bind(carToken, carWindow(), frame)
         carInput?.bind(player)
     }
     private val relink: () -> Unit = { handler.post { if (carStarted) connectMedia() } }
@@ -875,6 +876,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     override fun onStop() {
+        CarPhonePreview.unbind(carToken)
         AppLog.add("CAR", "Video projection onStop; frameAttached=" +
             (playerContainer?.isAttachedToWindow ?: false))
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
@@ -907,6 +909,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     override fun onDestroy() {
+        CarPhonePreview.unbind(carToken)
         AppLog.add("CAR", "Video projection onDestroy")
         // Only when no newer car window has taken over.
         if (!WebHost.carShown || WebHost.isActiveCarHost(carToken)) PlaybackService.carAttached(this, false)
