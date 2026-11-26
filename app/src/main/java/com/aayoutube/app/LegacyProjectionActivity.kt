@@ -529,8 +529,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         FrameLayout(ctx).also { frame ->
-                            frame.addView(BrowseHost.attach(projectionContext(ctx)),
-                                FrameLayout.LayoutParams(-1, -1))
+                            val browse = BrowseHost.attach(projectionContext(ctx, frame))
+                            frame.addView(browse, FrameLayout.LayoutParams(-1, -1))
+                            carInput?.bind(browse)
                         }
                     },
                     onRelease = { BrowseHost.detach(it) },
@@ -948,24 +949,31 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
     private var target: WebView? = null
     private var active = false
 
+    private val bound = java.util.WeakHashMap<WebView, Boolean>()
+    private var tapEpoch = 0
+
     fun bind(web: WebView) {
-        if (target === web && owners[web] === this) return
-        stop()
-        target = web
+        if (owners[web] === this) return
         owners[web] = this
-        // Do not listen to WebView focus changes. Video player focus is not
-        // a text-edit request. Return false to preserve swipe/playback touches.
+        bound[web] = true
+        // A search button can create/focus its input asynchronously.
         web.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_UP) {
-                web.postDelayed({
-                    if (target === web && web.isAttachedToWindow) {
-                        web.evaluateJavascript(EDITABLE_FOCUS_SCRIPT) { result ->
-                            if (target !== web || !web.isAttachedToWindow) return@evaluateJavascript
-                            if (result == "true") start()
-                            else stopInputOnly()
+                val epoch = ++tapEpoch
+                for (delay in listOf(120L, 350L, 700L, 1200L)) {
+                    web.postDelayed({
+                        if (epoch == tapEpoch && owners[web] === this && web.isAttachedToWindow) {
+                            web.evaluateJavascript(EDITABLE_FOCUS_SCRIPT) { result ->
+                                if (epoch != tapEpoch || owners[web] !== this || !web.isAttachedToWindow)
+                                    return@evaluateJavascript
+                                if (result == "true") {
+                                    if (target !== web) { stopInputOnly(); target = web }
+                                    start()
+                                } else if (delay == 1200L) stopInputOnly()
+                            }
                         }
-                    }
-                }, 220L)
+                    }, delay)
+                }
             }
             false
         }
@@ -994,12 +1002,14 @@ private class LegacyCarInput(private val manager: InputManager) : CarEditable {
         stopInputOnly()
         // An old car instance stopping after a newer one bound the same
         // WebView must not remove the newer instance's touch listener.
-        target?.let { web ->
+        tapEpoch++
+        bound.keys.toList().forEach { web ->
             if (owners[web] === this) {
                 web.setOnTouchListener(null)
                 owners.remove(web)
             }
         }
+        bound.clear()
         target = null
     }
 
