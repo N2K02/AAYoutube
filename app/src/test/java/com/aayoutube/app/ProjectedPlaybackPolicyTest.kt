@@ -150,7 +150,7 @@ class ProjectedPlaybackPolicyTest {
         assertFalse(PhoneMirrorPolicy.userSelection(0, 10_000))
         assertTrue(PhoneMirrorPolicy.userSelection(9_000, 10_000))
         assertFalse(PhoneMirrorPolicy.userSelection(1_000, 10_000))
-        assertEquals(setOf("play", "pause", "seek", "mini"), PhoneMirrorPolicy.ACTIONS)
+        assertEquals(setOf("play", "pause", "seek", "mini", "next", "prev"), PhoneMirrorPolicy.ACTIONS)
     }
 
     // ------------------------------------------------------------ phone navigation
