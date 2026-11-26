@@ -56,6 +56,11 @@ data class FeatureFlags(
     val seekSeconds: Int = PlayerPrefsPolicy.YOUTUBE_SEEK_SECONDS,
     val hideComments: Boolean = false,
     val hideEndCards: Boolean = false,
+    /**
+     * Experimental Media3 audio engine (off until validated). Needs an authorized stream
+     * source; without one the WebView engine keeps playing.
+     */
+    val nativeAudio: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
@@ -135,6 +140,7 @@ object Features {
             seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
             hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
+            nativeAudio = prefs.getBoolean("nativeAudio", d.nativeAudio),
         )
     }
 
@@ -176,6 +182,7 @@ object Features {
             .putInt("seekSeconds", n.seekSeconds)
             .putBoolean("hideComments", n.hideComments)
             .putBoolean("hideEndCards", n.hideEndCards)
+            .putBoolean("nativeAudio", n.nativeAudio)
             .apply()
     }
 }

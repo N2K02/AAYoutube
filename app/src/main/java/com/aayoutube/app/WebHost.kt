@@ -1026,6 +1026,12 @@ object WebHost {
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
         if (sessionClearing && name != "pause") return
+        // Experimental native audio owns playback: play/pause go to it; next/prev hand the
+        // queue back to the page (the coordinator silences native first, never two engines).
+        if (NativePlayback.nativeOwns && NativePlayback.command(name)) {
+            if (name in setOf("play", "pause")) PhoneMirror.onExplicitTransport()
+            return
+        }
         if (name == "pause") {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
@@ -1082,6 +1088,10 @@ object WebHost {
         val s = snapshot.value
         if (s.id.isBlank() || s.live || s.durMs <= 0L) return
         val target = positionMs.coerceIn(0L, s.durMs)
+        if (NativePlayback.nativeOwns && NativePlayback.seek(target)) {
+            snapshot.value = s.copy(posMs = target)
+            return
+        }
         cmd("seek", (target / 1000.0).toString())
         snapshot.value = s.copy(posMs = target)
         PhoneMirror.onExplicitTransport()
@@ -1658,6 +1668,7 @@ object WebHost {
         }
         // No renderer, no playback session: the performance engine stops with it (any release).
         PerformanceMonitor.reset()
+        NativePlayback.release()
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
@@ -1927,8 +1938,10 @@ object WebHost {
     /** Called on a WebView thread by [WebBridge]. */
     fun onJsState(json: String, generation: Int = webGeneration) {
         if (generation != webGeneration) return
+        var webNativeMarker = false
         val s = runCatching {
             val o = JSONObject(json)
+            webNativeMarker = o.optBoolean("native")
             Snap(
                 id = o.optString("id"),
                 title = o.optString("title"),
@@ -1959,9 +1972,27 @@ object WebHost {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
-            publish(s)
+            // Native audio (experimental): the web's metadata with the native clock while it owns.
+            publish(NativePlayback.mergeWebState(s, webNativeMarker))
         }
     }
+
+    /** Native engine state for the media session; merged onto the web's metadata. */
+    internal fun publishFromNative(update: (Snap) -> Snap) {
+        main.post { if (!sessionClearing && NativePlayback.nativeOwns) publish(update(snapshot.value)) }
+    }
+
+    /**
+     * Native audio ownership in the page: on = pause the web video and stop its loading
+     * (no duplicate audio, no video download/decoding); off = continue at [positionMs]
+     * (-1 keeps position) and play only when [resume].
+     */
+    internal fun nativeAudioOwner(on: Boolean, positionMs: Long, resume: Boolean) {
+        val sec = if (positionMs < 0L) -1.0 else positionMs / 1000.0
+        js("window.__aay&&window.__aay.nativeAudio&&window.__aay.nativeAudio($on,$sec,$resume)")
+    }
+
+    internal fun carProjectionActive(): Boolean = carShown || carAudioRetained.value
 
     // JavaScript timers can be delayed after screen-off. Native probes keep
     // recovery checks scheduled while playback is wanted; JS respects Pause.
@@ -2119,6 +2150,8 @@ object WebHost {
 
     internal fun startOtherMediaHold(reason: String) {
         if (otherMediaHeldSince != 0L || !playbackWanted) return
+        // Native audio is the media heard now (Media3 handles focus itself): not "other media".
+        if (NativePlayback.nativeOwns) return
         otherMediaHeldSince = SystemClock.elapsedRealtime()
         otherMediaQuietSince = 0L
         main.removeCallbacks(droppedResume)

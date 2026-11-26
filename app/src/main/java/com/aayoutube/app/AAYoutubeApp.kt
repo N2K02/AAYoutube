@@ -23,6 +23,7 @@ class AAYoutubeApp : Application() {
         BrowseHost.init(this)
         PhoneMirror.init(this)
         PerformanceMonitor.init(this)
+        NativePlayback.init(this)
     }
 
     /**

@@ -2308,3 +2308,53 @@ test('at most one outstanding frame callback; a new video element cancels and in
   p.advance(31000); p.runIntervals();
   assert.equal(p.perfReports.at(-1).displayed, 30, 'new element readings only');
 });
+
+test('native audio ownership pauses the web video at the lowest quality and blocks recovery', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  assert.equal(p.video.paused, true, 'web silent while native plays');
+  assert.equal(p.window.__aay.nativeOwned(), true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'no video bandwidth while native owns');
+  assert.equal(p.stateReports.at(-1).native, true, 'the app knows the page is deliberately silent');
+  // Background recovery must not bring the web audio back (no duplicate audible playback).
+  p.window.__aay.checkBackgroundPlayback && p.window.__aay.checkBackgroundPlayback();
+  p.advance(20000);
+  p.runIntervals();
+  p.flush();
+  assert.equal(p.video.paused, true, 'still silent after recovery checks');
+});
+
+test('native audio hands back at the native position and keeps a paused intent paused', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  p.window.__aay.nativeAudio(false, 95.5, false);
+  p.flush();
+  assert.equal(p.video.currentTime, 95.5);
+  assert.equal(p.video.paused, true, 'user had paused native: web stays paused');
+  assert.equal(p.window.__aay.nativeOwned(), false);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'saved quality restored');
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.window.__aay.nativeAudio(false, 120, true);
+  p.flush();
+  assert.equal(p.video.currentTime, 120);
+  assert.equal(p.video.paused, false, 'resumes when the user wanted playback');
+  assert.equal(p.stateReports.at(-1).native, false);
+});
+
+test('page navigation to another video drops native ownership of the old one', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  p.location.search = '?v=anotherVideo';
+  p.location.href = 'https://m.youtube.com/watch?v=anotherVideo';
+  p.video.trigger('loadedmetadata');
+  p.flush();
+  assert.equal(p.window.__aay.nativeOwned(), false);
+  assert.equal(p.stateReports.at(-1).native, false);
+});

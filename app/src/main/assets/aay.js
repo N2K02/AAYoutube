@@ -1177,11 +1177,20 @@
   }
   var lastSent = null;
   var lastStateJson = '', lastStateAt = 0, STATE_REPEAT_MS = 15000;
+  /* Experimental native audio: while the app's Media3 engine owns playback of `id`, the web
+   * video stays paused (explicit pause: no background recovery resumes it) at the lowest
+   * quality so it neither sounds nor downloads/decodes video. Metadata and queue still report. */
+  var nativeAudio = { owned: false, id: '' };
   // Nothing on screen shows the position while hidden (Android extrapolates the
   // media-session position): send progress less often; state changes stay instant.
   var BG_PROGRESS_MS = 10000;
   function report() {
     if (!N) return;
+    // The page moved to another video: native ownership was only for the previous one.
+    if (nativeAudio.owned && nativeAudio.id && urlId() && urlId() !== nativeAudio.id) {
+      nativeAudio.owned = false; nativeAudio.id = '';
+      console.log('[aay] native audio released: page changed video');
+    }
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
     // nothing is playing (no picture in picture, no media controls for a preview).
     if (!/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1222,7 +1231,8 @@
       dur: isFinite(d) ? d : 0,
       rate: v.playbackRate || 1,
       next: !!H.nexttrack,
-      prev: !!H.previoustrack
+      prev: !!H.previoustrack,
+      native: !!nativeAudio.owned
     };
     var json = JSON.stringify(state), sentAt = Date.now();
     lastSent = state;
@@ -2163,6 +2173,29 @@
     schedReport(200);
   };
 
+  /* on: the native engine owns playback of the current video (pause, lowest quality, no recovery).
+   * off: continue at posSec (-1 keeps position), playing only when resume. */
+  A.nativeAudio = function (on, posSec, resume) {
+    var v = getVideo();
+    if (on) {
+      nativeAudio.owned = true;
+      nativeAudio.id = urlId();
+      AUTO = false; PAUSED = true; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial;
+      if (v) enforceExplicitPause(v);
+      console.log('[aay] native audio owns playback; web paused');
+    } else {
+      var was = nativeAudio.owned;
+      nativeAudio.owned = false; nativeAudio.id = '';
+      if (v && posSec >= 0 && isFinite(posSec)) v.currentTime = posSec;
+      if (resume) A.cmd('play');
+      if (was) console.log('[aay] web engine owns playback again');
+    }
+    qualityApply.key = '';
+    applyPreferredQuality();
+    schedReport(0);
+  };
+  A.nativeOwned = function () { return nativeAudio.owned; };
+
   A.__cfg = function () { return CFG; };
   A.config = function (c) {
     var oldSponsor = CFG.sponsorBlock, oldExtra = CFG.sbExtra, oldDislike = CFG.returnDislike;
@@ -2875,6 +2908,7 @@
   }
   A.logPlayingFormat = logPlayingFormat;
   function desiredQuality() {
+    if (nativeAudio.owned) return 'tiny';
     if (bgSaverActive()) return BG_SAVER_QUALITY;
     var q = capForDevice(savedQuality());
     // Phone mini player shown for a sustained period: decode for its real size (240p-480p).

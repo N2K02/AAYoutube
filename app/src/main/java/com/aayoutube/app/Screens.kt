@@ -1296,6 +1296,31 @@ fun ExperimentalVideoPage() {
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         }
+        Card {
+            ListItem(
+                headlineContent = { Text("Native audio engine") },
+                supportingContent = {
+                    Text(
+                        "Experimental. Plays audio with Android's media player instead of the web " +
+                            "player, without downloading video, and uses hardware audio offload where " +
+                            "supported. Needs an authorized stream source; without one the web player " +
+                            "keeps playing (see the log)."
+                    )
+                },
+                leadingContent = { Icon(Icons.Filled.OndemandVideo, contentDescription = null) },
+                trailingContent = {
+                    Switch(
+                        checked = flags.nativeAudio,
+                        onCheckedChange = { enabled ->
+                            Features.update { it.copy(nativeAudio = enabled) }
+                            if (!enabled) NativePlayback.returnToWeb("feature-off")
+                            AppLog.add("NATIVE-AUDIO", "preference=$enabled provider=${StreamProviders.current.id}")
+                        },
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
         CarVideoViewportPreview()
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp),
