@@ -277,7 +277,8 @@ fun AppRoot(activity: MainActivity) {
     val lyricsShown by LyricsPrefs.shownState.collectAsState()
     val providerVersion by LyricsPrefs.providersVersion.collectAsState()
     val fullscreenView by WebHost.fullscreenView.collectAsState()
-    val inPip by WebHost.inPip.collectAsState()
+    val rendererPip by WebHost.inPip.collectAsState()
+    val inPip = rendererPip || activity.previewPip.value
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
     // While Android Auto projects the video, YouTube's fullscreen view belongs
@@ -285,7 +286,9 @@ fun AppRoot(activity: MainActivity) {
     // (car turns black) or rotate the phone for it.
     val fullscreen = fullscreenView.takeIf { !projectedToCar || onCar }
     val snap by WebHost.snapshot.collectAsState()
-    val playerMode by WebHost.mode.collectAsState()
+    val sharedPlayerMode by WebHost.mode.collectAsState()
+    val localPhoneMode by BrowseHost.phoneMode.collectAsState()
+    val playerMode = if (projectedToCar && !onCar) localPhoneMode else sharedPlayerMode
     val flags by Features.state.collectAsState()
     val watchTab = tab == Tab.Watch.ordinal
     // Rotating sideways while watching fills the screen with the video (like the YouTube app);
@@ -855,8 +858,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                     onRelease = { WebHost.detach(it) },
                 )
             } else {
-                // WebView is on the car's VirtualDisplay — show a "Now playing" card
-                // so the phone screen doesn't look broken.
+                // A projection may begin between compositions; retain a safe preview.
                 CarSyncedWatchScreen(snap = snap, visible = previewVisible && !inPip, modifier = Modifier.fillMaxSize())
             }
 
