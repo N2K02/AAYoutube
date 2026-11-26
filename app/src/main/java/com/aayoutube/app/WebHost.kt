@@ -199,6 +199,7 @@ object WebHost {
     fun restorePhoneVideo() {
         if (!carAudioRetained.value || carShown) return
         carAudioRetained.value = false
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(false)")
         AppLog.add("CAR", "Phone video explicitly requested; releasing audio-only renderer retention")
         webVersion.update { it + 1 }
     }
@@ -289,6 +290,7 @@ object WebHost {
         carScreen.value = on
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
@@ -451,7 +453,8 @@ object WebHost {
             .put("thermal", thermalStatus())
         return "if(window.top===window.self)window.__AAY_BRIDGE_TOKEN=" +
             JSONObject.quote(bridgeToken) + ";window.__AAY_CFG=" + cfg +
-            ";window.__AAY_CAR=" + (carDisplay || carShown) + ";\n" + source
+            ";window.__AAY_CAR=" + (carDisplay || carShown) +
+            ";window.__AAY_AUDIO_ONLY=" + carAudioRetained.value + ";\n" + source
     }
 
     private fun installScript(w: WebView) {
@@ -807,6 +810,7 @@ object WebHost {
         }
         carProjectionActive.value = carShown
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (carShown) {
             main.removeCallbacks(freezeSoon)
@@ -1532,7 +1536,7 @@ object WebHost {
     private val backgroundPlaybackProbe = object : Runnable {
         override fun run() {
             if (!playbackWanted || (!shown && !carShown && !inPip.value &&
-                    !Features.current.backgroundPlay) || web == null) return
+                    !Features.current.backgroundPlay && !carAudioRetained.value) || web == null) return
             js("window.__aay&&window.__aay.checkBackgroundPlayback&&window.__aay.checkBackgroundPlayback()")
             main.postDelayed(this, 15_000L)
         }
@@ -1541,7 +1545,7 @@ object WebHost {
     private fun updateBackgroundPlaybackProbe() {
         main.removeCallbacks(backgroundPlaybackProbe)
         if (playbackWanted && web != null &&
-            (shown || carShown || inPip.value || Features.current.backgroundPlay)) {
+            (shown || carShown || carAudioRetained.value || inPip.value || Features.current.backgroundPlay)) {
             main.postDelayed(backgroundPlaybackProbe, 15_000L)
         }
     }
@@ -1950,6 +1954,7 @@ object WebHost {
             if (view !== web) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})", null)
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)
