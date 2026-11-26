@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.MusicNote
@@ -478,7 +479,7 @@ fun AppRoot(activity: MainActivity) {
             // mRadio's status-bar safe area, applied to YouTube content on the
             // phone only. Never inset native fullscreen, PiP or car projection.
             // The app header already has its own statusBarsPadding().
-            WebPane(Modifier.fillMaxSize())
+            WebPane(Modifier.fillMaxSize(), previewVisible = watchTab)
             val panel = if (tab != Tab.Watch.ordinal) Tab.entries[tab] else lastPanel
             AnimatedVisibility(
                 visible = tab != Tab.Watch.ordinal && !inPip,
@@ -683,7 +684,7 @@ private val carSwipeDown = Modifier.pointerInput(Unit) {
 }
 
 @Composable
-fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit.Dp = 0.dp) {
+fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit.Dp = 0.dp, previewVisible: Boolean = true) {
     val version by WebHost.webVersion.collectAsState()
     val progress by WebHost.progress.collectAsState()
     val offline by WebHost.offline.collectAsState()
@@ -699,7 +700,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
 
     // The browse page only works while you can see it.
-    LaunchedEffect(mode, inPip) {
+    LaunchedEffect(mode, inPip, projectedToCar, onCar) {
+        if (projectedToCar && !onCar) return@LaunchedEffect
         if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause() else BrowseHost.resume()
     }
 
@@ -710,7 +712,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
         WebHost.fullscreenView.collectAsState().value == null
     Box(modifier.then(if (phoneSafeArea) Modifier.statusBarsPadding() else Modifier)) {
         // Browse page (behind): made the first time the mini player opens.
-        if (browseOn && !inPip) {
+        if (browseOn && !inPip && (!projectedToCar || onCar)) {
             key(browseRevision) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -845,7 +847,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             } else {
                 // WebView is on the car's VirtualDisplay — show a "Now playing" card
                 // so the phone screen doesn't look broken.
-                NowPlayingOnCarScreen(snap = snap, modifier = playerMod)
+                CarSyncedWatchScreen(snap = snap, visible = previewVisible && !inPip, modifier = Modifier.fillMaxSize())
             }
 
             if (scrim.value > 0f && !onCar) Box(
@@ -1556,92 +1558,79 @@ fun InfoPage() {
     }
 }
 
-/**
- * Shown on the phone while the video is playing on Android Auto's VirtualDisplay.
- * The WebView surface belongs to the car screen; this keeps the phone from looking broken.
- */
+/** Phone watch screen uses the car's single player; never attaches a second decoder. */
 @Composable
-private fun NowPlayingOnCarScreen(snap: Snap, modifier: Modifier = Modifier) {
-    // Fill with surface color so it's visually distinct from the grey WebView background.
-    Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.surface),
-        contentAlignment = Alignment.Center,
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth(0.85f)
-                .padding(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-            ),
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.padding(24.dp).fillMaxWidth(),
-            ) {
-                Icon(
-                    Icons.Filled.OndemandVideo,
-                    contentDescription = null,
-                    modifier = Modifier.size(56.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifier = Modifier) {
+    val activity = LocalContext.current.findActivity()
+    val lifecycleState = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
+    val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED
+    var frame by remember(snap.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(snap.id, snap.playing, visible, resumed) {
+        if (!CarPhonePreview.allowed(true, snap.playing, resumed, visible)) return@LaunchedEffect
+        var failures = 0
+        while (true) {
+            val next = CarPhonePreview.frame()
+            if (next != null) {
+                failures = 0
+                frame = next
+            } else {
+                failures++
+                if (failures >= 3) frame = null
+            }
+            delay(if (failures >= 3) 2000L else CarPhonePreview.INTERVAL_MS)
+        }
+    }
+    // Compose may still be drawing the previous bitmap when a new one arrives.
+    val displayed = frame
+    DisposableEffect(displayed) {
+        onDispose {
+            displayed?.let { old ->
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (!old.isRecycled) old.recycle()
+                }, 500L)
+            }
+        }
+    }
+    Column(modifier.background(MaterialTheme.colorScheme.background),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black),
+            contentAlignment = Alignment.Center) {
+            if (displayed != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = displayed.asImageBitmap(),
+                    contentDescription = "Synchronized Android Auto video preview",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                 )
-                Text(
-                    "Playing on Android Auto",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-                if (snap.title.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        snap.title,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                    if (snap.artist.isNotBlank()) {
-                        Text(
-                            snap.artist,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+            } else {
+                Text("Video playing on Android Auto", color = Color.White,
+                    modifier = Modifier.padding(16.dp))
+            }
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text(snap.title.ifBlank { "Android Auto" }, style = MaterialTheme.typography.titleMedium,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (snap.artist.isNotBlank()) Text(snap.artist, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+            if (snap.durMs > 0 && !snap.live) {
+                LinearProgressIndicator(progress = { (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { WebHost.cmd("prev") }, enabled = snap.id.isNotBlank()) {
+                    Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous video")
                 }
-                // Both screens control the same renderer and media session.
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { WebHost.cmd("prev") }, enabled = snap.id.isNotBlank()) {
-                        Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous video")
-                    }
-                    IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
-                        enabled = snap.id.isNotBlank()) {
-                        Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = if (snap.playing) "Pause" else "Play")
-                    }
-                    IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.id.isNotBlank()) {
-                        Icon(Icons.Filled.SkipNext, contentDescription = "Next video")
-                    }
+                IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") },
+                    enabled = snap.id.isNotBlank()) {
+                    Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (snap.playing) "Pause" else "Play")
                 }
-                // Progress bar (only for non-live finite content)
-                if (snap.durMs > 0 && !snap.live) {
-                    val fraction = (snap.posMs.toFloat() / snap.durMs).coerceIn(0f, 1f)
-                    LinearProgressIndicator(
-                        progress = { fraction },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
-                    )
-                } else if (snap.playing) {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
-                    )
+                IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.id.isNotBlank()) {
+                    Icon(Icons.Filled.SkipNext, contentDescription = "Next video")
+                }
+                IconButton(onClick = { WebHost.openUrl(WebHost.home()) }) {
+                    Icon(Icons.Filled.Home, contentDescription = "YouTube home")
                 }
             }
         }
