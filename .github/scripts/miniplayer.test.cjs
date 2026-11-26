@@ -2481,12 +2481,17 @@ test('mini expansion repairs a late stale state despite a recent watchdog repair
 });
 
 test('mini icon reconciliation respects Pause, native ownership and superseded transitions', () => {
-  for (const cancel of [
-    p => p.window.__aay.cmd('pause'),
-    p => p.window.__aay.nativeAudio(true, -1, false),
-    p => p.window.__aay.mediaHold(true),
-    p => p.window.__aay.mini(true),
-    p => { p.location.search = '?v=anotherVideo'; },
+  for (const [reason, cancel] of [
+    ['user pause', p => p.window.__aay.cmd('pause')],
+    ['native audio', p => p.window.__aay.nativeAudio(true, -1, false)],
+    ['audio focus', p => p.window.__aay.mediaHold(true)],
+    ['new mini transition', p => p.window.__aay.mini(true)],
+    ['new video route', p => {
+      // The fixture uses a plain object rather than a real Location, so both
+      // properties must change together; urlId() parses href, not search.
+      p.location.search = '?v=anotherVideo';
+      p.location.href = 'https://m.youtube.com/watch?v=anotherVideo';
+    }],
   ]) {
     const p = playerPage({ quality: true });
     p.flush();
@@ -2502,6 +2507,6 @@ test('mini icon reconciliation respects Pause, native ownership and superseded t
     state = 2;
     const before = repairs;
     p.flush();
-    assert.equal(repairs, before, 'no delayed repair after cancellation');
+    assert.equal(repairs, before, 'no delayed repair after ' + reason);
   }
 });
