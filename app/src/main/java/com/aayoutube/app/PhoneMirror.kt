@@ -70,6 +70,10 @@ internal object PhoneMirror {
     @Volatile private var hiddenFlag = true
     private var transportAt = 0L
     private var adHeld = false
+    private var syncDueAt = Long.MAX_VALUE
+    private var missingMediaCount = 0
+    private var recoveryAttempts = 0
+    private var startupCap = ""
     private var lastReloadRejectedAt = Long.MIN_VALUE / 2
     private var signingOut = false
     private var suspendedAt = 0L
@@ -123,18 +127,27 @@ internal object PhoneMirror {
     }
 
     private fun applyVisible() {
-        val w = web ?: return
         val on = wantVisible && !failed.value
+        val w = web
+        if (w == null) {
+            visible = on
+            refreshHidden()
+            main.removeCallbacks(syncTick)
+            syncDueAt = Long.MAX_VALUE
+            if (on && suspended.value) scheduleSync(0L)
+            return
+        }
         if (visible == on) return
         visible = on
         refreshHidden()                  // new documents (and frames) start in this state
         main.removeCallbacks(syncTick)
+        syncDueAt = Long.MAX_VALUE
         main.removeCallbacks(idleRelease)
         if (on) {
             stats.resumes++
             w.onResume()
             w.resumeTimers()
-            main.post(syncTick)
+            scheduleSync(0L)
         } else {
             stats.pauses++
             generation++            // late callbacks of the visible period are now stale
@@ -163,6 +176,7 @@ internal object PhoneMirror {
 
     /** After the crash limit the user may try the phone player again. */
     fun retry() {
+        teardown()
         crashGuard.reset()
         reloadGuard.reset()
         failed.value = false
@@ -178,20 +192,27 @@ internal object PhoneMirror {
         w?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout($on)", null)
     }
 
+    /** Keep the earliest deadline; updates cannot postpone a pending tick. */
+    private fun scheduleSync(delayMs: Long) {
+        val now = SystemClock.elapsedRealtime()
+        val due = now + delayMs.coerceAtLeast(0L)
+        if (due >= syncDueAt) return
+        syncDueAt = due
+        main.removeCallbacks(syncTick)
+        main.postDelayed(syncTick, (due - now).coerceAtLeast(0L))
+    }
+
     /** The engine's state changed (play/pause/seek/new video): follow now, not at the next interval. */
     fun onEngineState(previous: Snap, next: Snap) {
         if (!PhoneMirrorPolicy.pokeNeeded(previous, next)) return
         main.post {
-            if (web == null) return@post
+            if (!visible) return@post
+            if (next.id != previous.id) { missingMediaCount = 0; recoveryAttempts = 0 }
             // The engine's intent changed: any answer still on its way carries obsolete state.
             syncSeq++
             syncInFlight = false
             val now = SystemClock.elapsedRealtime()
-            if (!visible) return@post
-            val delay = (PhoneMirrorPolicy.MIN_POKE_MS - (now - lastPokeAt)).coerceAtLeast(0L)
-            lastPokeAt = now + delay
-            main.removeCallbacks(syncTick)
-            main.postDelayed(syncTick, delay)
+            scheduleSync((PhoneMirrorPolicy.MIN_POKE_MS - (now - lastPokeAt)).coerceAtLeast(0L))
         }
     }
 
@@ -199,8 +220,7 @@ internal object PhoneMirror {
         if (!visible) return
         syncSeq++
         syncInFlight = false
-        main.removeCallbacks(syncTick)
-        main.postDelayed(syncTick, PhoneMirrorPolicy.MIN_POKE_MS)
+        scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS)
     }
 
     fun noteDuplicateSelection() { stats.duplicates++ }
@@ -218,6 +238,7 @@ internal object PhoneMirror {
         WebHost.resetSelectionGuards()
         BrowseHost.resetSelectionGuards()
         main.removeCallbacks(syncTick)
+        syncDueAt = Long.MAX_VALUE
         web?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
     }
 
@@ -238,7 +259,7 @@ internal object PhoneMirror {
         w.clearCache(true)
         w.clearHistory()
         w.loadUrl("about:blank")
-        if (visible) { main.removeCallbacks(syncTick); main.post(syncTick) }
+        if (visible) scheduleSync(0L)
     }
 
     /** Feature settings that also apply to the phone player. */
@@ -249,7 +270,7 @@ internal object PhoneMirror {
             w.settings.userAgentString = WebHost.userAgent(f.desktopSite)
             loadedId = ""        // the next sync reloads the video with the new page type
             generation++
-            if (visible) { main.removeCallbacks(syncTick); main.post(syncTick) }
+            if (visible) scheduleSync(0L)
         }
     }
 
@@ -273,6 +294,7 @@ internal object PhoneMirror {
 
     private fun teardown() {
         main.removeCallbacks(syncTick)
+        syncDueAt = Long.MAX_VALUE
         main.removeCallbacks(idleRelease)
         hiddenFlag = true
         syncSeq++
@@ -288,6 +310,15 @@ internal object PhoneMirror {
         lastLoadAt = 0L
         lastPokeAt = 0L
         tapDownAt = 0L
+        missingMediaCount = 0
+        recoveryAttempts = 0
+        startupCap = ""
+        disposeRenderer()
+        visible = false
+    }
+
+    /** Release decoder without losing thermal history or visibility intent. */
+    private fun disposeRenderer() {
         hideCustomView()
         val w = web
         web = null
@@ -303,47 +334,50 @@ internal object PhoneMirror {
         loadedId = ""
         pageId = null
         lastDriftMs = null
-        visible = false
     }
 
     /** Load the engine's video, then keep the clock in step. */
     private val syncTick: Runnable = object : Runnable {
         override fun run() {
-            val w = web ?: return
-            if (!visible) return
+            syncDueAt = Long.MAX_VALUE
+            if (!visible || !wantVisible || failed.value) return
             main.removeCallbacks(this)
             val s = WebHost.snapshot.value
             val now = SystemClock.elapsedRealtime()
+            lastPokeAt = now
             logStats(force = false)
             if (signingOut) {
-                main.postDelayed(this, PhoneMirrorPolicy.IDLE_SYNC_MS)
+                scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
                 return
             }
             // Load first? No: heat and primary health decide before anything is loaded or synced.
             val thermal = thermalStatus()
             val state = gate.update(thermal, s.buffering, now)
             if (state == MirrorLoadGate.State.SUSPENDED) {
-                if (!suspended.value) enterSuspension(w, thermal, s.buffering, now)
-                main.postDelayed(this, PhoneMirrorPolicy.IDLE_SYNC_MS)
+                if (!suspended.value) enterSuspension(thermal, s.buffering, now)
+                if (web != null && now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS) disposeRenderer()
+                scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
                 return
             }
-            if (suspended.value) exitSuspension(now)
             val cap = if (state == MirrorLoadGate.State.DEGRADED) "small" else ""
+            startupCap = cap
+            if (suspended.value) exitSuspension(now)
+            val w = web ?: run { visible = false; refreshHidden(); revision.value++; return }
             if (s.id.isBlank() || s.ad) {
                 holdForAd(w)
                 if (s.ad) stats.ads++
-                main.postDelayed(this, PhoneMirrorPolicy.IDLE_SYNC_MS)
+                scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
                 return
             }
             if (adHeld) { adHeld = false; refreshHidden() }
             if (PhoneMirrorPolicy.needsLoad(loadedId, pageId, s.id, now - lastLoadAt)) {
                 if (now - lastLoadAt >= PhoneMirrorPolicy.MIN_RELOAD_MS) load(w, s, now)
-                main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
+                scheduleSync(PhoneMirrorPolicy.SYNC_MS)
                 return
             }
             if (syncInFlight && now - syncStartedAt < PhoneMirrorPolicy.SYNC_TIMEOUT_MS) {
                 stats.overlapSkipped++
-                main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
+                scheduleSync(PhoneMirrorPolicy.SYNC_MS)
                 return
             }
             if (syncInFlight) stats.timeouts++
@@ -357,7 +391,9 @@ internal object PhoneMirror {
                 val stale = seq != syncSeq || web !== w || !visible || suspended.value || signingOut ||
                     !PhoneMirrorPolicy.current(gen, generation, id, clock.id) || WebHost.snapshot.value.id != id
                 // The sample was taken somewhere inside [now, received]: use its midpoint, drop old ones.
-                val pos = PhoneMirrorPolicy.compensatedPosMs(clock.posMs, clock.playing, clock.rate, now, received)
+                val busy = clock.seeking || !clock.ready || WebHost.snapshot.value.buffering
+                val advancing = clock.playing && !busy && !WebHost.snapshot.value.userPaused
+                val pos = PhoneMirrorPolicy.compensatedPosMs(clock.posMs, advancing, clock.rate, now, received)
                 if (stale || pos == null) {
                     stats.stale++
                     if (seq == syncSeq) syncInFlight = false
@@ -368,38 +404,59 @@ internal object PhoneMirror {
                     holdForAd(w)
                     return@mediaClock
                 }
-                val busy = clock.seeking || !clock.ready || WebHost.snapshot.value.buffering
                 w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.sync(" +
-                    "$pos,${clock.playing},${clock.rate},${JSONObject.quote(id)},$busy,${JSONObject.quote(cap)})") { raw ->
+                    "$pos,$advancing,${clock.rate},${JSONObject.quote(id)},$busy,${JSONObject.quote(cap)})") { raw ->
                     if (seq != syncSeq || gen != generation || web !== w || suspended.value) { stats.stale++; return@evaluateJavascript }
                     syncInFlight = false
                     val result = SyncResult.parse(raw)
                     stats.record(result)
-                    if (result.driftMs != null) lastDriftMs = result.driftMs
+                    if (result.action in setOf("novideo", "mismatch", "none")) {
+                        if (++missingMediaCount >= PhoneMirrorPolicy.MISSING_MEDIA_LIMIT) {
+                            missingMediaCount = 0
+                            if (++recoveryAttempts > PhoneMirrorPolicy.MAX_MEDIA_RECOVERIES) {
+                                failed.value = true
+                                teardown()
+                            } else {
+                                loadedId = ""
+                                pageId = null
+                                scheduleSync(PhoneMirrorPolicy.MIN_RELOAD_MS)
+                            }
+                        }
+                    } else if (result.driftMs != null) {
+                        missingMediaCount = 0
+                        recoveryAttempts = 0
+                        lastDriftMs = result.driftMs
+                    }
                 }
             }
-            main.postDelayed(this, PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
+            scheduleSync(PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
         }
     }
 
     private fun holdForAd(w: WebView) {
         if (adHeld) return
         adHeld = true
+        nav.reset()
+        transport.reset()
+        generation++
         refreshHidden()
         syncSeq++
         syncInFlight = false
         w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
     }
 
-    private fun enterSuspension(w: WebView, thermal: Int, buffering: Boolean, now: Long) {
+    private fun enterSuspension(thermal: Int, buffering: Boolean, now: Long) {
         suspended.value = true
         suspendedAt = now
         stats.suspensions++
         refreshHidden()
         syncSeq++                       // answers requested before the suspension must not restart playback
         syncInFlight = false
+        nav.reset()
+        transport.reset()
+        generation++
         hideCustomView()
-        w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
+        web?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
         AppLog.add("MIRROR", "Phone player suspended: thermal=$thermal primaryBuffering=$buffering")
     }
 
@@ -480,18 +537,17 @@ internal object PhoneMirror {
      * autoplay, and anything from a hidden, suspended or obsolete document, never does.
      */
     private fun onNavigatedTo(uri: Uri, alreadyShown: Boolean): Boolean {
-        if (!visible || suspended.value || signingOut) return !alreadyShown
+        if (!visible || suspended.value || signingOut || adHeld || WebHost.sessionClearing) return !alreadyShown
         val now = SystemClock.elapsedRealtime()
         return when (PhoneMirrorPolicy.classify(uri.path)) {
             PhoneMirrorPolicy.Page.WATCH -> {
                 val id = PhoneMirrorPolicy.videoId(uri.path, uri.getQueryParameter("v")) ?: return false
                 pageId = id
-                if (id == loadedId || id == WebHost.snapshot.value.id) return false
                 val chosen = now - transportAt > PhoneMirrorPolicy.TRANSPORT_SUPPRESS_MS && nav.authorize(PhoneMirrorPolicy.navigationKey(uri.toString()), now)
                 if (!chosen) {
-                    // YouTube's autoplay / Next on the muted page: go back to the engine's video.
+                    if (id == loadedId || id == WebHost.snapshot.value.id) return false
                     if (alreadyShown) { loadedId = ""; pageId = null }
-                    return false
+                    return !alreadyShown
                 }
                 AppLog.add("MIRROR", "Phone player selected a video")
                 if (alreadyShown) loadedId = id
@@ -511,7 +567,7 @@ internal object PhoneMirror {
     }
 
     private fun current(w: WebView, t: String) =
-        web === w && token == t && visible && !suspended.value && !signingOut
+        web === w && token == t && visible && !suspended.value && !signingOut && !adHeld && !WebHost.sessionClearing
 
     private fun hideCustomView() {
         val v = customView ?: return
@@ -542,6 +598,7 @@ internal object PhoneMirror {
             failed.value = true
             wantVisible = false
             web = w
+            main.post { if (web === w && failed.value) teardown() }
             AppLog.add("MIRROR", "Native mute unavailable; secondary playback disabled")
             return w
         }
@@ -590,7 +647,12 @@ internal object PhoneMirror {
                 // Current renderer, visible, not suspended, and still the engine's video.
                 if (current(w, t) && vid == loadedId && loadedId == WebHost.snapshot.value.id) onControl(action, value)
             },
-            onIntent = { url -> if (current(w, t) && WebHost.isSafePageUrl(url)) nav.onIntent(PhoneMirrorPolicy.navigationKey(url), SystemClock.elapsedRealtime()) },
+            onIntent = { url ->
+                if (current(w, t) && WebHost.isSafePageUrl(url)) {
+                    nav.onIntent(PhoneMirrorPolicy.navigationKey(url), SystemClock.elapsedRealtime())
+                    onNavigatedTo(Uri.parse(url), alreadyShown = false)
+                }
+            },
             dispatch = { task -> val epoch = generation; main.post { if (generation == epoch) task() } },
         ), "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -638,6 +700,9 @@ internal object PhoneMirror {
                 pageHost = runCatching { Uri.parse(url).host }.getOrNull()
                 if (web !== view) return
                 // A new document invalidates the previous page's navigation and transport authorisation.
+                generation++
+                syncSeq++
+                syncInFlight = false
                 nav.reset()
                 transportAt = 0L
             }
@@ -645,6 +710,7 @@ internal object PhoneMirror {
             override fun onPageFinished(view: WebView, url: String?) {
                 if (web !== view) return
                 // A new document starts with the default layout: send the current one.
+                view.evaluateJavascript("window.__aayMirror&&window.__aayMirror.setCap(${JSONObject.quote(startupCap)})", null)
                 view.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout($videoOnly)", null)
                 layoutSentTo = view
             }
@@ -730,9 +796,11 @@ internal class MirrorBridge(
     /** The user clicked a link inside the player page: what they chose, not just that they tapped. */
     @JavascriptInterface
     @Synchronized
-    fun intent(url: String?, providedToken: String?, doc: Int) {
-        if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return
+    fun intent(url: String?, providedToken: String?, doc: Int): Boolean {
+        if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
+        if (PhoneMirrorPolicy.navigationKey(url) == null) return false
         dispatch { synchronized(this) { if (doc == currentDoc) onIntent(url) } }
+        return true
     }
 }
 
@@ -932,6 +1000,9 @@ internal object PhoneMirrorPolicy {
     const val SEEK_POKE_MS = 2_500L
     const val STATS_MS = 30_000L
     const val HIDDEN_RELEASE_MS = 60_000L
+    const val SUSPENDED_RELEASE_MS = 12_000L
+    const val MISSING_MEDIA_LIMIT = 4
+    const val MAX_MEDIA_RECOVERIES = 2
     const val TRANSPORT_SUPPRESS_MS = 2_500L
     const val THERMAL_DEGRADE = 2   // PowerManager.THERMAL_STATUS_MODERATE
     const val THERMAL_SUSPEND = 3   // PowerManager.THERMAL_STATUS_SEVERE

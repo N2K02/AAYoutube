@@ -527,3 +527,22 @@ test('a replaced YouTube player gets the quality limit again', () => {
   p.M.layout(true);
   assert.ok(p.qualityCalls.length > n, 'quality was not reapplied to the new player');
 });
+
+test('a buffering primary holds the secondary media clock', () => {
+  const p = page();
+  p.video.paused = false;
+  p.setTime(12);
+  assert.match(p.M.sync(10000, true, 1, 'AAAAAAAAAAA', true, 'small'), /\|wait\|/);
+  assert.equal(p.video.paused, true);
+  assert.equal(p.video.playbackRate, 1);
+});
+test('native accepted navigation consumes the click before YouTube navigates again', () => {
+  const p = page();
+  p.sandbox.AAYMirror.intent = () => true;
+  const link = { tagName: 'A', href: 'https://m.youtube.com/watch?v=BBBBBBBBBBB&t=42',
+    closest: (sel) => /^a\[href\]/.test(sel) ? link : null };
+  let prevented = false, stopped = false;
+  p.fire('click', link, { preventDefault: () => { prevented = true; }, stopImmediatePropagation: () => { stopped = true; } });
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+});

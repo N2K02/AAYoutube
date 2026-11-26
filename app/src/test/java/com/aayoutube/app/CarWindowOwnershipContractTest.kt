@@ -90,7 +90,7 @@ class CarWindowOwnershipContractTest {
     @Test fun quitClearsCarHostOwnership() {
         val release = web.substringAfter("fun release(preserveCarOwners: Boolean = false) {")
             .substringBefore("fun onLinkUnbound()")
-        val owners = release.substringAfter("if (!preserveCarOwners) {").substringBefore("}")
+        val owners = release.substringAfterLast("if (!preserveCarOwners) {").substringBefore("}")
         assertTrue(owners.contains("carHosts.clear()"))
         assertTrue(owners.contains("activeCarHost.value = null"))
     }

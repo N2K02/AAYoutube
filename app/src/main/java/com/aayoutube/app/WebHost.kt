@@ -527,6 +527,7 @@ object WebHost {
     }
 
     private fun cmd(name: String, arg: String? = null) {
+        if (sessionClearing && name != "pause") return
         if (name == "pause") unexpectedPauseRecoveryUntil = 0L
         js("window.__aay&&window.__aay.cmd('$name'${if (arg == null) "" else ",$arg"})")
     }
@@ -905,6 +906,7 @@ object WebHost {
 
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
+        if (sessionClearing && name != "pause") return
         if (name == "pause") {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
@@ -956,6 +958,7 @@ object WebHost {
 
     /** Seek the single shared player (phone remote, car, media session). */
     fun seekTo(positionMs: Long) {
+        if (sessionClearing) return
         val s = snapshot.value
         if (s.id.isBlank() || s.live || s.durMs <= 0L) return
         val target = positionMs.coerceIn(0L, s.durMs)
@@ -1343,9 +1346,32 @@ object WebHost {
         private set
     private var sessionSerial = 0L
     private var sessionHomePending = false
+    private val sessionResetTimeout = Runnable {
+        if (sessionClearing) {
+            AppLog.add("ACCOUNT", "Session reset timed out; clearing the playback document")
+            sessionSerial++
+            resetSessionPlayback()
+            web?.stopLoading()
+            web?.loadUrl("about:blank")
+            youtubeAccount.value = YouTubeAccountState.CHECKING
+            sessionHomePending = true
+            finishSessionReset()
+        }
+    }
+
+    private fun resetSessionPlayback() {
+        playbackWanted = false
+        mainFrameAllowsPlayback = false
+        expectedWatchVideoId = null
+        pendingUrl = home()
+        snapshot.value = Snap()
+        selectedWatchVideoId.value = ""
+        send(Msg.STATE, Snap().toBundle())
+    }
 
     private fun finishSessionReset() {
         if (!sessionClearing || !sessionHomePending) return
+        main.removeCallbacks(sessionResetTimeout)
         sessionHomePending = false
         sessionClearing = false
         BrowseHost.onSessionCleared()
@@ -1359,23 +1385,25 @@ object WebHost {
         sessionHomePending = false
         // The phone's secondary player stops and drops pending work before any data is cleared.
         PhoneMirror.beginSignOut()
-        youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
+        resetSessionPlayback()
+        main.removeCallbacks(sessionResetTimeout)
+        main.postDelayed(sessionResetTimeout, 20_000L)
+        youtubeAccount.value = YouTubeAccountState.CHECKING
         CookieManager.getInstance().removeAllCookies {
             main.post {
                 if (serial != sessionSerial || !sessionClearing) return@post
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                playbackWanted = false
-                mainFrameAllowsPlayback = false
-                expectedWatchVideoId = null
-                snapshot.value = Snap()
-                selectedWatchVideoId.value = ""
-                send(Msg.STATE, Snap().toBundle())
+                resetSessionPlayback()
+                youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
                 sessionHomePending = true
                 val current = web
                 current?.stopLoading()
                 current?.clearCache(true)
-                if (current == null) finishSessionReset() else current.loadUrl(home())
+                if (current == null) finishSessionReset() else {
+                    pendingUrl = null
+                    current.loadUrl(home())
+                }
             }
         }
     }
@@ -1473,6 +1501,7 @@ object WebHost {
         AppLog.add("POWER", "WebView released")
         // The phone's secondary player never outlives the engine it follows (Quit, idle shutdown).
         if (!preserveCarOwners) {
+            main.removeCallbacks(sessionResetTimeout)
             sessionSerial++
             sessionClearing = false
             sessionHomePending = false
@@ -1559,6 +1588,7 @@ object WebHost {
     fun onCommand(m: Message) {
         val d = m.data ?: Bundle.EMPTY
         AppLog.add("LINK", "From media process: what=${m.what} keys=${d.keySet().sorted().joinToString()}")
+        if (sessionClearing && m.what in setOf(Msg.OPEN, Msg.SEARCH, Msg.PLAY, Msg.SEEK, Msg.NEXT, Msg.PREV, Msg.RATE)) return
         if (m.what != Msg.FREEZE) unfreeze()
         when (m.what) {
             Msg.REGISTER -> {
@@ -2258,7 +2288,15 @@ object WebHost {
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             AppLog.add("NET", "Error ${error.errorCode} host=${request.url.host.orEmpty()} main=${request.isForMainFrame}")
-            if (request.isForMainFrame) offline.value = true
+            if (request.isForMainFrame) {
+                offline.value = true
+                if (view === web && sessionHomePending) {
+                    resetSessionPlayback()
+                    view.stopLoading()
+                    view.loadUrl("about:blank")
+                    finishSessionReset()
+                }
+            }
         }
 
         // Preserve visible car ownership and playback intent while replacing the
@@ -2274,7 +2312,7 @@ object WebHost {
             // Stop retaining a phantom recovery intent after the renderer crash
             // circuit-breaker has deliberately stopped automatic restarts.
             if (!mayResume) playbackWanted = false
-            val reopen = if (before.id.isNotBlank()) {
+            val reopen = if (sessionClearing) home() else if (before.id.isNotBlank()) {
                 val base = if (Features.current.desktopSite) HOME_DESKTOP else HOME_MOBILE
                 base + "watch?v=" + Uri.encode(before.id) +
                     (if (before.posMs > 0) "&t=" + before.posMs / 1000 + "s" else "") +
@@ -2285,7 +2323,7 @@ object WebHost {
             else send(Msg.STATE, before.copy(playing = false, buffering = false).toBundle())
             release(preserveCarOwners = true)
             pendingUrl = reopen
-            if (shown || mayResume) {
+            if (shown || mayResume || sessionHomePending) {
                 if (!shown) main.post { if (web == null) ensureWeb() }
                 webVersion.update { it + 1 }
             }

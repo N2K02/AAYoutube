@@ -161,7 +161,11 @@
     if (!e.isTrusted) return;
     try {
       var a = anchorOf(e.target), b = bridge();
-      if (a && a.href && b && b.intent) b.intent(String(a.href), TOKEN, M.doc);
+      if (a && a.href && b && b.intent && !closest(e.target, NEXT_SEL) && !closest(e.target, PREV_SEL) &&
+          b.intent(String(a.href), TOKEN, M.doc)) {
+        if (e.preventDefault) e.preventDefault();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      }
     } catch (err) {}
   }, true);
   document.addEventListener('click', function (e) { gesture(e, false); }, true);
@@ -242,7 +246,7 @@
     var drift = v.currentTime - posMs / 1000;
     var action = 'ok';
     ourActAt = Date.now();
-    if (playing) {
+    if (playing && !busy) {
       if (v.paused) { expectOwn('play'); try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
     } else if (!v.paused) {
       expectOwn('pause');
@@ -250,6 +254,9 @@
     }
     // Hysteresis: only touch the media pipeline when really out of step.
     var want = rate;
+    if (busy || v.seeking || v.readyState < 3) {
+      return String(Math.round(drift * 1000)) + '|wait|' + (v.videoHeight || 0);
+    }
     if (Math.abs(drift) > 1.5 && isFinite(v.duration) && v.readyState > 0) {
       // Never seek while either player is seeking or buffering, nor stack seeks.
       if (!busy && !v.seeking && v.readyState >= 3 && Date.now() - M.lastSeekAt > 3000) {
@@ -381,6 +388,10 @@
       M.qualityAt = Date.now();
     } catch (e) {}
   }
+  M.setCap = function (cap) {
+    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
+    applyQuality();
+  };
   function clearLayoutTimers() {
     layoutTimers.forEach(clearTimeout);
     layoutTimers = [];

@@ -392,4 +392,22 @@ class PhoneMirrorPolicyTest {
         assertTrue(PhoneMirrorPolicy.pokeNeeded(s, s.copy(buffering = true)))
         assertTrue(PhoneMirrorPolicy.pokeNeeded(s, s.copy(ad = true)))
     }
+
+    @Test fun prolongedSuspensionReleasesRendererWithoutResettingHealthMonitor() {
+        val source = listOf(java.io.File("app/src/main/java/com/aayoutube/app/PhoneMirror.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/PhoneMirror.kt")).first { it.isFile }.readText()
+        val tick = source.substringAfter("private val syncTick").substringBefore("private fun holdForAd")
+        assertTrue(tick.contains("now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS"))
+        assertTrue(tick.indexOf("gate.update(") < tick.indexOf("val w = web ?: run"))
+        assertTrue(source.substringAfter("private fun disposeRenderer()").substringBefore("private val syncTick").contains("w?.destroy()"))
+    }
+
+    @Test fun explicitLinkIntentRejectsForeignOriginAndAcceptsTimestamp() {
+        val got = mutableListOf<String>()
+        val bridge = MirrorBridge("secret", { false }, { _, _, _ -> }, { got += it })
+        val doc = bridge.open("secret")
+        assertFalse(bridge.intent("https://example.com/watch?v=AAAAAAAAAAA", "secret", doc))
+        assertTrue(bridge.intent("https://m.youtube.com/watch?v=AAAAAAAAAAA&t=42", "secret", doc))
+        assertEquals(listOf("https://m.youtube.com/watch?v=AAAAAAAAAAA&t=42"), got)
+    }
 }
