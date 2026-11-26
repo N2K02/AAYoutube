@@ -24,11 +24,16 @@ function page(options = {}) {
   const timers = new Map();
   let nextTimer = 1;
   const bridgeCalls = [];
+  const intents = [];
+  const windowListeners = new Map();
+  const posted = [];
+  let pathname = options.pathname || '/watch';
+  let videoData = options.videoData || null;
   const listeners = new Map();
   const classes = new Set();
   const inserted = new Map();
   let adShowing = false;
-  let search = options.search || '?v=AAAAAAAAAAA';
+  let search = options.search !== undefined ? options.search : '?v=AAAAAAAAAAA';
 
   class FakeMedia {
     constructor() {
@@ -69,9 +74,14 @@ function page(options = {}) {
   };
   transformedParent.parentElement = documentElement;
 
-  const player = { classList: { contains: (n) => n === 'ad-showing' && adShowing }, setInternalSize() {} };
   const qualityCalls = [];
-  player.setPlaybackQualityRange = (a, b) => qualityCalls.push([a, b]);
+  const makePlayer = () => ({
+    classList: { contains: (n) => n === 'ad-showing' && adShowing },
+    setInternalSize() {},
+    setPlaybackQualityRange: (a, b) => qualityCalls.push([a, b]),
+    getVideoData: () => videoData,
+  });
+  let player = makePlayer();
 
   const document = {
     head: documentElement,
@@ -83,13 +93,14 @@ function page(options = {}) {
     },
     querySelector(sel) { return /video/.test(sel) ? video : null; },
     getElementById(id) { return id === 'movie_player' ? player : inserted.get(id) || null; },
+    querySelectorAll() { return [video]; },
     createElement() { return { id: '', textContent: '' }; },
   };
 
   const sandbox = {
     HTMLMediaElement: FakeMedia,
     document,
-    location: { get search() { return search; }, pathname: '/watch' },
+    location: { get search() { return search; }, get pathname() { return pathname; } },
     URLSearchParams,
     Promise,
     Event: class { constructor(t) { this.type = t; } },
@@ -97,9 +108,16 @@ function page(options = {}) {
     setTimeout(fn, ms) { const id = nextTimer++; timers.set(id, { fn, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     getComputedStyle: () => ({ transform: 'matrix(1, 0, 0, 1, 0, 10)', contain: 'none', filter: 'none', willChange: '' }),
-    AAYMirror: { control(action, value, token) { bridgeCalls.push({ action, value, token }); }, hidden: () => !!options.hidden },
+    AAYMirror: {
+      control(action, value, token, doc, seq, vid) { bridgeCalls.push({ action, value, token, doc, seq, vid }); },
+      hidden: () => !!options.hidden,
+      open: () => 7,
+      intent(url, token, doc) { intents.push({ url, token, doc }); },
+    },
     __AAYM_TOKEN: 'tok',
-    addEventListener() {},
+    addEventListener(type, fn) { windowListeners.set(type, fn); },
+    frames: Object.assign([{ postMessage: (m) => posted.push(m) }], {}),
+    parent: options.parent || null,
     dispatchEvent() { sandbox.resizeEvents++; },
     resizeEvents: 0,
   };
@@ -113,7 +131,10 @@ function page(options = {}) {
     (listeners.get(type) || []).forEach((fn) => fn({ type, target, isTrusted: true, touches: [], changedTouches: [], ...extra }));
   };
   return {
-    M: sandbox.__aayMirror, video, bridgeCalls, player, qualityCalls, transformedParent, timers, sandbox, fire,
+    M: sandbox.__aayMirror, video, bridgeCalls, intents, posted, windowListeners, qualityCalls,
+    swapPlayer() { player = makePlayer(); },
+    setPath(v) { pathname = v; },
+    setVideoData(v) { videoData = v; }, transformedParent, timers, sandbox, fire,
     advance(ms) { clock += ms; },
     setAd(on) { adShowing = on; },
     setSearch(s) { search = s; },
@@ -164,7 +185,7 @@ test('sync resumes playback after hidden and corrects only towards the same vide
   assert.equal(p.seekWrites(), 0);
   p.setTime(5);
   const r = p.M.sync(5000, true, 1, 'AAAAAAAAAAA');
-  assert.equal(r, '0|ok');
+  assert.equal(r.replace(/\|\d+$/, ''), '0|ok');
   assert.equal(p.M.stopped, false);
   assert.equal(p.video.paused, false);
 });
@@ -182,24 +203,24 @@ test('large drift seeks once; no stacked seeks while buffering or seeking', () =
   const p = page();
   p.setTime(0);
   const w0 = p.seekWrites();
-  assert.equal(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA'), '-30000|seek');
+  assert.equal(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA').replace(/\|\d+$/, ''), '-30000|seek');
   assert.equal(p.seekWrites(), w0 + 1);
   p.setTime(0); // still buffering at the old position
   p.advance(1500);
-  assert.match(p.M.sync(31_000, true, 1, 'AAAAAAAAAAA'), /\|wait$/);
+  assert.match(p.M.sync(31_000, true, 1, 'AAAAAAAAAAA'), /\|wait\|/);
   assert.equal(p.seekWrites(), w0 + 2 - 1, 'second seek must be suppressed (setTime counts as one write)');
   p.advance(4000);
   p.video.seeking = true;
-  assert.match(p.M.sync(35_000, true, 1, 'AAAAAAAAAAA'), /\|wait$/);
+  assert.match(p.M.sync(35_000, true, 1, 'AAAAAAAAAAA'), /\|wait\|/);
 });
 
 test('small drift nudges the rate, keeps the selected speed, and settles', () => {
   const p = page();
   p.setTime(10.8); // 800 ms ahead of 10 s
-  assert.equal(p.M.sync(10_000, true, 1.5, 'AAAAAAAAAAA'), '800|nudge');
+  assert.equal(p.M.sync(10_000, true, 1.5, 'AAAAAAAAAAA').replace(/\|\d+$/, ''), '800|nudge');
   assert.ok(Math.abs(p.video.playbackRate - 1.5 * 0.95) < 1e-9);
   p.setTime(10.0);
-  assert.equal(p.M.sync(10_000, true, 1.5, 'AAAAAAAAAAA'), '0|ok');
+  assert.equal(p.M.sync(10_000, true, 1.5, 'AAAAAAAAAAA').replace(/\|\d+$/, ''), '0|ok');
   assert.equal(p.video.playbackRate, 1.5, 'the user speed is restored once in step');
 });
 
@@ -338,7 +359,7 @@ test('a seek made by synchronisation is never reported as the user\'s, even if i
   p.fire('click', barTarget());
   p.advance(1600); // the user hold is over, the engine moved on
   p.setTime(0);
-  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', false, ''), /seek$/);
+  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', false, ''), /\|seek\|/);
   p.advance(3500); // the seeked event arrives long after the call
   p.fire('seeked', p.video);
   assert.equal(p.bridgeCalls.length, 0);
@@ -357,7 +378,7 @@ test('no seek while the engine is buffering or seeking', () => {
   const p = page();
   p.setTime(0);
   const w = p.seekWrites();
-  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', true, ''), /wait$/);
+  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', true, ''), /\|wait\|/);
   assert.equal(p.seekWrites(), w);
 });
 
@@ -372,4 +393,137 @@ test('quality drops under load and is restored when the cap is lifted, without c
   assert.equal(p.qualityCalls.length, n);
   p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, '');
   assert.deepEqual(p.qualityCalls.at(-1), ['large', 'large']);
+});
+
+test('commands carry the document, an increasing sequence and the video they saw', () => {
+  const p = page();
+  const t = tapTarget();
+  p.fire('click', t); p.fire('pause', p.video);
+  p.advance(2000);
+  p.fire('click', t); p.fire('play', p.video);
+  assert.deepEqual(p.bridgeCalls.map((c) => [c.doc, c.seq, c.vid]), [[7, 1, 'AAAAAAAAAAA'], [7, 2, 'AAAAAAAAAAA']]);
+});
+
+test('a touch followed by its click authorises one action and forwards Next once', () => {
+  const p = page();
+  const t = tapTarget();
+  p.fire('touchstart', t, { touches: [{ clientX: 5, clientY: 5 }] });
+  p.fire('touchend', t, { changedTouches: [{ clientX: 5, clientY: 6 }] });
+  p.fire('click', t);
+  p.fire('pause', p.video);
+  p.fire('play', p.video);
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['pause']);
+  const next = { tagName: 'BUTTON', closest: (sel) => (/ytp-next-button/.test(sel) || /html5-video-player/.test(sel) ? next : null) };
+  p.fire('touchstart', next, { touches: [{ clientX: 5, clientY: 5 }] });
+  p.fire('touchend', next, { changedTouches: [{ clientX: 5, clientY: 5 }] });
+  p.fire('click', next);
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'next').length, 1);
+});
+
+test('taps on other player controls (settings, captions, title) authorise nothing', () => {
+  const p = page();
+  const settings = { tagName: 'BUTTON', closest: (sel) => (/html5-video-player/.test(sel) ? settings : null) };
+  p.fire('click', settings);
+  p.fire('pause', p.video);
+  p.fire('seeked', p.video);
+  assert.equal(p.bridgeCalls.length, 0);
+});
+
+test('double tap on the video seeks; a single tap does not', () => {
+  const p = page();
+  const t = tapTarget();
+  p.fire('click', t);
+  p.fire('seeked', p.video);
+  assert.equal(p.bridgeCalls.length, 0);
+  p.advance(2000);
+  p.fire('click', t); p.advance(200); p.fire('click', t);
+  p.fire('seeked', p.video);
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['seek']);
+});
+
+test('authorisation is bound to the media element the user touched', () => {
+  const p = page();
+  p.fire('click', tapTarget());
+  const other = { tagName: 'VIDEO', paused: false, ended: false };
+  p.fire('pause', other);
+  assert.equal(p.bridgeCalls.length, 0);
+});
+
+test('our own play/pause/seek events are never reported, even when a user gesture follows', async () => {
+  const p = page();
+  p.setTime(0);
+  p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', false, ''); // plays and seeks
+  p.advance(100);
+  p.fire('click', barTarget());
+  p.fire('seeked', p.video);      // belongs to our seek, delivered late
+  assert.equal(p.bridgeCalls.length, 0);
+  p.fire('seeked', p.video);      // the user's own scrub afterwards
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['seek']);
+});
+
+test('a link click tells the app what the user chose', () => {
+  const p = page();
+  const link = { tagName: 'A', href: 'https://m.youtube.com/watch?v=BBBBBBBBBBB&t=90', closest: (sel) => (/^a\[href\]/.test(sel) ? link : null) };
+  p.fire('click', link);
+  assert.deepEqual(p.intents.map((i) => i.url), ['https://m.youtube.com/watch?v=BBBBBBBBBBB&t=90']);
+  assert.equal(p.intents[0].doc, 7);
+});
+
+test('no playback-rate correction while either player is buffering or seeking', () => {
+  const p = page();
+  p.setTime(10.8);
+  assert.match(p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', true, ''), /\|wait\|/);
+  assert.equal(p.video.playbackRate, 1);
+  p.video.readyState = 2;
+  assert.match(p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, ''), /\|wait\|/);
+  p.video.readyState = 4;
+  assert.match(p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, ''), /\|nudge\|/);
+});
+
+test('identity: the player\'s own data wins, live and Shorts routes are understood', () => {
+  const p = page({ pathname: '/shorts/SSSSSSSSSSS', search: '' });
+  p.setTime(0);
+  assert.match(p.M.sync(0, true, 1, 'SSSSSSSSSSS'), /^0\|ok/);
+  assert.equal(p.M.sync(0, true, 1, 'AAAAAAAAAAA'), 'mismatch');
+  p.setVideoData({ video_id: 'DDDDDDDDDDD' });
+  assert.equal(p.M.sync(0, true, 1, 'SSSSSSSSSSS'), 'mismatch', 'the loaded media, not the URL, is authoritative');
+  assert.match(p.M.sync(0, true, 1, 'DDDDDDDDDDD'), /^0\|ok/);
+  const live = page({ pathname: '/live/LLLLLLLLLLL', search: '' });
+  assert.match(live.M.sync(0, true, 1, 'LLLLLLLLLLL'), /^0\|ok/);
+});
+
+test('the decoded height is reported with every sync', () => {
+  const p = page();
+  p.video.videoHeight = 360;
+  assert.match(p.M.sync(0, true, 1, 'AAAAAAAAAAA'), /\|360$/);
+});
+
+test('hidden and visible states reach existing frames', () => {
+  const p = page();
+  p.M.stop();
+  assert.equal(JSON.stringify(p.posted.at(-1)), '{"aayMirrorStopped":true}');
+  p.M.sync(0, true, 1, 'AAAAAAAAAAA');
+  assert.equal(JSON.stringify(p.posted.at(-1)), '{"aayMirrorStopped":false}');
+  const parent = {};
+  const f = page({ frame: true, parent });
+  const onMessage = f.windowListeners.get('message');
+  f.video.paused = false;
+  onMessage({ data: { aayMirrorStopped: true }, source: parent });
+  assert.equal(f.video.paused, true);
+  const f2 = page({ frame: true, parent });
+  f2.windowListeners.get('message')({ data: { aayMirrorStopped: true }, source: {} });
+  assert.equal(f2.video.paused, true, 'unchanged: messages from other sources are ignored');
+  f2.video.paused = false;
+  f2.windowListeners.get('message')({ data: { aayMirrorStopped: true }, source: {} });
+  assert.equal(f2.video.paused, false);
+});
+
+test('a replaced YouTube player gets the quality limit again', () => {
+  const p = page();
+  p.M.layout(true);
+  const n = p.qualityCalls.length;
+  p.swapPlayer();
+  p.M.sync(0, true, 1, 'AAAAAAAAAAA');
+  p.M.layout(true);
+  assert.ok(p.qualityCalls.length > n, 'quality was not reapplied to the new player');
 });

@@ -935,7 +935,9 @@ object WebHost {
         w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
             "document.querySelector('video');if(!v)return null;" +
             "var p=document.getElementById('movie_player')||document.querySelector('.html5-video-player');" +
-            "var id=new URLSearchParams(location.search).get('v')||'';" +
+            "var id='';try{var d=p&&p.getVideoData&&p.getVideoData();id=(d&&d.video_id)||''}catch(e){}" +
+            "if(!id){id=new URLSearchParams(location.search).get('v')||'';if(!id){" +
+            "var m=/^\\/(?:live|shorts)\\/([\\w-]{11})/.exec(location.pathname);id=m?m[1]:''}}" +
             "return JSON.stringify([Math.round(v.currentTime*1000),!v.paused&&!v.ended,v.playbackRate||1,id," +
             "!!v.seeking,v.readyState>=3,!!(p&&p.classList&&p.classList.contains('ad-showing'))])})()") { raw ->
             if (gen != webGeneration || web !== w) return@evaluateJavascript
@@ -1336,6 +1338,8 @@ object WebHost {
     /** Sign out and forget everything the page stored, including the mini-player browser.
      * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
     fun clearSession() {
+        // The phone's secondary player stops and drops pending work before any data is cleared.
+        PhoneMirror.beginSignOut()
         youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
         val generation = webGeneration
         val page = web

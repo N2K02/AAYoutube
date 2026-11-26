@@ -146,10 +146,7 @@ class ProjectedPlaybackPolicyTest {
         assertNull(PhoneMirrorPolicy.watchUrl("https://m.youtube.com/", "", null, 0))
     }
 
-    @Test fun mirrorAutoplayIsNotAUserSelection() {
-        assertFalse(PhoneMirrorPolicy.userSelection(0, 10_000))
-        assertTrue(PhoneMirrorPolicy.userSelection(9_000, 10_000))
-        assertFalse(PhoneMirrorPolicy.userSelection(1_000, 10_000))
+    @Test fun mirrorActionsAreTheKnownSet() {
         assertEquals(setOf("play", "pause", "seek", "mini", "next", "prev"), PhoneMirrorPolicy.ACTIONS)
     }
 

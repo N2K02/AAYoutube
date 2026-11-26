@@ -62,6 +62,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.automirrored.filled.Logout
@@ -1637,16 +1639,21 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     val revision by BrowseHost.phone.revision.collectAsState()
     val mirrorRevision by PhoneMirror.revision.collectAsState()
     val mirrorCrashed by PhoneMirror.failed.collectAsState()
-    val mirrorFailed = mirrorCrashed || !PhoneMirror.supported
+    val mirrorSuspended by PhoneMirror.suspended.collectAsState()
+    // One fallback for every state in which the phone cannot show the copy (unsupported, crashed, suspended).
+    val fallback = PhoneMirrorPolicy.fallback(PhoneMirror.supported, mirrorCrashed, mirrorSuspended)
+    val mirrorBlocked = fallback != PhoneMirrorPolicy.Fallback.NONE
     val activity = LocalContext.current.findActivity()
     val pip = activity?.previewPip?.value == true
     val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
     val started = lifecycle?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
     val resumed = lifecycle == androidx.lifecycle.Lifecycle.State.RESUMED
     val hasVideo = snap.id.isNotBlank()
-    // After repeated renderer crashes the phone keeps browsing instead of recreating the player in a loop.
-    val browsing = (phoneMode != WebHost.PlayerMode.FULL || mirrorFailed) && !pip
-    val mirrorShown = hasVideo && !mirrorFailed && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+    // Without the copy the phone keeps browsing (never a blank player) and shows the fallback controls.
+    val browsing = (phoneMode != WebHost.PlayerMode.FULL || mirrorBlocked) && !pip
+    val mirrorShown = hasVideo && !mirrorBlocked && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+    // Allocation follows visibility: nothing is composed (and so nothing is recreated) while hidden.
+    val mirrorWanted = (pip && started) || (resumed && visible)
     val small = phoneMode == WebHost.PlayerMode.MINI && !pip
     LaunchedEffect(hasVideo) {
         val next = ProjectedPhoneNav.onVideoChanged(BrowseHost.phoneMode.value, hasVideo)
@@ -1659,7 +1666,7 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     }
     // Decode on the phone only while its video is actually on screen (PiP counts).
     LaunchedEffect(mirrorShown, visible, started, resumed, pip, mirrorRevision) {
-        PhoneMirror.setVisible(mirrorShown && ((pip && started) || (resumed && visible)))
+        PhoneMirror.setVisible(mirrorShown && mirrorWanted)
     }
     LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
     DisposableEffect(Unit) {
@@ -1683,22 +1690,10 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
                 )
             }
         }
-        if (mirrorCrashed && hasVideo) {
-            // Lightweight fallback: what is playing on the car, and a way to try the phone player again.
-            androidx.compose.material3.Surface(
-                Modifier.align(Alignment.BottomCenter).padding(12.dp).zIndex(12f),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                tonalElevation = 6.dp,
-            ) {
-                Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(snap.title.ifBlank { "Playing on Android Auto" }, maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false))
-                    Spacer(Modifier.width(12.dp))
-                    androidx.compose.material3.TextButton(onClick = { PhoneMirror.retry() }) { Text("Retry") }
-                }
-            }
-        }
-        if (mirrorShown) ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = visible && resumed,
+        val showFallback = mirrorBlocked && hasVideo && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+        if (showFallback) MirrorFallback(snap, fallback, large = pip, Modifier.align(
+            if (pip) Alignment.Center else Alignment.BottomCenter))
+        if (mirrorShown && mirrorWanted) ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = visible && resumed,
             revision = mirrorRevision)
     }
 }
@@ -1773,6 +1768,60 @@ private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visi
                 val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
                 Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
                     .background(Color(0xFFFF0033)))
+            }
+        }
+    }
+}
+
+/**
+ * Lightweight stand-in for the phone copy (unsupported WebView, crashed or heat-suspended renderer):
+ * artwork, title and the transport controls of the one engine. Android Auto is untouched.
+ */
+@Composable
+private fun MirrorFallback(snap: Snap, reason: PhoneMirrorPolicy.Fallback, large: Boolean, modifier: Modifier) {
+    var tick by remember { mutableStateOf(0) }
+    val loader = remember { MediaArtworkLoader { tick++ } }
+    DisposableEffect(loader) { onDispose { loader.shutdown() } }
+    val url = MediaArtworkLoader.urlFor(snap.art, snap.id)
+    LaunchedEffect(url) { loader.request(url) }
+    val art = if (tick >= 0) loader.bitmapFor(url) else null
+    val note = when (reason) {
+        PhoneMirrorPolicy.Fallback.UNSUPPORTED -> "Phone video isn't available on this device"
+        PhoneMirrorPolicy.Fallback.FAILED -> "Phone video stopped"
+        PhoneMirrorPolicy.Fallback.SUSPENDED -> "Phone video paused to keep playback smooth"
+        PhoneMirrorPolicy.Fallback.NONE -> ""
+    }
+    androidx.compose.material3.Surface(
+        modifier.padding(12.dp).zIndex(12f),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        tonalElevation = 6.dp,
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (art != null) {
+                androidx.compose.foundation.Image(art.asImageBitmap(), contentDescription = null,
+                    modifier = Modifier.size(if (large) 96.dp else 48.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f, fill = false)) {
+                Text(snap.title.ifBlank { "Playing on Android Auto" }, maxLines = 1,
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(note, maxLines = 1, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            androidx.compose.material3.IconButton(onClick = { WebHost.cmd("prev") }, enabled = snap.canPrev) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous")
+            }
+            androidx.compose.material3.IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") }) {
+                Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (snap.playing) "Pause" else "Play")
+            }
+            androidx.compose.material3.IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.canNext) {
+                Icon(Icons.Filled.SkipNext, contentDescription = "Next")
+            }
+            if (PhoneMirrorPolicy.canRetry(reason)) {
+                androidx.compose.material3.TextButton(onClick = { PhoneMirror.retry() }) { Text("Retry") }
             }
         }
     }

@@ -281,6 +281,9 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
 
     private val selections = SelectionDeduper()
 
+    /** Sign-out, Quit: selection guards never carry over. */
+    open fun resetSelectionGuards() { selections.reset() }
+
     fun openInPlayer(url: String) {
         // Also called by the page script (AAYBrowse.open): accept only YouTube video links.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
@@ -291,7 +294,9 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         // The page bridge, shouldOverrideUrlLoading and doUpdateVisitedHistory
         // can all report one tap. Only the first selection reaches the player.
         val id = uri.getQueryParameter("v") ?: uri.lastPathSegment.takeIf { uri.host.equals("youtu.be", true) }
-        if (!selections.accept(SelectionDeduper.key(uri.path.orEmpty(), id, uri.getQueryParameter("list")),
+        // Same identity as the player: video, playlist and requested start position.
+        val startMs = TimestampParam.parseMs(uri.getQueryParameter("t") ?: uri.getQueryParameter("start"))
+        if (!selections.accept(SelectionDeduper.key(uri.path.orEmpty(), id, uri.getQueryParameter("list"), startMs),
                 SystemClock.elapsedRealtime())) return
         main.post {
             AppLog.add("NAV", "Browse page opened a video")
@@ -321,6 +326,11 @@ object BrowseHost : BrowseSession() {
         phone.applyFeatures(f, desktopChanged)
         PhoneMirror.applyFeatures(f, desktopChanged)
     }
+    override fun resetSelectionGuards() {
+        super.resetSelectionGuards()
+        phone.resetSelectionGuards()
+    }
+
     override fun onSessionCleared() {
         super.onSessionCleared()
         phone.onSessionCleared()

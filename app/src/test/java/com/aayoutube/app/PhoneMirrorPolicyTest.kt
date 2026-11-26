@@ -144,32 +144,6 @@ class PhoneMirrorPolicyTest {
 
     // ------------------------------------------------------------ round 2
 
-    @Test fun bridgeAcceptsOnlyTheRightTokenAndKnownActions() {
-        val got = mutableListOf<String>()
-        val b = MirrorBridge("secret", { true }) { a, _ -> got += a }
-        b.control("pause", 0.0, "wrong")
-        b.control("pause", 0.0, null)
-        b.control("evil", 0.0, "secret")
-        b.control("next", 0.0, "secret")
-        b.control("prev", 0.0, "secret")
-        b.control("seek", 12_345.0, "secret")
-        assertEquals(listOf("next", "prev", "seek"), got)
-        assertTrue("hidden documents start stopped", b.hidden())
-        assertFalse(MirrorBridge("s", { false }) { _, _ -> }.hidden())
-    }
-
-    @Test fun phoneGivesWayToThePrimaryPlayerUnderLoadAndRestoresOnlyWhenCalm() {
-        val g = QualityGovernor(10_000)
-        assertFalse(g.degraded(false, 0))
-        assertTrue("primary buffering", g.degraded(true, 1_000))
-        assertTrue("still within the calm period", g.degraded(false, 8_000))
-        assertFalse("calm for long enough", g.degraded(false, 11_001))
-        assertTrue(PhoneMirrorPolicy.degradeForHeat(2))
-        assertFalse(PhoneMirrorPolicy.degradeForHeat(1))
-        assertTrue(PhoneMirrorPolicy.suspendForHeat(3))
-        assertFalse(PhoneMirrorPolicy.suspendForHeat(2))
-    }
-
     @Test fun intervalStatsRollButCrashesStayCumulative() {
         val s = MirrorSyncStats()
         s.record(SyncResult(200, "ok")); s.crashes = 2; s.recoveries = 1; s.timeouts = 3
@@ -197,5 +171,179 @@ class PhoneMirrorPolicyTest {
             java.io.File("../app/src/main/java/com/aayoutube/app/PhoneMirror.kt")).first { it.isFile }.readText()
         assertFalse("no late script injection after the page has started", mirror.contains("view.evaluateJavascript(script()"))
         assertFalse("no generic audio-configuration claim", mirror.contains("activePlaybackConfigurations"))
+    }
+
+    // ------------------------------------------------------------ round 3
+
+    private fun bridge(got: MutableList<String>, intents: MutableList<String> = mutableListOf(), hidden: Boolean = true) =
+        MirrorBridge("secret", { hidden }, { a, _, _ -> got += a }, { intents += it })
+
+    @Test fun bridgeRejectsStaleDocumentsWrongTokensAndBadValues() {
+        val got = mutableListOf<String>()
+        val b = bridge(got)
+        assertEquals("wrong token cannot register a document", 0, b.open("nope"))
+        val doc1 = b.open("secret")
+        b.control("pause", 0.0, "wrong", doc1, 1.0, "AAAAAAAAAAA")
+        b.control("evil", 0.0, "secret", doc1, 2.0, "AAAAAAAAAAA")
+        b.control("pause", Double.NaN, "secret", doc1, 3.0, "AAAAAAAAAAA")
+        b.control("seek", -5.0, "secret", doc1, 4.0, "AAAAAAAAAAA")
+        b.control("seek", 1e15, "secret", doc1, 5.0, "AAAAAAAAAAA")
+        assertTrue(got.isEmpty())
+        b.control("seek", 12_345.0, "secret", doc1, 6.0, "AAAAAAAAAAA")
+        b.control("pause", 0.0, "secret", doc1, 6.0, "AAAAAAAAAAA")   // repeated sequence number
+        b.control("pause", 0.0, "secret", doc1, 5.0, "AAAAAAAAAAA")   // out of order
+        assertEquals(listOf("seek"), got)
+        // A new document supersedes the old one: its delayed commands no longer pass.
+        val doc2 = b.open("secret")
+        b.control("play", 0.0, "secret", doc1, 7.0, "AAAAAAAAAAA")
+        assertEquals(listOf("seek"), got)
+        b.control("next", 0.0, "secret", doc2, 1.0, "BBBBBBBBBBB")
+        assertEquals(listOf("seek", "next"), got)
+    }
+
+    @Test fun bridgeStartsNewDocumentsStoppedWhileHiddenAndAcceptsLinkIntentsOfTheCurrentDocument() {
+        val intents = mutableListOf<String>()
+        val b = bridge(mutableListOf(), intents, hidden = true)
+        assertTrue(b.hidden())
+        assertFalse(bridge(mutableListOf(), hidden = false).hidden())
+        val doc = b.open("secret")
+        b.intent("https://m.youtube.com/watch?v=BBBBBBBBBBB", "secret", doc + 1)
+        b.intent("https://m.youtube.com/watch?v=BBBBBBBBBBB", "bad", doc)
+        assertTrue(intents.isEmpty())
+        b.intent("https://m.youtube.com/watch?v=BBBBBBBBBBB", "secret", doc)
+        assertEquals(1, intents.size)
+    }
+
+    @Test fun navigationIsAuthorisedByWhatWasChosenAndOnlyOnce() {
+        val n = NavAuthorizer()
+        n.onTap(1_000)
+        n.onIntent("BBBBBBBBBBB", 1_010)
+        assertFalse("automatic navigation to another video", n.authorize("CCCCCCCCCCC", 1_500))
+        assertTrue("the chosen video", n.authorize("BBBBBBBBBBB", 1_600))
+        assertFalse("consumed", n.authorize("BBBBBBBBBBB", 1_700))
+        n.onTap(5_000)
+        assertTrue("a bare tap is a short fallback", n.authorize("DDDDDDDDDDD", 5_300))
+        n.onTap(9_000)
+        assertFalse("too late", n.authorize("DDDDDDDDDDD", 9_900))
+        n.onTap(12_000); n.onIntent(null, 12_005)      // Home / Search link
+        assertFalse(n.authorize("EEEEEEEEEEE", 12_100))
+        assertTrue(n.authorize(null, 12_200))
+        n.onTap(20_000); n.reset()
+        assertFalse("page change clears authorisation", n.authorize("FFFFFFFFFFF", 20_100))
+    }
+
+    @Test fun repeatedTransportCommandsAreForwardedOnce() {
+        val g = TransportGuard(500)
+        assertTrue(g.accept("next", 0))
+        assertFalse(g.accept("next", 200))
+        assertTrue("a different command", g.accept("prev", 250))
+        assertTrue("later again", g.accept("prev", 900))
+    }
+
+    @Test fun phoneCopyIsSuspendedByHeatOrSustainedBufferingAndReturnsOnlyWhenCalm() {
+        val g = MirrorLoadGate(stableMs = 10_000, bufferingSuspendMs = 8_000)
+        assertEquals(MirrorLoadGate.State.NORMAL, g.update(0, false, 0))
+        assertEquals("brief buffering only lowers quality", MirrorLoadGate.State.DEGRADED, g.update(0, true, 1_000))
+        assertEquals(MirrorLoadGate.State.DEGRADED, g.update(0, true, 8_000))
+        assertEquals("sustained buffering suspends", MirrorLoadGate.State.SUSPENDED, g.update(0, true, 9_500))
+        assertEquals("not yet calm", MirrorLoadGate.State.SUSPENDED, g.update(0, false, 15_000))
+        assertEquals("calm 10s: degrade first", MirrorLoadGate.State.DEGRADED, g.update(0, false, 19_600))
+        assertEquals("and only then normal", MirrorLoadGate.State.NORMAL, g.update(0, false, 30_000))
+        assertEquals("severe heat", MirrorLoadGate.State.SUSPENDED, g.update(3, false, 31_000))
+        assertEquals(MirrorLoadGate.State.SUSPENDED, g.update(1, false, 35_000))
+        g.reset()
+        assertEquals("teardown clears the governor", MirrorLoadGate.State.NORMAL, g.update(0, false, 36_000))
+        assertEquals(MirrorLoadGate.State.DEGRADED, g.update(2, false, 37_000))
+    }
+
+    @Test fun clockSamplesAreCompensatedForLatencyAndOldOnesDropped() {
+        assertEquals(10_000L, PhoneMirrorPolicy.compensatedPosMs(10_000, false, 1.0, 0, 400))
+        assertEquals("playing: half the round trip", 10_200L, PhoneMirrorPolicy.compensatedPosMs(10_000, true, 1.0, 0, 400))
+        assertEquals("speed counts", 10_400L, PhoneMirrorPolicy.compensatedPosMs(10_000, true, 2.0, 0, 400))
+        assertNull("too old", PhoneMirrorPolicy.compensatedPosMs(10_000, true, 1.0, 0, 2_000))
+        assertNull("clock went backwards", PhoneMirrorPolicy.compensatedPosMs(10_000, true, 1.0, 500, 100))
+    }
+
+    @Test fun identityIsTheSameForWatchLiveAndShortsRoutes() {
+        assertEquals("abcdefghijk", PhoneMirrorPolicy.videoId("/watch", "abcdefghijk"))
+        assertEquals("abcdefghijk", PhoneMirrorPolicy.videoId("/live/abcdefghijk", null))
+        assertEquals("abcdefghijk", PhoneMirrorPolicy.videoId("/shorts/abcdefghijk/", null))
+        assertNull(PhoneMirrorPolicy.videoId("/results", null))
+        assertNull(PhoneMirrorPolicy.videoId("/watch", "bad&id"))
+        assertEquals("abcdefghijk", PhoneMirrorPolicy.videoIdFromUrl("https://m.youtube.com/watch?v=abcdefghijk&t=90#x"))
+        assertEquals("abcdefghijk", PhoneMirrorPolicy.videoIdFromUrl("https://m.youtube.com/shorts/abcdefghijk"))
+        assertNull(PhoneMirrorPolicy.videoIdFromUrl("https://m.youtube.com/results?search_query=a"))
+        assertNull(PhoneMirrorPolicy.videoIdFromUrl("https://m.youtube.com/"))
+        assertEquals(PhoneMirrorPolicy.Page.WATCH, PhoneMirrorPolicy.classify("/shorts/abcdefghijk"))
+    }
+
+    @Test fun onlyYouTubeFramesAreAllowedBecauseOnlyTheirOriginsGetTheMuteLock() {
+        assertTrue(PhoneMirrorPolicy.allowFrameHost("www.youtube.com"))
+        assertTrue(PhoneMirrorPolicy.allowFrameHost("youtube.com"))
+        assertFalse(PhoneMirrorPolicy.allowFrameHost("evilyoutube.com"))
+        assertFalse(PhoneMirrorPolicy.allowFrameHost("googleads.g.doubleclick.net"))
+        assertFalse(PhoneMirrorPolicy.allowFrameHost(null))
+        assertTrue(PhoneMirrorPolicy.isDocumentRequest("text/html,application/xhtml+xml"))
+        assertFalse(PhoneMirrorPolicy.isDocumentRequest("image/avif,image/webp,*/*"))
+        assertFalse(PhoneMirrorPolicy.isDocumentRequest(null))
+    }
+
+    @Test fun oneFallbackServesUnsupportedCrashedAndSuspendedStates() {
+        val none = PhoneMirrorPolicy.Fallback.NONE
+        assertEquals(none, PhoneMirrorPolicy.fallback(true, false, false))
+        assertEquals(PhoneMirrorPolicy.Fallback.UNSUPPORTED, PhoneMirrorPolicy.fallback(false, true, true))
+        assertEquals(PhoneMirrorPolicy.Fallback.FAILED, PhoneMirrorPolicy.fallback(true, true, true))
+        assertEquals(PhoneMirrorPolicy.Fallback.SUSPENDED, PhoneMirrorPolicy.fallback(true, false, true))
+        assertTrue("retry can help after a crash", PhoneMirrorPolicy.canRetry(PhoneMirrorPolicy.Fallback.FAILED))
+        assertFalse("retry cannot fix an unsupported WebView", PhoneMirrorPolicy.canRetry(PhoneMirrorPolicy.Fallback.UNSUPPORTED))
+        assertFalse("suspension ends by itself", PhoneMirrorPolicy.canRetry(PhoneMirrorPolicy.Fallback.SUSPENDED))
+    }
+
+    @Test fun syncResultsCarryTheDecodedHeightAndStatsReportIt() {
+        assertEquals(SyncResult(120, "ok", 360), SyncResult.parse("\"120|ok|360\""))
+        val s = MirrorSyncStats()
+        s.record(SyncResult(10, "ok", 360))
+        assertTrue(s.summary().contains("decodedHeightPx=360"))
+    }
+
+    @Test fun timeoutsMismatchesAndStaleAnswersAreWorthALogLine() {
+        listOf<(MirrorSyncStats) -> Unit>({ it.timeouts++ }, { it.mismatches++ }, { it.stale++ },
+            { it.suspensions++ }, { it.blockedFrames++ }).forEach {
+            val s = MirrorSyncStats()
+            assertTrue(s.isEmpty())
+            it(s)
+            assertFalse(s.isEmpty())
+        }
+        val s = MirrorSyncStats()
+        s.crashes = 2
+        assertFalse(s.summary(includeTotals = false).contains("crashes(total)"))
+        assertTrue(s.summary(includeTotals = true).contains("crashes(total)=2"))
+    }
+
+    @Test fun lifecycleContracts() {
+        fun read(name: String) = listOf(java.io.File("app/src/main/java/com/aayoutube/app/$name"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/$name")).first { it.isFile }.readText()
+        val mirror = read("PhoneMirror.kt")
+        // Idle release must not bump the revision (Compose would recreate the hidden renderer).
+        val idle = mirror.substringAfter("private val idleRelease").substringBefore("private fun refreshHidden()")
+        assertTrue(idle.contains("teardown()"))
+        assertFalse(idle.contains("revision.value++"))
+        // Heat/primary-health check happens before anything is loaded or synchronised.
+        val tick = mirror.substringAfter("private val syncTick").substringBefore("private fun enterSuspension")
+        assertTrue(tick.indexOf("gate.update(") in 0 until tick.indexOf("load(w, s, now)"))
+        // Teardown clears session state and the governor.
+        val teardown = mirror.substringAfter("private fun teardown()").substringBefore("/** Load the engine's video")
+        assertTrue(teardown.contains("gate.reset()"))
+        assertTrue(teardown.contains("suspended.value = false"))
+        assertTrue(teardown.contains("nav.reset()"))
+        // Sign-out stops the copy and clears selection guards before data is cleared, renderer or not.
+        val signOut = mirror.substringAfter("fun beginSignOut()").substringBefore("fun onSessionCleared()")
+        assertTrue(signOut.contains("syncSeq++") && signOut.contains("WebHost.resetSelectionGuards()"))
+        assertTrue(read("WebHost.kt").substringAfter("fun clearSession()").substringBefore("youtubeAccount.value")
+            .contains("PhoneMirror.beginSignOut()"))
+        // Phone selections carry the requested start position like the player's.
+        assertTrue(read("BrowseHost.kt").contains("TimestampParam.parseMs(uri.getQueryParameter(\"t\")"))
+        // The pane composes the player only while it should be visible.
+        assertTrue(read("Screens.kt").contains("if (mirrorShown && mirrorWanted) ProjectedMirrorPlayer("))
     }
 }

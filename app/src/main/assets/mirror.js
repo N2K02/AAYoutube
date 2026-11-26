@@ -7,7 +7,7 @@
   window.__aayMuteInstalled = true;
   var TOKEN = window.__AAYM_TOKEN || '';
   var isTop = window.top === window.self;
-  var S = { stopped: false, ourUntil: 0 };
+  var S = { stopped: false };
   // A new document starts in the app's current visibility, not in "playing".
   try { var b0 = window.AAYMirror; if (b0 && b0.hidden) S.stopped = !!b0.hidden(); } catch (e) {}
 
@@ -43,26 +43,44 @@
     document.addEventListener(t, function (e) {
       silence(e.target);
       if (S.stopped && e.target && e.target.tagName === 'VIDEO' && !e.target.paused && t !== 'volumechange') {
-        S.ourUntil = Date.now() + 800;
         try { e.target.pause(); } catch (err) {}
       }
     }, true);
   });
   silence(document.querySelector && document.querySelector('video'));
+  function pauseAll() {
+    try { Array.prototype.forEach.call(document.querySelectorAll('video'), function (v) { if (!v.paused) v.pause(); }); } catch (e) {}
+  }
+  // Existing frames follow the top document's visibility (new ones ask the app when they start).
+  window.addEventListener('message', function (e) {
+    var d = e && e.data;
+    if (isTop || !d || typeof d.aayMirrorStopped !== 'boolean' || e.source !== window.parent) return;
+    S.stopped = d.aayMirrorStopped;
+    if (S.stopped) pauseAll();
+  });
   if (!isTop) return;
 
   var M = window.__aayMirror = S;
   M.videoOnly = false; M.lastId = ''; M.lastSeekAt = 0; M.quality = ''; M.qualityAt = 0; M.cap = '';
+  M.doc = 0; M.seq = 0;
+  // Every command names this document: a newer document invalidates the commands of older ones.
+  try { var bb = window.AAYMirror; if (bb && bb.open) M.doc = bb.open(TOKEN) || 0; } catch (e) {}
   var gestureAt = 0, auth = null, ourActAt = 0, lifted = [], layoutTimers = [], touchStart = null;
+  var lastTouchAuthAt = 0, lastVideoTapAt = 0, expectUntil = { play: 0, pause: 0, seek: 0 };
   var PLAYER_SEL = '.html5-video-player,#player-container-id,#player,ytm-player,ytm-watch-player,' +
     'ytm-player-component,#player-control-container,video';
   var SEEKBAR_SEL = '.ytp-progress-bar,.ytp-progress-bar-container,ytm-progress-bar,.progress-bar';
+  var PLAYBACK_SEL = 'video,.html5-video-container,.ytp-play-button,.ytp-large-play-button,' +
+    '.ytp-cued-thumbnail-overlay,button[aria-label*="Play" i],button[aria-label*="Pause" i],player-middle-controls';
   var NEXT_SEL = '.ytp-next-button,button[aria-label*="Next" i],[class*="next-button" i]';
   var PREV_SEL = '.ytp-prev-button,button[aria-label*="Previous" i],[class*="prev-button" i]';
 
   function bridge() { return window.AAYMirror || null; }
   function send(action, value) {
-    try { var b = bridge(); if (b) b.control(action, value || 0, TOKEN); } catch (e) {}
+    try {
+      var b = bridge();
+      if (b) b.control(action, isFinite(value) && value > 0 ? value : 0, TOKEN, M.doc, ++M.seq, currentVideoId());
+    } catch (e) {}
   }
   function vid() {
     return document.querySelector('video.html5-main-video') || document.querySelector('video');
@@ -74,59 +92,101 @@
     var p = player();
     return !!(p && p.classList && p.classList.contains('ad-showing'));
   }
+  // One identity rule for watch, live and Shorts; the player's own data wins over the URL.
   function currentVideoId() {
     try {
+      var p = player(), d = p && p.getVideoData && p.getVideoData();
+      if (d && d.video_id) return d.video_id;
       var q = new URLSearchParams(location.search).get('v');
       if (q) return q;
-      var m = /^\/live\/([\w-]{11})/.exec(location.pathname);
+      var m = /^\/(?:live|shorts)\/([\w-]{11})/.exec(location.pathname);
       return m ? m[1] : '';
     } catch (e) { return ''; }
   }
+  function anchorOf(t) {
+    try { return t && t.closest ? t.closest('a[href]') : null; } catch (e) { return null; }
+  }
+  function expectOwn(type) { expectUntil[type] = Date.now() + 2000; }
+  function ownEvent(type) {
+    if (expectUntil[type] && Date.now() < expectUntil[type]) { expectUntil[type] = 0; return true; }
+    return false;
+  }
+  function broadcast() {
+    try {
+      for (var i = 0; i < window.frames.length; i++) window.frames[i].postMessage({ aayMirrorStopped: !!M.stopped }, '*');
+    } catch (e) {}
+  }
 
-  // Each trusted gesture inside the player authorises ONE kind of action, once:
-  //   tap -> play/pause (and next/previous), seekbar -> seek. Consumed when used.
+  // A trusted gesture authorises ONE kind of event, once, on the media element it targeted:
+  //   video / play button -> play or pause; double tap on the video, or seek bar -> seek.
+  // Other controls (settings, captions, titles), scrolling and untrusted events authorise nothing.
   document.addEventListener('touchstart', function (e) {
     var t = e.touches && e.touches[0];
     touchStart = t ? { x: t.clientX, y: t.clientY } : null;
   }, { capture: true, passive: true });
-  function gesture(e, needTap) {
+  function gesture(e, isTouch) {
     if (!e.isTrusted || !closest(e.target, PLAYER_SEL)) return;
+    var now = Date.now();
     var bar = closest(e.target, SEEKBAR_SEL);
-    if (needTap && touchStart && e.changedTouches && e.changedTouches.length && !bar) {
+    if (!isTouch && now - lastTouchAuthAt < 700) { // the click of a touch already handled
+      forward(e);
+      return;
+    }
+    if (isTouch && touchStart && e.changedTouches && e.changedTouches.length && !bar) {
       var dx = e.changedTouches[0].clientX - touchStart.x, dy = e.changedTouches[0].clientY - touchStart.y;
       if (dx * dx + dy * dy > 24 * 24) return; // a scroll or swipe, not a control tap
     }
-    gestureAt = Date.now();
-    auth = { kind: bar ? 'seek' : 'tap', at: gestureAt };
-    if (!bar && e.type === 'click') {
-      if (closest(e.target, NEXT_SEL)) { auth = null; send('next', 0); }
-      else if (closest(e.target, PREV_SEL)) { auth = null; send('prev', 0); }
+    gestureAt = now;
+    if (isTouch) lastTouchAuthAt = now;
+    var kind = null;
+    if (bar) kind = 'seek';
+    else if (closest(e.target, NEXT_SEL) || closest(e.target, PREV_SEL)) kind = null;
+    else if (closest(e.target, PLAYBACK_SEL)) {
+      var onVideo = closest(e.target, 'video,.html5-video-container');
+      kind = onVideo && now - lastVideoTapAt < 400 ? 'seek' : 'tap'; // double tap seeks
+      if (onVideo) lastVideoTapAt = now;
     }
+    auth = kind ? { kind: kind, at: now, video: vid() } : null;
+    if (!isTouch) forward(e);
   }
+  /** Click only: Next/Previous go to the engine once, and a clicked link names what the user chose. */
+  function forward(e) {
+    if (e.type !== 'click') return;
+    if (closest(e.target, NEXT_SEL)) { auth = null; send('next', 0); return; }
+    if (closest(e.target, PREV_SEL)) { auth = null; send('prev', 0); return; }
+  }
+  // A clicked link (anywhere on the page) names what the user chose, so only that destination is accepted.
+  document.addEventListener('click', function (e) {
+    if (!e.isTrusted) return;
+    try {
+      var a = anchorOf(e.target), b = bridge();
+      if (a && a.href && b && b.intent) b.intent(String(a.href), TOKEN, M.doc);
+    } catch (err) {}
+  }, true);
   document.addEventListener('click', function (e) { gesture(e, false); }, true);
   document.addEventListener('touchend', function (e) { gesture(e, true); }, true);
 
-  // The event must follow its gesture, after our own last programmatic action, within the window.
-  function userAction(kind, windowMs) {
+  // The event must follow its gesture, on the same element, after our own last action, within the window.
+  function userAction(kind, windowMs, v) {
     var now = Date.now();
-    if (!auth || auth.kind !== kind || now - auth.at >= windowMs || auth.at <= ourActAt) return false;
+    if (!auth || auth.kind !== kind || now - auth.at >= windowMs || auth.at <= ourActAt || auth.video !== v) return false;
     auth = null; // one gesture, one action
     return true;
   }
   document.addEventListener('pause', function (e) {
     var v = e.target;
-    if (!v || v.tagName !== 'VIDEO' || v.ended || adShowing() || M.stopped) return;
-    if (userAction('tap', 900)) send('pause', 0);
+    if (!v || v.tagName !== 'VIDEO' || v.ended || adShowing() || M.stopped || ownEvent('pause')) return;
+    if (userAction('tap', 900, v)) send('pause', 0);
   }, true);
   document.addEventListener('play', function (e) {
     var v = e.target;
-    if (!v || v.tagName !== 'VIDEO' || adShowing() || M.stopped) return;
-    if (userAction('tap', 900)) send('play', 0);
+    if (!v || v.tagName !== 'VIDEO' || adShowing() || M.stopped || ownEvent('play')) return;
+    if (userAction('tap', 900, v)) send('play', 0);
   }, true);
   document.addEventListener('seeked', function (e) {
     var v = e.target;
-    if (!v || v.tagName !== 'VIDEO' || adShowing() || M.stopped) return;
-    if (userAction('seek', 4000)) send('seek', Math.round(v.currentTime * 1000));
+    if (!v || v.tagName !== 'VIDEO' || adShowing() || M.stopped || ownEvent('seek')) return;
+    if (userAction('seek', 4000, v)) send('seek', Math.round(v.currentTime * 1000));
   }, true);
 
   // Swipe down on the video: the phone's mini-player (same gesture as the normal player).
@@ -169,7 +229,7 @@
     if (id && currentVideoId() !== id) return 'mismatch';
     if (adShowing()) return 'ad';
     if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
-    M.stopped = false;
+    if (M.stopped) { M.stopped = false; broadcast(); }
     if (Date.now() - gestureAt < 1500) return 'user'; // let the user's action reach the engine first
     if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; applyQuality(); }
     rate = rate > 0 ? rate : 1;
@@ -177,8 +237,9 @@
     var action = 'ok';
     ourActAt = Date.now();
     if (playing) {
-      if (v.paused) { try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+      if (v.paused) { expectOwn('play'); try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
     } else if (!v.paused) {
+      expectOwn('pause');
       v.pause();
     }
     // Hysteresis: only touch the media pipeline when really out of step.
@@ -187,20 +248,22 @@
       // Never seek while either player is seeking or buffering, nor stack seeks.
       if (!busy && !v.seeking && v.readyState >= 3 && Date.now() - M.lastSeekAt > 3000) {
         M.lastSeekAt = Date.now();
+        expectOwn('seek');
         v.currentTime = posMs / 1000;
         action = 'seek';
       } else {
         action = 'wait';
       }
     } else if (playing && Math.abs(drift) > 0.5) {
-      want = rate * (drift > 0 ? 0.95 : 1.05);
-      action = 'nudge';
+      // No rate correction while either player is buffering or seeking: the drift is not real yet.
+      if (busy || v.seeking || v.readyState < 3) { action = 'wait'; want = v.playbackRate; }
+      else { want = rate * (drift > 0 ? 0.95 : 1.05); action = 'nudge'; }
     } else if (playing && v.playbackRate !== rate && Math.abs(drift) > 0.15) {
       want = v.playbackRate; // keep nudging until close, then settle
       action = 'nudge';
     }
     if (v.playbackRate !== want) v.playbackRate = want;
-    return String(Math.round(drift * 1000)) + '|' + action;
+    return String(Math.round(drift * 1000)) + '|' + action + '|' + (v.videoHeight || 0);
   };
 
   /** Hidden: stop decoding and keep YouTube from restarting playback. */
@@ -208,9 +271,9 @@
     M.stopped = true;
     var v = vid();
     ourActAt = Date.now();
-    S.ourUntil = Date.now() + 800;
     auth = null;
-    if (v && !v.paused) v.pause();
+    broadcast();
+    if (v && !v.paused) { expectOwn('pause'); v.pause(); }
   };
 
   // Mini-player / PiP: only the video, filling the small WebView.
@@ -301,6 +364,7 @@
     try {
       var p = player();
       if (!p || !p.setPlaybackQualityRange) return;
+      if (p !== M.qualityPlayer) { M.qualityPlayer = p; M.quality = ''; } // a replaced player starts unlimited
       var want = wantedQuality();
       var cur = p.getPlaybackQuality ? p.getPlaybackQuality() : M.quality;
       if (cur === want && M.quality === want) return;
