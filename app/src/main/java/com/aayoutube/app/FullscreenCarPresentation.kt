@@ -392,7 +392,7 @@ internal class FullscreenCarPresentation(
 
         val displayCtx = projectionContext(frame)
 
-        val player = WebHost.attachToCarWindow(displayCtx, frame)
+        val player = WebHost.attachToCarWindow(displayCtx, frame) { bindWebView() }
         CarPhonePreview.bind(carToken, window, frame)
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()

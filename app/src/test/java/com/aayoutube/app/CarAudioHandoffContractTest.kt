@@ -17,7 +17,7 @@ class CarAudioHandoffContractTest {
         assertFalse(handoff.contains("recreateRenderer("))
         assertFalse(handoff.contains("loadUrl("))
         assertTrue(web.contains("if (!carShown && !carAudioRetained.value) webVersion.update"))
-        assertTrue(web.contains("state.posMs > modeHandoffPosition"))
+        assertTrue(web.contains("modeMeter.onState("))
         assertTrue(web.contains("rendererRecreated="))
         assertTrue(read("Screens.kt").contains("if ((projectedToCar || audioRetained) && !onCar)"))
     }

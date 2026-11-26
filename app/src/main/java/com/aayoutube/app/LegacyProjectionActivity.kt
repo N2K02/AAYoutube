@@ -299,7 +299,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
             ({ gesture: CarVideoGesture ->
                 AppLog.add("CAR", "Experimental passive car gesture=" + gesture.name)
             }) else null
-        val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame)
+        val player = WebHost.attachToCarWindow(projectionContext(frame.context, frame), frame) {
+            if (carStarted && WebHost.isActiveCarHost(carToken)) bindVideoToCarFrame(frame)
+        }
         if (frame.childCount != 1 || frame.getChildAt(0) !== player) {
             frame.removeAllViews()
             frame.addView(player, FrameLayout.LayoutParams(-1, -1))

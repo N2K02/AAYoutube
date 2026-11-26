@@ -126,7 +126,7 @@ class MainActivity : ComponentActivity() {
         resumed += this
         if (!isInPictureInPictureMode) {
             WebHost.setHold(false)
-            if (!WebHost.carShown) WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
+            if (!WebHost.phonePreviewOnly) WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
         }
         LiveUpdater.onResume(this)
         AndroidAutoInstallHelp.refreshInstalledApps()
@@ -233,7 +233,7 @@ class MainActivity : ComponentActivity() {
         // SourceRectHint controls the transition animation, not the desired
         // floating window size. Never feed it a rect measured *inside* PiP:
         // that can keep shrinking the hint across state updates.
-        if (!WebHost.carShown && !isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
+        if (!WebHost.phonePreviewOnly && !isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
             builder.setSourceRectHint(bounds)
         if (Build.VERSION.SDK_INT >= 31) {
             builder.setAutoEnterEnabled(
@@ -263,9 +263,9 @@ class MainActivity : ComponentActivity() {
             WebHost.isOnWatchPage() && onPhoneScreen()) {
             // Capture full-player bounds BEFORE PiP CSS mutates the page.
             val params = pipParams()
-            if (!WebHost.carShown) WebHost.pip(true)
+            if (!WebHost.phonePreviewOnly) WebHost.pip(true)
             val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
-            if (!entered && !WebHost.carShown) WebHost.pip(false)
+            if (!entered && !WebHost.phonePreviewOnly) WebHost.pip(false)
         }
     }
 
@@ -277,7 +277,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        if (WebHost.carShown || previewPip.value) {
+        // Car projection or audio retention: the phone PiP shows only a preview/artwork.
+        // It must never switch the detached shared page into PiP layout.
+        if (WebHost.phonePreviewOnly || previewPip.value) {
             previewPip.value = isInPictureInPictureMode
             AppLog.add("VIEW", "Phone-only projected preview PiP=$isInPictureInPictureMode")
             return

@@ -15,8 +15,10 @@ class BackgroundDomPerformanceContractTest {
         val tick = script.substringAfter("function tick() {").substringBefore("function schedTick()")
         assertTrue(tick.contains("if (v) bind(v);"))
         assertTrue(tick.contains("if (v && !BROWSE && A.applyQuality) A.applyQuality();"))
-        assertTrue(tick.contains("if (A.isBg && !A.inPip && !A.isCar) return;"))
-        assertTrue(tick.indexOf("if (A.isBg && !A.inPip && !A.isCar) return;") < tick.indexOf("skipAd();"))
+        val guard = "if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;"
+        assertTrue(tick.contains(guard))
+        assertTrue(tick.indexOf(guard) < tick.indexOf("skipAd();"))
+        assertTrue("media binding precedes the visual guard", tick.indexOf("if (v) bind(v);") < tick.indexOf(guard))
     }
 
     @Test fun backgroundSkipsRedundantUiPositionReports() {
@@ -35,7 +37,7 @@ class BackgroundDomPerformanceContractTest {
         assertTrue(script.contains("if (wasBg && !A.isBg) schedTick();"))
         assertTrue(script.contains("setInterval(backgroundWatchdog, 5000)"))
         assertTrue(script.contains("setInterval(sendLyricClock, 250)"))
-        assertTrue(script.contains("(A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800"))
+        assertTrue(script.contains("((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) ? 12000 : 1800"))
         assertTrue(script.contains("Date.now() - lastNonCriticalDomAt >= 8000"))
     }
 }

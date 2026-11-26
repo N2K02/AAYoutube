@@ -159,49 +159,64 @@ object WebHost {
     private var skipTraceOrigin = ""
     private var skipTraceStartedAt = 0L
     private var modeHandoffStartedAt = 0L
-    private var modeHandoffDirection = ""
-    private var modeHandoffVideoId = ""
-    private var modeHandoffPosition = 0L
-    private var modeHandoffGeneration = 0
-    private var modeHandoffBuffered = false
+    private val modeMeter = ModeTransitionMeter()
+    /** The main renderer keeps playing (audio) after its last car window closed. */
     val carAudioRetained = MutableStateFlow(false)
+    /** The retained renderer is in no window: the next car bind may reuse it. */
+    private var retainedRendererDetached = false
 
     private fun beginModeHandoff(toVideo: Boolean) {
         val state = snapshot.value
-        modeHandoffStartedAt = SystemClock.elapsedRealtime()
-        modeHandoffDirection = if (toVideo) "Music/phone->Video" else "Video->Music/background"
-        modeHandoffVideoId = state.id
-        modeHandoffPosition = state.posMs
-        modeHandoffGeneration = webGeneration
-        modeHandoffBuffered = false
-        AppLog.add("CAR", "Mode handoff start direction=$modeHandoffDirection positionMs=$modeHandoffPosition generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
+        val now = SystemClock.elapsedRealtime()
+        modeHandoffStartedAt = now
+        val direction = if (toVideo) "Music->Video" else "Video->Music"
+        modeMeter.start(direction, state.id, state.posMs, webGeneration, state.playing, now)
+        AppLog.add("CAR", "Mode handoff start direction=$direction positionMs=${state.posMs} " +
+            "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
     }
 
     private fun reportModeHandoff(state: Snap) {
-        if (modeHandoffStartedAt == 0L) return
-        val elapsed = SystemClock.elapsedRealtime() - modeHandoffStartedAt
-        if (state.id != modeHandoffVideoId || state.userPaused || state.ended || elapsed > 30_000L) {
-            AppLog.add("CAR", "Mode handoff cancelled direction=$modeHandoffDirection elapsedMs=$elapsed")
-            modeHandoffStartedAt = 0L
-            return
+        if (!modeMeter.running) return
+        when (val e = modeMeter.onState(state.id, state.playing, state.buffering, state.userPaused,
+            state.ended, state.posMs, webGeneration, SystemClock.elapsedRealtime())) {
+            is ModeTransitionMeter.Event.Buffering ->
+                AppLog.add("CAR", "Mode handoff buffering direction=${e.direction} elapsedMs=${e.elapsedMs}")
+            is ModeTransitionMeter.Event.Completed -> {
+                modeHandoffStartedAt = 0L
+                AppLog.add("CAR", "Mode handoff complete direction=${e.direction} elapsedMs=${e.elapsedMs} " +
+                    "interruptionMs=${e.interruptionMs} bufferingMs=${e.bufferingMs} " +
+                    "rendererRecreated=${e.rendererRecreated} positionMs=${state.posMs}")
+            }
+            is ModeTransitionMeter.Event.Cancelled -> {
+                modeHandoffStartedAt = 0L
+                AppLog.add("CAR", "Mode handoff cancelled direction=${e.direction} elapsedMs=${e.elapsedMs} reason=${e.reason}")
+            }
+            null -> Unit
         }
-        if (state.buffering && !modeHandoffBuffered) {
-            modeHandoffBuffered = true
-            AppLog.add("CAR", "Mode handoff buffering direction=$modeHandoffDirection elapsedMs=$elapsed positionMs=${state.posMs}")
-        }
-        // A transient playing callback is not proof that the media clock advanced.
-        if (state.playing && !state.buffering && state.posMs > modeHandoffPosition) {
-            AppLog.add("CAR", "Mode handoff playback advancing direction=$modeHandoffDirection elapsedMs=$elapsed positionMs=${state.posMs} rendererRecreated=${webGeneration != modeHandoffGeneration} buffered=$modeHandoffBuffered")
-            modeHandoffStartedAt = 0L
-        }
+    }
+
+    /** Leave audio-retention: the phone (or nothing) owns the renderer again. */
+    private fun endAudioRetention(reason: String, reattachPhone: Boolean) {
+        if (!carAudioRetained.value && !retainedRendererDetached) return
+        carAudioRetained.value = false
+        retainedRendererDetached = false
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(false)")
+        AppLog.add("CAR", "Audio retention ended: $reason")
+        if (reattachPhone && !carShown) webVersion.update { it + 1 }
+        refreshBackgroundQuality()
     }
 
     fun restorePhoneVideo() {
         if (!carAudioRetained.value || carShown) return
-        carAudioRetained.value = false
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(false)")
-        AppLog.add("CAR", "Phone video explicitly requested; releasing audio-only renderer retention")
-        webVersion.update { it + 1 }
+        endAudioRetention("phone video explicitly requested", reattachPhone = true)
+    }
+
+    /** Android Auto disconnected: nothing can show the retained car renderer any more. */
+    fun onCarDisconnected() {
+        if (carShown) return
+        if (carAudioRetained.value || retainedRendererDetached)
+            endAudioRetention("Android Auto disconnected", reattachPhone = true)
+        BrowseHost.phoneMode.value = PlayerMode.FULL
     }
     private fun traceTransport(command: String, expected: String? = null) {
         val serial = ++skipTraceSerial
@@ -294,11 +309,27 @@ object WebHost {
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
+    /** The phone shows a preview of the car player (or its retained audio), not the page. */
+    val phonePreviewOnly: Boolean get() = carShown || carAudioRetained.value
 
     fun init(application: Application) {
         app = application
         lastDesktop = Features.current.desktopSite
         scope.launch { Features.state.drop(1).collect { applyFeatures(it) } }
+        watchCarConnection(application)
+    }
+
+    private var carConnectionType = -1
+    /** Android Auto disconnect ends audio retention: no car can show that renderer again. */
+    private fun watchCarConnection(application: Application) {
+        runCatching {
+            androidx.car.app.connection.CarConnection(application).type.observeForever { type ->
+                val previous = carConnectionType
+                carConnectionType = type
+                AppLog.add("CAR", "Car connection type=$type previous=$previous")
+                if (CarConnectionPolicy.disconnected(previous, type)) onCarDisconnected()
+            }
+        }.onFailure { AppLog.add("CAR", "Car connection watch unavailable: " + it.javaClass.simpleName) }
     }
 
     // ---------------------------------------------------------------- the WebView
@@ -411,7 +442,11 @@ object WebHost {
         s.builtInZoomControls = true
         s.displayZoomControls = false
         s.useWideViewPort = true
-        s.loadWithOverviewMode = true
+        // On the car display overview mode zooms YouTube's mobile Home out to a
+        // tiny desktop-like width, and a stray pinch zoom sticks; keep 1:1 there.
+        val car = webDisplayId != Display.DEFAULT_DISPLAY
+        s.loadWithOverviewMode = !car
+        if (car) s.setSupportZoom(false)
         // Refuse HTTP subresources on authenticated HTTPS pages.
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         w.isFocusable = true
@@ -515,6 +550,7 @@ object WebHost {
         }
         // A phone/background screen now owns the renderer, not a car window.
         carWindowId = null
+        retainedRendererDetached = false
         AppLog.add("VIEW", "WebView attach display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1))
         return w
@@ -529,21 +565,86 @@ object WebHost {
      * into; any other display or car window gets a fresh renderer at the same
      * video position and play state.
      */
-    fun attachToCarWindow(context: Context, frame: ViewGroup): WebView {
+    fun attachToCarWindow(context: Context, frame: ViewGroup, rebind: (() -> Unit)? = null): WebView {
         val targetDisplay = displayId(context)
         val targetWindow = frame.windowToken?.let { System.identityHashCode(it) }
-        val reason = if (web == null) null else PlayerDisplayPolicy.carRecreateReason(
-            webDisplayId, targetDisplay, carWindowId, targetWindow)
+        val forced = forcedCarRecreate
+        forcedCarRecreate = null
+        // A retained (audio-only) renderer is in no window: reuse it with its buffers.
+        val detachedReuse = web != null && retainedRendererDetached && web?.parent == null
+        val reason = if (web == null) null else CarRendererReusePolicy.reason(
+            webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced)
+        val reused = reason == null && detachedReuse && carWindowId != null && carWindowId != targetWindow
+        retainedRendererDetached = false
         if (reason != null) recreateRenderer(context, targetDisplay ?: -1, reason)
         val w = ensureWeb(context)
         val sameBinding = w.parent === frame && carWindowId == targetWindow && reason == null
         if (w.parent !== frame) (w.parent as? ViewGroup)?.removeView(w)
         carWindowId = targetWindow
+        if (rebind != null) carRebind = rebind
         if (!sameBinding) AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1) + " window=" +
             (targetWindow?.let { Integer.toHexString(it) } ?: "none") +
-            " renderer=" + (reason?.let { "new($it)" } ?: "kept"))
+            " renderer=" + (reason?.let { "new($it)" } ?: if (reused) "reused(retained)" else "kept"))
+        if (reused) {
+            w.onResume(); w.resumeTimers(); w.invalidate()
+            scheduleCarRenderVerify()
+        }
         return w
+    }
+
+    private var forcedCarRecreate: String? = null
+    private var carRebind: (() -> Unit)? = null
+    private var lastCarRenderRecoveryAt = 0L
+    private var carVerifySamples = 0
+    private var carBlackSamples = 0
+    private var carVerifyGeneration = 0
+    private var carVerifyLastPos = -1L
+    private val carRenderVerify: Runnable = object : Runnable {
+        override fun run() {
+            val w = web ?: return
+            if (!carShown || carVerifyGeneration != webGeneration) return
+            // The real media clock, not the sparse snapshot reports.
+            w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
+                "document.querySelector('video');return v?Math.round(v.currentTime*1000):-1})()") { raw ->
+                val clock = raw?.trim()?.toLongOrNull() ?: -1L
+                sampleCarRender(clock)
+            }
+        }
+    }
+    private fun sampleCarRender(clockMs: Long) {
+        if (!carShown || carVerifyGeneration != webGeneration) return
+        val s = snapshot.value
+        val advancing = clockMs >= 0 && carVerifyLastPos >= 0 && clockMs > carVerifyLastPos
+        carVerifyLastPos = clockMs
+        scope.launch {
+            val dark = CarPhonePreview.darkPercent()
+            if (!carShown || carVerifyGeneration != webGeneration) return@launch
+            val black = CarRendererReusePolicy.blackSample(dark, s.playing, s.buffering, advancing)
+            carBlackSamples = if (black) carBlackSamples + 1 else 0
+            carVerifySamples++
+            AppLog.add("CAR", "Reused renderer check sample=$carVerifySamples dark=${dark ?: -1}% " +
+                "playing=${s.playing} advancing=$advancing black=$black")
+            val now = SystemClock.elapsedRealtime()
+            if (CarRendererReusePolicy.shouldRecover(carBlackSamples, now, lastCarRenderRecoveryAt)) {
+                lastCarRenderRecoveryAt = now
+                carBlackSamples = 0
+                AppLog.add("CAR", "Reused renderer paints black: safe renderer recovery")
+                forcedCarRecreate = "window-black"
+                carRebind?.invoke()
+            } else if (carVerifySamples < CarRendererReusePolicy.MAX_VERIFY_SAMPLES ||
+                (carBlackSamples > 0 && carVerifySamples < CarRendererReusePolicy.MAX_VERIFY_SAMPLES + 2)) {
+                main.postDelayed(carRenderVerify, CarRendererReusePolicy.VERIFY_DELAYS_MS)
+            } else AppLog.add("CAR", "Reused renderer check finished blackSamples=$carBlackSamples")
+        }
+    }
+    private fun scheduleCarRenderVerify() {
+        main.removeCallbacks(carRenderVerify)
+        carVerifySamples = 0
+        carBlackSamples = 0
+        carVerifyLastPos = -1L
+        carVerifyGeneration = webGeneration
+        main.postDelayed(carRenderVerify, CarRendererReusePolicy.VERIFY_DELAYS_MS)
     }
 
     fun claimCarHost(token: String, rebind: () -> Unit) {
@@ -785,6 +886,15 @@ object WebHost {
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
 
+    /** Seek the single shared player (phone remote, car, media session). */
+    fun seekTo(positionMs: Long) {
+        val s = snapshot.value
+        if (s.id.isBlank() || s.live || s.durMs <= 0L) return
+        val target = positionMs.coerceIn(0L, s.durMs)
+        cmd("seek", (target / 1000.0).toString())
+        snapshot.value = s.copy(posMs = target)
+    }
+
     fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
         // AABrowser exposes classic projection and wide surfaces independently.
         // A temporary car/phone handoff must not freeze or reset the shared player.
@@ -800,8 +910,10 @@ object WebHost {
             // Keep the live document and buffers after the final projected window closes.
             // The phone must not steal/recreate this renderer just to show its UI.
             carAudioRetained.value = true
+            retainedRendererDetached = true
             AppLog.add("CAR", "Retaining audio renderer on video exit; generation=$webGeneration")
         }
+        // retainedRendererDetached survives until the next car bind consumes it.
         if (carShown) carAudioRetained.value = false
         if (!carShown) setCarPage(false)
         if (alreadyProjected && !carShown) {
@@ -892,6 +1004,21 @@ object WebHost {
         val target = Uri.parse(destination)
         val playRoute = target.path == "/watch" && !target.getQueryParameter("v").isNullOrBlank()
         val explicitPaused = target.getQueryParameter("aay") == "paused"
+        val selectedId = target.getQueryParameter("v")
+        val selectedList = target.getQueryParameter("list")
+        val key = SelectionDeduper.key(target.path.orEmpty(), selectedId, selectedList)
+        if (!openDeduper.accept(key, SystemClock.elapsedRealtime())) {
+            AppLog.add("NAV", "Duplicate video selection ignored")
+            return
+        }
+        val currentList = runCatching { Uri.parse(web?.url.orEmpty()).getQueryParameter("list") }.getOrNull()
+        if (web != null && SelectedVideoReuse.reuse(snapshot.value.id, isOnWatchPage(), selectedId,
+                selectedList, currentList, explicitPaused)) {
+            // The same video is already loaded: keep its buffer instead of reloading the page.
+            AppLog.add("NAV", "Selected video already loaded: reusing player")
+            if (!snapshot.value.playing) cmd("play")
+            return
+        }
         val autoplayUrl = if (playRoute && !explicitPaused && target.getQueryParameter("aay") == null)
             target.buildUpon().appendQueryParameter("aay", "1").build().toString()
         else destination
@@ -905,6 +1032,7 @@ object WebHost {
     enum class PlayerMode { FULL, MINI, HIDDEN }
 
     val mode = MutableStateFlow(PlayerMode.FULL)
+    private val openDeduper = SelectionDeduper()
 
     fun isOnWatchPage(): Boolean {
         val route = runCatching { Uri.parse(web?.url.orEmpty()).path.orEmpty() }.getOrDefault("")
@@ -950,7 +1078,10 @@ object WebHost {
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
                 "frames=${metric("frames")} droppedPct=${d.optInt("droppedPct", -1).coerceIn(-1,100)} " +
                 "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
-                "codec=${codec.ifEmpty { "unknown" }} thermal=${thermalStatus()}")
+                "codec=${codec.ifEmpty { "unknown" }} thermal=${thermalStatus()} " +
+                "audioOnly=${d.optBoolean("audioOnly", false)} car=$carShown mode=${mode.value} " +
+                "javaHeapKb=${(Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }) / 1024} " +
+                "nativeHeapKb=${android.os.Debug.getNativeHeapAllocatedSize() / 1024}")
         }
     }
 
@@ -1252,7 +1383,12 @@ object WebHost {
         resetResumeBudget()
         cancelTransportTrace()
         modeHandoffStartedAt = 0L
+        modeMeter.cancel()
         carAudioRetained.value = false
+        retainedRendererDetached = false
+        forcedCarRecreate = null
+        carRebind = null
+        main.removeCallbacks(carRenderVerify)
         exitFullscreen()
         val w = web
         web = null

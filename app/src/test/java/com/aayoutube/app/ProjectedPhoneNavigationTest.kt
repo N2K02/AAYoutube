@@ -30,8 +30,10 @@ class ProjectedPhoneNavigationTest {
     @Test fun phonePipDoesNotChangeProjectedPlayer() {
         val activity = read("MainActivity.kt")
         val callback = activity.substringAfter("override fun onPictureInPictureModeChanged(")
-        assertTrue(callback.contains("if (WebHost.carShown || previewPip.value)"))
+        assertTrue(callback.contains("if (WebHost.phonePreviewOnly || previewPip.value)"))
         assertTrue(callback.indexOf("return") < callback.indexOf("WebHost.pip(isInPictureInPictureMode)"))
-        assertTrue(activity.contains("if (!WebHost.carShown) WebHost.pip(true)"))
+        assertTrue(activity.contains("if (!WebHost.phonePreviewOnly) WebHost.pip(true)"))
+        val web = read("WebHost.kt")
+        assertTrue(web.contains("val phonePreviewOnly: Boolean get() = carShown || carAudioRetained.value"))
     }
 }

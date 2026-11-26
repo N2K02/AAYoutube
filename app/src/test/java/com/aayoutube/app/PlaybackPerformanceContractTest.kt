@@ -14,7 +14,7 @@ class PlaybackPerformanceContractTest {
 
     @Test fun playerMutationWorkIsCoalescedInBackground() {
         val script = source("assets/aay.js")
-        assertTrue(script.contains("tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800)"))
+        assertTrue(script.contains("tickTimer = setTimeout(tick, ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) ? 12000 : 1800)"))
         assertFalse(script.contains("setTimeout(tick, 300)"))
         assertTrue(script.contains("setInterval(reportAccount, 30000)"))
         // Retain explicit playback event reporting instead of replacing it with slow polling.

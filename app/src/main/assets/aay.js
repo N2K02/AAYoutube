@@ -301,7 +301,12 @@
     console.log('[aay] car mode handoff started');
   };
   A.audioMode = function (on) {
-    A.audioOnly = !!on && !BROWSE;
+    var next = !!on && !BROWSE;
+    if (next === A.audioOnly) return;
+    A.audioOnly = next;
+    console.log('[aay] audio-only mode=' + next);
+    // Leaving audio-only: catch up with the DOM once (car/phone layout, ads, dialogs).
+    if (!next) { lastNonCriticalDomAt = 0; schedTick(); }
   };
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
@@ -1802,7 +1807,8 @@
       // Background audio still needs player bindings and quality recovery,
       // but visual DOM work is unnecessary when the phone is hidden.
       if (v && !BROWSE && A.applyQuality) A.applyQuality();
-      if (A.isBg && !A.inPip && !A.isCar) return;
+      // Hidden phone, or an audio-only renderer in no window: no visual DOM work.
+      if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;
       // Playback and ad handling stay responsive. Heavier noncritical UI
       // traversals run at most every 8 s despite YouTube's frequent mutations.
       skipAd();
@@ -1829,7 +1835,7 @@
     if (tickTimer) return;
     // Huawei/EMUI WebView pages can mutate constantly even while idle.
     // Coalesce expensive full-page traversals without changing immediate media events.
-    tickTimer = setTimeout(tick, (A.isBg && !A.inPip && !A.isCar) ? 12000 : 1800);
+    tickTimer = setTimeout(tick, ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) ? 12000 : 1800);
   }
 
   whenRoot(function () {
@@ -1875,7 +1881,7 @@
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier }), BRIDGE_TOKEN);
+          codec: codec, tier: tier, audioOnly: !!A.audioOnly }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;

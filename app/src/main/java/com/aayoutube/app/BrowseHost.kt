@@ -80,6 +80,9 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         if (mine) wrapper?.setBaseContext(app)
     }
 
+    fun canGoBack(): Boolean = web?.canGoBack() == true
+    fun isAt(url: String): Boolean = BrowseNavigation.sameDestination(web?.url, url)
+
     /** Back inside the browse page; false when it has no history. */
     fun goBack(): Boolean {
         val w = web ?: return false
@@ -136,11 +139,15 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
     /** Called when the mini player opens: start where the user came from. */
     fun navigate(url: String) {
         if (!WebHost.isSafePageUrl(url)) return
-        if (web == null) {
+        val w = web
+        if (w == null) {
             pendingUrl = url
             created.value = true
+        } else if (!BrowseNavigation.sameDestination(w.url, url)) {
+            w.loadUrl(url)
         } else {
-            web?.loadUrl(url)
+            // Already there: scroll to top like YouTube's Home tab instead of reloading.
+            w.evaluateJavascript("window.scrollTo(0,0)", null)
         }
     }
 
@@ -155,7 +162,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
 
     private var pendingUrl: String? = null
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun create(context: Context, displayId: Int): WebView {
         browseDisplayId = displayId
         val c = if (displayId == android.view.Display.DEFAULT_DISPLAY)
@@ -163,6 +170,12 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         val w = WebView(c)
         w.isFocusable = true
         w.isFocusableInTouchMode = true
+        // Compose hosts can leave the WebView unfocused; a text field tap then
+        // never raises the keyboard. Take focus on the first touch.
+        w.setOnTouchListener { v, e ->
+            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && !v.hasFocus()) v.requestFocus()
+            false
+        }
         browseToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         val s = w.settings
@@ -176,8 +189,10 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         s.textZoom = if (displayId != android.view.Display.DEFAULT_DISPLAY) 100 else Features.current.pageZoom
         s.useWideViewPort = true
-        s.loadWithOverviewMode = true
-        s.setSupportZoom(true)
+        // Car display: no overview zoom-out (tiny Home page) and no sticky pinch zoom.
+        val carDisplay = displayId != android.view.Display.DEFAULT_DISPLAY
+        s.loadWithOverviewMode = !carDisplay
+        s.setSupportZoom(!carDisplay)
         s.builtInZoomControls = true
         s.displayZoomControls = false
         s.userAgentString = WebHost.userAgent(Features.current.desktopSite)
@@ -264,6 +279,8 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
             (youtube && (path.startsWith("/watch") || path.startsWith("/shorts/") || path.startsWith("/live/")))
     }
 
+    private val selections = SelectionDeduper()
+
     fun openInPlayer(url: String) {
         // Also called by the page script (AAYBrowse.open): accept only YouTube video links.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
@@ -271,6 +288,11 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
             AppLog.add("NAV", "Ignored a request to open an unsafe or non-video link")
             return
         }
+        // The page bridge, shouldOverrideUrlLoading and doUpdateVisitedHistory
+        // can all report one tap. Only the first selection reaches the player.
+        val id = uri.getQueryParameter("v") ?: uri.lastPathSegment.takeIf { uri.host.equals("youtu.be", true) }
+        if (!selections.accept(SelectionDeduper.key(uri.path.orEmpty(), id, uri.getQueryParameter("list")),
+                SystemClock.elapsedRealtime())) return
         main.post {
             AppLog.add("NAV", "Browse page opened a video")
             WebHost.openUrl(url)
@@ -302,9 +324,9 @@ object BrowseHost : BrowseSession() {
         phone.onSessionCleared()
     }
 
+    /** Phone Home during projection: browse Home with the floating mini-player above it. */
     fun phoneHome() {
-        phoneMode.value = if (WebHost.snapshot.value.id.isNotBlank()) WebHost.PlayerMode.MINI
-            else WebHost.PlayerMode.HIDDEN
+        phoneMode.value = ProjectedPhoneNav.home(WebHost.snapshot.value.id.isNotBlank())
         phone.navigate(WebHost.home())
     }
     fun phoneMini() {
