@@ -159,6 +159,49 @@ object WebHost {
     private var skipTraceOrigin = ""
     private var skipTraceStartedAt = 0L
     private var modeHandoffStartedAt = 0L
+    private var modeHandoffDirection = ""
+    private var modeHandoffVideoId = ""
+    private var modeHandoffPosition = 0L
+    private var modeHandoffGeneration = 0
+    private var modeHandoffBuffered = false
+    val carAudioRetained = MutableStateFlow(false)
+
+    private fun beginModeHandoff(toVideo: Boolean) {
+        val state = snapshot.value
+        modeHandoffStartedAt = SystemClock.elapsedRealtime()
+        modeHandoffDirection = if (toVideo) "Music/phone->Video" else "Video->Music/background"
+        modeHandoffVideoId = state.id
+        modeHandoffPosition = state.posMs
+        modeHandoffGeneration = webGeneration
+        modeHandoffBuffered = false
+        AppLog.add("CAR", "Mode handoff start direction=$modeHandoffDirection positionMs=$modeHandoffPosition generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
+    }
+
+    private fun reportModeHandoff(state: Snap) {
+        if (modeHandoffStartedAt == 0L) return
+        val elapsed = SystemClock.elapsedRealtime() - modeHandoffStartedAt
+        if (state.id != modeHandoffVideoId || state.userPaused || state.ended || elapsed > 30_000L) {
+            AppLog.add("CAR", "Mode handoff cancelled direction=$modeHandoffDirection elapsedMs=$elapsed")
+            modeHandoffStartedAt = 0L
+            return
+        }
+        if (state.buffering && !modeHandoffBuffered) {
+            modeHandoffBuffered = true
+            AppLog.add("CAR", "Mode handoff buffering direction=$modeHandoffDirection elapsedMs=$elapsed positionMs=${state.posMs}")
+        }
+        // A transient playing callback is not proof that the media clock advanced.
+        if (state.playing && !state.buffering && state.posMs > modeHandoffPosition) {
+            AppLog.add("CAR", "Mode handoff playback advancing direction=$modeHandoffDirection elapsedMs=$elapsed positionMs=${state.posMs} rendererRecreated=${webGeneration != modeHandoffGeneration} buffered=$modeHandoffBuffered")
+            modeHandoffStartedAt = 0L
+        }
+    }
+
+    fun restorePhoneVideo() {
+        if (!carAudioRetained.value || carShown) return
+        carAudioRetained.value = false
+        AppLog.add("CAR", "Phone video explicitly requested; releasing audio-only renderer retention")
+        webVersion.update { it + 1 }
+    }
     private fun traceTransport(command: String, expected: String? = null) {
         val serial = ++skipTraceSerial
         skipTraceActive = true
@@ -747,9 +790,16 @@ object WebHost {
         carShown = carOwners.isNotEmpty()
         if (alreadyProjected != carShown && playbackWanted) {
             js("window.__aay&&window.__aay.modeTransit&&window.__aay.modeTransit()")
-            modeHandoffStartedAt = SystemClock.elapsedRealtime()
-            AppLog.add("CAR", "Playback mode handoff video=$carShown")
+            beginModeHandoff(carShown)
         }
+        if (alreadyProjected && !carShown && web != null && playbackWanted &&
+            snapshot.value.id.isNotBlank() && !snapshot.value.userPaused && !snapshot.value.ended) {
+            // Keep the live document and buffers after the final projected window closes.
+            // The phone must not steal/recreate this renderer just to show its UI.
+            carAudioRetained.value = true
+            AppLog.add("CAR", "Retaining audio renderer on video exit; generation=$webGeneration")
+        }
+        if (carShown) carAudioRetained.value = false
         if (!carShown) setCarPage(false)
         if (alreadyProjected && !carShown) {
             playingWhenCarLeft = snapshot.value.playing
@@ -785,7 +835,7 @@ object WebHost {
      * Even a stopped Activity needs the version bump so its retained Compose tree will
      * reclaim the WebView when it resumes. Never steal from a second active car host. */
     fun requestReattachment() {
-        if (!carShown) webVersion.update { it + 1 }
+        if (!carShown && !carAudioRetained.value) webVersion.update { it + 1 }
     }
 
     /** The screen is leaving the foreground (or came back): page pauses are ignored until it returns. */
@@ -1145,7 +1195,7 @@ object WebHost {
 
     // Nothing playing and no screen open: stop the page's timers and scripts after a short wait.
     private fun keepRecovering(): Boolean = playbackWanted &&
-        (Features.current.backgroundPlay || carShown || inPip.value || shown)
+        (Features.current.backgroundPlay || carShown || carAudioRetained.value || inPip.value || shown)
 
     private val freezeSoon = Runnable {
         if (!shown && !snapshot.value.playing && !keepRecovering()) freeze()
@@ -1198,6 +1248,7 @@ object WebHost {
         resetResumeBudget()
         cancelTransportTrace()
         modeHandoffStartedAt = 0L
+        carAudioRetained.value = false
         exitFullscreen()
         val w = web
         web = null
@@ -1527,14 +1578,16 @@ object WebHost {
         val background = !shown && !inPip.value && !carShown
         // Background-play OFF is respected when fully hidden. Unexpected pauses
         // in visible phone/car, mini-player or PiP still deserve recovery.
-        if (background && !Features.current.backgroundPlay) return
+        if (background && !Features.current.backgroundPlay && !carAudioRetained.value) return
         val mini = mode.value == PlayerMode.MINI && !inPip.value
         if (new.userPaused || !playbackWanted || now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
         // During the bounded car handoff the page owns fast recovery. Avoid
         // competing native Play commands while the decoder is changing surfaces.
         if (modeHandoffStartedAt != 0L && now - modeHandoffStartedAt < 4_000L) {
-            AppLog.add("PLAY", "Native recovery deferred to car mode handoff")
+            AppLog.add("PLAY", "Native recovery deferred to car mode handoff; fallback armed")
+            main.removeCallbacks(droppedResume)
+            main.postDelayed(droppedResume, (4_000L - (now - modeHandoffStartedAt)).coerceAtLeast(250L))
             return
         }
         if (now - resumeWindowAt > 60_000L) {
@@ -1754,10 +1807,7 @@ object WebHost {
 
     private fun publish(incoming: Snap) {
         confirmTransport(incoming)
-        if (modeHandoffStartedAt != 0L && incoming.playing && !incoming.buffering) {
-            AppLog.add("CAR", "Playback confirmed after mode handoff elapsedMs=${SystemClock.elapsedRealtime() - modeHandoffStartedAt}")
-            modeHandoffStartedAt = 0L
-        }
+        reportModeHandoff(incoming)
         val previous = snapshot.value
         if (incoming.id != previous.id) resetResumeBudget()
         if (incoming.userPaused && !incoming.playing) {
