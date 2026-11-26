@@ -761,3 +761,39 @@ test('far from the car position while it buffers: one seek, then shown after the
   p.M.sync(68_700, true, 1, 'AAAAAAAAAAA', true, '');
   assert.equal(html.contains('aaym-aligning'), false);
 });
+
+const inPlayer = () => { const t = { tagName: 'DIV', closest: (sel) => (/progress/.test(sel) ? null : t) }; return t; };
+const touch = (x, y) => ({ clientX: x, clientY: y, screenX: x, screenY: y });
+
+test('a tap on the full player never opens the mini-player, even if the page shifts under the finger', () => {
+  const p = page();
+  const t = inPlayer();
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  p.fire('touchend', t, { touches: [], changedTouches: [touch(100, 260)] }); // coordinates jumped, no drag
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 0);
+});
+
+test('a real downward drag on the player opens the mini-player', () => {
+  const p = page();
+  const t = inPlayer();
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  [130, 170, 210].forEach((y) => p.fire('touchmove', t, { touches: [touch(102, y)] }));
+  p.fire('touchend', t, { touches: [], changedTouches: [touch(102, 212)] });
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 1);
+});
+
+test('a drag that goes down then back up, sideways, or on the seek bar is not a swipe', () => {
+  const p = page();
+  const t = inPlayer();
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  [150, 200, 120].forEach((y) => p.fire('touchmove', t, { touches: [touch(100, y)] }));
+  p.fire('touchend', t, { touches: [], changedTouches: [touch(100, 120)] });
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  [[150, 130], [220, 160], [300, 190]].forEach(([x, y]) => p.fire('touchmove', t, { touches: [touch(x, y)] }));
+  p.fire('touchend', t, { touches: [], changedTouches: [touch(300, 190)] });
+  const bar = { tagName: 'DIV', closest: () => bar };
+  p.fire('touchstart', bar, { touches: [touch(100, 100)] });
+  [130, 170, 210].forEach((y) => p.fire('touchmove', bar, { touches: [touch(100, y)] }));
+  p.fire('touchend', bar, { touches: [], changedTouches: [touch(100, 212)] });
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 0);
+});

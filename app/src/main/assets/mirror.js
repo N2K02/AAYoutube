@@ -211,24 +211,42 @@
   }, true);
 
   // Swipe down on the video: the phone's mini-player (same gesture as the normal player).
+  // Only a real downward drag counts: the finger must move (touchmove) at least SWIPE_MIN_PX in
+  // screen space, mostly vertically. A tap never does, even if the page shifts under the finger.
+  var SWIPE_MIN_PX = 75, SWIPE_MIN_MOVES = 3, SWIPE_MAX_MS = 1100;
   var swipeStart = null;
+  function screenY(t) { return typeof t.screenY === 'number' ? t.screenY : t.clientY; }
+  function screenX(t) { return typeof t.screenX === 'number' ? t.screenX : t.clientX; }
   document.addEventListener('touchstart', function (e) {
     swipeStart = null;
     if (M.videoOnly || e.touches.length !== 1) return;
-    if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+    if (!/^\/(watch|live\/|shorts\/)/.test(location.pathname)) return;
     var t = e.target;
     if (!t || !t.closest) return;
     var full = !!(document.fullscreenElement || document.webkitFullscreenElement);
     if (!full && !closest(t, PLAYER_SEL)) return;
-    swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
+    if (closest(t, SEEKBAR_SEL)) return; // scrubbing is never a swipe
+    var p0 = e.touches[0];
+    swipeStart = { x: screenX(p0), y: screenY(p0), at: Date.now(), moves: 0, maxDy: 0, lastDy: 0, lastDx: 0 };
+  }, { capture: true, passive: true });
+  document.addEventListener('touchmove', function (e) {
+    var st = swipeStart;
+    if (!st) return;
+    if (e.touches.length !== 1) { swipeStart = null; return; }
+    var p1 = e.touches[0];
+    st.moves++;
+    st.lastDx = screenX(p1) - st.x;
+    st.lastDy = screenY(p1) - st.y;
+    if (st.lastDy > st.maxDy) st.maxDy = st.lastDy;
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
     var start = swipeStart;
     swipeStart = null;
-    if (!start || !e.isTrusted || !e.changedTouches.length) return;
-    var dx = e.changedTouches[0].clientX - start.x;
-    var dy = e.changedTouches[0].clientY - start.y;
-    if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+    if (!start || !e.isTrusted || !e.changedTouches.length || (e.touches && e.touches.length)) return;
+    var end = e.changedTouches[0];
+    var dx = screenX(end) - start.x;
+    var dy = screenY(end) - start.y;
+    if (!M.swipeOk(start, dx, dy, Date.now() - start.at)) return;
     // Like the YouTube app: from fullscreen, a swipe down first leaves fullscreen.
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (err) {}
@@ -236,6 +254,12 @@
     }
     send('mini', 0);
   }, { capture: true, passive: true });
+  /** A swipe is a tracked drag that went down and ended down, not a tap whose coordinates jumped. */
+  M.swipeOk = function (st, dx, dy, ms) {
+    if (ms > SWIPE_MAX_MS || st.moves < SWIPE_MIN_MOVES) return false;
+    if (dy < SWIPE_MIN_PX || st.lastDy < SWIPE_MIN_PX * 0.8 || st.maxDy < SWIPE_MIN_PX) return false;
+    return Math.abs(dx) <= dy * 0.65 && Math.abs(st.lastDx) <= st.lastDy * 0.65;
+  };
   document.addEventListener('touchcancel', function () { swipeStart = null; }, true);
 
   /**
