@@ -345,4 +345,29 @@ class ProjectedPlaybackPolicyTest {
         assertEquals(20 to 10, SharedPreviewPolicy.size(20, 10, 256))
         assertEquals(0 to 0, SharedPreviewPolicy.size(0, 1080, 256))
     }
+
+    @Test fun sustainedPressureRequiresTwoFreshSamplesAndRecovers() {
+        val policy = ProcessPressurePolicy()
+        policy.update(178, 1000)
+        assertFalse(policy.active(1000))
+        policy.update(148, 31_000)
+        assertTrue(policy.active(31_000))
+        policy.update(80, 61_000)
+        assertFalse(policy.active(61_000))
+        policy.update(180, 91_000)
+        policy.update(180, 121_000)
+        assertTrue(policy.active(121_000))
+        assertFalse(policy.active(197_000))
+        policy.update(180, 197_000)
+        assertFalse(policy.active(197_000))
+        policy.reset()
+        assertFalse(policy.active(197_000))
+    }
+
+    @Test fun cpuPressureDegradesMirrorAndRequiresCalmRecovery() {
+        val gate = MirrorLoadGate(stableMs = 1000)
+        assertEquals(MirrorLoadGate.State.DEGRADED, gate.update(0, false, 1000, true))
+        assertEquals(MirrorLoadGate.State.DEGRADED, gate.update(0, false, 1500, false))
+        assertEquals(MirrorLoadGate.State.NORMAL, gate.update(0, false, 2001, false))
+    }
 }

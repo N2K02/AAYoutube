@@ -139,6 +139,20 @@ internal object FrameDarkness {
 }
 
 /** Car-window health captures: bounded in time and in outstanding buffers. */
+/** Rate-limited main-process pressure, not renderer CPU or hardware GPU utilisation. */
+internal class ProcessPressurePolicy {
+    private var streak = 0
+    private var sampledAt = Long.MIN_VALUE / 2
+    fun update(cpuPercent: Int, nowMs: Long) {
+        if (cpuPercent < 0) return
+        if (nowMs - sampledAt > 75_000L) streak = 0
+        sampledAt = nowMs
+        streak = if (cpuPercent >= 120) (streak + 1).coerceAtMost(2) else 0
+    }
+    fun active(nowMs: Long): Boolean = streak >= 2 && nowMs - sampledAt in 0..75_000L
+    fun reset() { streak = 0; sampledAt = Long.MIN_VALUE / 2 }
+}
+
 internal object SharedPreviewPolicy {
     const val MAX_EDGE = 256
     const val FRAME_INTERVAL_MS = 500L

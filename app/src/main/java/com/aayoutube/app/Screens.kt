@@ -1792,11 +1792,11 @@ private fun SharedCarFrame(snap: Snap, visible: Boolean, modifier: Modifier) {
     val url = MediaArtworkLoader.urlFor(snap.art, snap.id)
     LaunchedEffect(url) { loader.request(url) }
     val artwork = if (artworkTick >= 0) loader.bitmapFor(url) else null
-    LaunchedEffect(snap.id, visible, snap.playing, snap.buffering) {
-        if (!visible) { frame = null; return@LaunchedEffect }
-        while (visible && snap.playing && !snap.buffering) {
+    LaunchedEffect(snap.id, visible, snap.playing, snap.buffering, snap.ad) {
+        if (!visible || snap.buffering || snap.ad) { frame = null; return@LaunchedEffect }
+        while (visible && snap.playing && !snap.buffering && !snap.ad) {
             val thermal = if (android.os.Build.VERSION.SDK_INT >= 29) pm?.currentThermalStatus ?: 0 else 0
-            if (SharedPreviewPolicy.capture(visible, snap.playing, snap.buffering, thermal)) {
+            if (SharedPreviewPolicy.capture(visible, snap.playing, snap.buffering, thermal) && !WebHost.underProcessPressure()) {
                 val next = CarPhonePreview.preview()
                 if (next != null) { frame = next; failures = 0 }
                 else if (++failures >= SharedPreviewPolicy.MAX_FAILURES) frame = null

@@ -47,6 +47,7 @@ internal object CarPhonePreview {
     }
 
     suspend fun preview(): Bitmap? {
+        if (WebHost.verifyingCrossDisplay) return null // health verification takes priority
         val bitmap = capture(SharedPreviewPolicy.MAX_EDGE) ?: return null
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)

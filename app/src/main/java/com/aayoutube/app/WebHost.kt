@@ -296,6 +296,7 @@ object WebHost {
     val activeCarHost = MutableStateFlow<String?>(null)
     /** Identity of the car window token the current renderer draws into (null: not in a car window). */
     private var carWindowId: Int? = null
+    private var carBoundDisplayId: Int? = null
     private var playingWhenCarLeft = false
     private var carLeftAt = 0L
 
@@ -575,11 +576,19 @@ object WebHost {
         val targetWindow = frame.windowToken?.let { System.identityHashCode(it) }
         val forced = forcedCarRecreate
         forcedCarRecreate = null
+        // Repeated AndroidView/window binds must not destroy a retained renderer
+        // while its cross-display trial is still running or already verified.
+        val existing = web
+        if (forced == null && existing != null && existing.parent === frame &&
+            targetDisplay == carBoundDisplayId && targetWindow == carWindowId) {
+            if (rebind != null) { carRebind = rebind; carRebindOwner = activeCarHost.value }
+            return existing
+        }
         // A retained (audio-only) renderer is in no window: reuse it with its buffers.
         val detachedReuse = web != null && retainedRendererDetached && web?.parent == null
         val trial = forced == null && CarRendererReusePolicy.canTrial(webDisplayId, targetDisplay,
             detachedReuse, snapshot.value.playing && !snapshot.value.buffering && !snapshot.value.userPaused,
-            rebind != null && activeCarHost.value != null, SystemClock.elapsedRealtime(), lastCrossDisplayFailureAt)
+            rebind != null && activeCarHost.value != null && targetWindow != null, SystemClock.elapsedRealtime(), lastCrossDisplayFailureAt)
         val reason = if (web == null) null else CarRendererReusePolicy.reason(
             webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced, trial)
         val reused = reason == null && detachedReuse && (trial || (carWindowId != null && carWindowId != targetWindow))
@@ -589,6 +598,7 @@ object WebHost {
         val sameBinding = w.parent === frame && carWindowId == targetWindow && reason == null
         if (w.parent !== frame) (w.parent as? ViewGroup)?.removeView(w)
         carWindowId = targetWindow
+        carBoundDisplayId = targetDisplay
         if (rebind != null) { carRebind = rebind; carRebindOwner = activeCarHost.value }
         if (!sameBinding) AppLog.add("CAR", "Car WebView bind display=" + (targetDisplay ?: -1) +
             " created=" + (webDisplayId ?: -1) + " window=" +
@@ -608,6 +618,7 @@ object WebHost {
     private var lastCrossDisplayFailureAt = 0L
     private var carVerifyEpoch = 0L
     private var crossDisplayTrial = false
+    internal val verifyingCrossDisplay: Boolean get() = crossDisplayTrial
     private var carTrialTimeout: Runnable? = null
     private var carVerifySamples = 0
     private var carBlackSamples = 0
@@ -1184,6 +1195,8 @@ object WebHost {
     private var perfElapsed = 0L
     private var perfCpu = 0L
     private val recentWebCpu = ArrayDeque<Int>()
+    private val previewPressure = ProcessPressurePolicy()
+    internal fun underProcessPressure(): Boolean = previewPressure.active(SystemClock.elapsedRealtime())
 
     internal fun onJsPerformance(payload: String, generation: Int) {
         if (payload.length > 1024) return
@@ -1200,6 +1213,7 @@ object WebHost {
             perfElapsed = now
             perfCpu = cpu
             if (pct >= 0) {
+                previewPressure.update(pct, now)
                 recentWebCpu.addLast(pct)
                 if (recentWebCpu.size > 10) recentWebCpu.removeFirst()
             }
@@ -1207,7 +1221,7 @@ object WebHost {
             val peak = recentWebCpu.maxOrNull() ?: -1
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
-            AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak " +
+            AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak previewPressure=${previewPressure.active(now)} " +
                 "rendererCpuPct=adb-only domTicks=${metric("ticks")} domMs=${metric("tickMs")} " +
                 "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
                 "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
@@ -1608,6 +1622,7 @@ object WebHost {
         perfElapsed = 0L
         perfCpu = 0L
         recentWebCpu.clear()
+        previewPressure.reset()
         webResizeCount = 0
         lastWebResizeLogAt = 0L
         sameVideoReloadPosition = null
@@ -1624,6 +1639,7 @@ object WebHost {
         wrapper = null
         webDisplayId = null
         carWindowId = null
+        carBoundDisplayId = null
         frozen = false
         snapshot.value = Snap()
         selectedWatchVideoId.value = ""

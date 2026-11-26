@@ -361,7 +361,7 @@ internal object PhoneMirror {
             }
             // Load first? No: heat and primary health decide before anything is loaded or synced.
             val thermal = thermalStatus()
-            val state = gate.update(thermal, s.buffering, now)
+            val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure())
             if (state == MirrorLoadGate.State.SUSPENDED) {
                 if (!suspended.value) enterSuspension(thermal, s.buffering, now)
                 if (web != null && now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS) disposeRenderer()
@@ -955,11 +955,11 @@ internal class MirrorLoadGate(
     private var lastSevereAt = never
     private var state = State.NORMAL
 
-    fun update(thermal: Int, primaryBuffering: Boolean, nowMs: Long): State {
+    fun update(thermal: Int, primaryBuffering: Boolean, nowMs: Long, cpuPressure: Boolean = false): State {
         if (primaryBuffering) { if (bufferingSince == 0L) bufferingSince = nowMs } else bufferingSince = 0L
         val sustained = bufferingSince != 0L && nowMs - bufferingSince >= bufferingSuspendMs
         val severe = PhoneMirrorPolicy.suspendForHeat(thermal) || sustained
-        val pressure = primaryBuffering || PhoneMirrorPolicy.degradeForHeat(thermal)
+        val pressure = primaryBuffering || cpuPressure || PhoneMirrorPolicy.degradeForHeat(thermal)
         if (severe) lastSevereAt = nowMs
         if (pressure) lastPressureAt = nowMs
         state = when {
