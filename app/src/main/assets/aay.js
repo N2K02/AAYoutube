@@ -220,7 +220,7 @@
       }, true);
     } catch (e) {}
   }
-  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, isLand: false };
+  var A = window.__aay = { H: {}, isBg: false, isCar: !!window.__AAY_CAR, audioOnly: !!window.__AAY_AUDIO_ONLY && !BROWSE, isLand: false };
   // Bounded, aggregated counters only: no page content, URLs or video identifiers.
   var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
@@ -300,9 +300,12 @@
     A.transit(4000);
     console.log('[aay] car mode handoff started');
   };
+  A.audioMode = function (on) {
+    A.audioOnly = !!on && !BROWSE;
+  };
   A.transit = function (ms) { transitUntil = Math.max(transitUntil, Date.now() + (ms || 1500)); };
   function inTransit() { return Date.now() < transitUntil; }
-  function holding() { return !bgWatch.held && (inTransit() || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini))); }
+  function holding() { return !bgWatch.held && (inTransit() || A.audioOnly || (CFG.backgroundPlay !== false && (A.hold || A.isBg || A.inPip || A.isMini))); }
 
   // YouTube's on-screen controls are a real Pause even if background/PiP
   // protection is armed. Only trusted playback gestures grant this short window;
@@ -1602,12 +1605,14 @@
   };
 
   function backgroundWatchdog() {
-    bgSaverCheck();
-    try { overloadCheck(getVideo()); } catch (e) {}
-    try { logPlayingFormat(getVideo()); } catch (e) {}
+    if (!A.audioOnly) {
+      bgSaverCheck();
+      try { overloadCheck(getVideo()); } catch (e) {}
+      try { logPlayingFormat(getVideo()); } catch (e) {}
+    }
     // Reconcile YouTube's center Play icon and app status without touching
     // the decoder surface or forcing stream reloads.
-    try { syncPlayerState(); } catch (e) {}
+    if (!A.audioOnly) try { syncPlayerState(); } catch (e) {}
     // Reconcile the app's play/pause icon with the real element (missed events).
     try {
       var rv = getVideo();
@@ -1623,7 +1628,7 @@
     if (!v || !id || v.ended) return;
     // An intentionally disabled Background play setting still wins offscreen.
     // In the phone, PiP, mini-player and car, an unexpected pause is recoverable.
-    if ((A.isBg || A.hold) && !A.isCar && CFG.backgroundPlay === false) return;
+    if ((A.isBg || A.hold) && !A.isCar && !A.audioOnly && CFG.backgroundPlay === false) return;
     if (bgWatch.id !== id) {
       bgWatch.id = id; bgWatch.wanted = AUTO || (!v.paused && !PAUSED);
       bgWatch.explicitPause = false; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0;
@@ -2544,7 +2549,7 @@
     catch (e) { return false; }
   }
   function bgSaverActive() {
-    if (!A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
+    if (A.audioOnly || !A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
     if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
     if (isAd()) return false;
     var v = getVideo();
@@ -2712,6 +2717,8 @@
     return below || 'tiny';
   }
   function applyPreferredQuality() {
+    // Preserve the already buffered stream while the renderer is detached.
+    if (A.audioOnly) return;
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
