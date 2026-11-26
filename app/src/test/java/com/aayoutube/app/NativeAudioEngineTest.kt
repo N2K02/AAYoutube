@@ -267,6 +267,34 @@ class NativeAudioEngineTest {
         assertEquals(1_500L, c.lastTransitionMs)
     }
 
+    @Test fun staleReadinessNeverSilencesTheNewWebVideo() {
+        val (c, web, native) = setup()
+        c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+        c.onNativeReady(HandoffState.from(playing.copy(id = "new"), now))
+        assertEquals(EngineId.WEB, c.owner)
+        assertTrue(native.released)
+        assertTrue(web.audible)
+        assertFalse(web.events().contains("WEB.silence"))
+    }
+
+    @Test fun navigationOrMissingStateAbortsSilentPreparation() {
+        for (id in listOf("new", "")) {
+            val (c, web, native) = setup()
+            c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+            c.onWebReport(id, true)
+            c.onNativeReady(HandoffState.from(playing, now))
+            assertEquals(PlaybackEngineCoordinator.Phase.WEB, c.phase)
+            assertTrue(native.released)
+            assertTrue(web.audible)
+        }
+        val (c, web, native) = setup()
+        c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+        c.onNativeReady(null)
+        assertEquals(EngineId.WEB, c.owner)
+        assertTrue(native.released)
+        assertTrue(web.audible)
+    }
+
     @Test fun explicitPauseDuringPreparationIsKeptByNative() {
         val (c, web, native) = setup()
         c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)

@@ -2510,3 +2510,23 @@ test('mini icon reconciliation respects Pause, native ownership and superseded t
     assert.equal(repairs, before, 'no delayed repair after ' + reason);
   }
 });
+
+
+test('decoder overload does not inherit bad windows after a video or counter reset', () => {
+  for (const reset of ['route', 'element', 'counters', 'seek']) {
+    const p = overloadPage('hd2160');
+    let v = p.video, f = 1000, d = 100;
+    const install = () => { v.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d }); };
+    install(); p.runIntervals();
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    if (reset === 'route') { p.location.search = '?v=newVideo'; p.location.href = 'https://m.youtube.com/watch?v=newVideo'; }
+    if (reset === 'element') { v = p.replaceVideo(); install(); }
+    if (reset === 'counters') { f = 0; d = 0; }
+    if (reset === 'seek') { v.trigger('seeked'); }
+    p.advance(9000); p.runIntervals(); // fresh baseline
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    assert.notDeepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], reset + ': old bad sample discarded');
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], reset + ': sustained new overload still handled');
+  }
+});

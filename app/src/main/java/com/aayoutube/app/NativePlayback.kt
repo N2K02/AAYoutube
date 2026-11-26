@@ -69,6 +69,7 @@ internal object NativePlayback {
                 return PlaybackHandoffPolicy.merge(web, nativePos, nativePlaying, nativeBuffering, c.userPaused)
             return web
         }
+        c?.onWebReport(web.id, web.playing)
         c?.checkTimeout()
         maybeHandoff(web)
         return web
@@ -84,7 +85,8 @@ internal object NativePlayback {
         val provider = StreamProviders.current
         scope.launch {
             val result = withContext(Dispatchers.IO) { StreamProviders.resolve(s.id, provider) }
-            if (serial != resolveSerial) return@launch
+            if (serial != resolveSerial || !Features.current.nativeAudio ||
+                StreamProviders.current !== provider || WebHost.snapshot.value.id != s.id) return@launch
             when (result) {
                 is StreamResult.Unavailable -> AppLog.add("NATIVE-AUDIO",
                     "engine=web reason=${result.reason}${if (result.detail.isBlank()) "" else " detail=${result.detail}"} " +
@@ -95,9 +97,10 @@ internal object NativePlayback {
     }
 
     private fun startHandoff(streams: ResolvedStreams) {
-        val c = coordinator() ?: return
         val current = WebHost.snapshot.value
-        if (current.id != streams.videoId) return
+        if (current.id != streams.videoId ||
+            !PlaybackHandoffPolicy.canHandToNative(current, Features.current.nativeAudio).allowed) return
+        val c = coordinator() ?: return
         val now = SystemClock.elapsedRealtime()
         val route = currentRoute()
         val caps = capabilitiesFor(route)
@@ -159,6 +162,7 @@ internal object NativePlayback {
 
     /** Feature switched off, Quit or renderer released: native gives way at once. */
     fun returnToWeb(reason: String) {
+        resolveSerial++ // invalidate in-flight provider resolution, including feature-off
         coordinator?.returnToWeb(reason)
         attemptedVideo = ""
     }

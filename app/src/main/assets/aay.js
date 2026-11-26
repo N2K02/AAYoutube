@@ -1864,6 +1864,7 @@
         }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
         if (ev === 'seeked') {
+          resetOverloadWindow();
           if (qualityState.reset) restoreAfterSourceChange(v);
           else notePosition(v);
         }
@@ -2914,19 +2915,28 @@
   var OVERLOAD_WINDOW_MS = 8000, OVERLOAD_COOLDOWN_MS = 60000, OVERLOAD_RECOVER_MS = 180000;
   var stepDown = { 4320: 2160, 2880: 2160, 2160: 1440, 1440: 1080, 1080: 720 };
   var stepUp = { 720: 1080, 1080: 1440, 1440: 2160, 2160: 4320 };
-  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0 };
+  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0, video: null, id: '' };
+  function resetOverloadWindow() {
+    overload.at = 0; overload.bad = 0; overload.goodSince = 0;
+  }
   function overloadSample(v, now, frames, dropped) {
     overload.at = now; overload.t = v.currentTime; overload.frames = frames; overload.dropped = dropped;
   }
   function overloadCheck(v) {
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; overload.bad = 0; return; }
+    if (!p || !v || v.paused || v.ended || v.seeking || isAd() || nativeAudio.owned) { resetOverloadWindow(); return; }
+    var id = qualityVideoId();
+    if (overload.video !== v || overload.id !== id) {
+      resetOverloadWindow(); overload.video = v; overload.id = id;
+    }
     var cur = '';
     try { if (typeof p.getPlaybackQuality === 'function') cur = p.getPlaybackQuality(); } catch (e) {}
     var h = qualityHeight[cur] || 0;
     var now = Date.now(), q = null;
     try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
     var frames = q ? q.totalVideoFrames : 0, dropped = q ? q.droppedVideoFrames : 0;
+    // Decoder replacement/seek resets counters; never interpret that as overload.
+    if (frames < overload.frames || dropped < overload.dropped || v.currentTime < overload.t - 0.5) resetOverloadWindow();
     if (!overload.at) { overloadSample(v, now, frames, dropped); return; }
     if (now - overload.at < OVERLOAD_WINDOW_MS) return;
     var ahead = 0;

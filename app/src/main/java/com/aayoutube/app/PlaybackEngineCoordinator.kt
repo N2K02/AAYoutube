@@ -78,7 +78,9 @@ internal class PlaybackEngineCoordinator(
      */
     fun onNativeReady(current: HandoffState?) {
         if (phase != Phase.PREPARING) return
-        val state = current?.takeIf { it.videoId == nativeVideoId } ?: pending ?: return
+        // A stale readiness callback must not silence a newly selected web video.
+        val state = current ?: run { abortPreparation("missing-web-state"); return }
+        if (state.videoId != nativeVideoId) { abortPreparation("web-video-changed"); return }
         val now = clock()
         if (now - preparingSince > PlaybackHandoffPolicy.PREPARE_TIMEOUT_MS) { abortPreparation("timeout"); return }
         web.silence()
@@ -155,6 +157,10 @@ internal class PlaybackEngineCoordinator(
      * (never two audible engines). Returns true when the report was a duplicate-audio risk.
      */
     fun onWebReport(webVideoId: String, webPlaying: Boolean): Boolean {
+        if (phase == Phase.PREPARING) {
+            if (webVideoId != nativeVideoId) abortPreparation("web-video-changed")
+            return false
+        }
         if (phase != Phase.NATIVE) return false
         if (webVideoId.isNotBlank() && webVideoId != nativeVideoId) {
             returnToWeb("web-video-changed", resume = true, startWeb = false)
