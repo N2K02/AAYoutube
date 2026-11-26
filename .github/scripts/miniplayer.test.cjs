@@ -2654,3 +2654,20 @@ test('local audio descriptor requires opt-in, hidden player and matching playabl
   p.window.__aay.config({localSabr:false});
   assert.equal(p.window.__aay.localAudioDescriptor('86p7SP34qSc'),null);
 });
+
+
+test('background quality source reload defers other-media judgement, but a real user pause wins', () => {
+  const other = { active: true };
+  const p = playerPage({quality: true, cfg:{backgroundPlay:true, lowQuality:true, preferredQuality:'hd720'}, otherMedia:other});
+  p.flush();
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  p.advance(65000); p.runIntervals(); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny','tiny']);
+  p.video.paused = true; p.video.readyState = 1; p.video.trigger('emptied');
+  p.advance(2000); p.window.__aay.checkBackgroundPlayback(); p.flush();
+  assert.ok(p.stateReports.at(-1).qualityReloadMs > 0);
+  p.window.__aay.cmd('pause'); p.flush();
+  assert.equal(p.stateReports.at(-1).qualityReloadMs, 0);
+  p.advance(15000); p.window.__aay.checkBackgroundPlayback(); p.flush();
+  assert.equal(p.video.paused, true);
+});

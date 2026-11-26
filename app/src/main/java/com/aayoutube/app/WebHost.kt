@@ -1978,9 +1978,11 @@ object WebHost {
     fun onJsState(json: String, generation: Int = webGeneration) {
         if (generation != webGeneration) return
         var webNativeMarker = false
+        var qualityReloadMs = 0L
         val s = runCatching {
             val o = JSONObject(json)
             webNativeMarker = o.optBoolean("native")
+            qualityReloadMs = o.optLong("qualityReloadMs").coerceIn(0L, OtherMediaHoldPolicy.QUALITY_RELOAD_MAX_MS)
             Snap(
                 id = o.optString("id"),
                 title = o.optString("title"),
@@ -2011,6 +2013,9 @@ object WebHost {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
+            qualityReloadUntil = if (!s.playing && !s.userPaused && !s.ended && !webNativeMarker &&
+                s.id.isNotBlank() && qualityReloadMs > 0L && !shown && !inPip.value && !carShown)
+                SystemClock.elapsedRealtime() + qualityReloadMs else 0L
             // Native audio (experimental): the web's metadata with the native clock while it owns.
             publish(NativePlayback.mergeWebState(s, webNativeMarker))
         }
@@ -2145,6 +2150,7 @@ object WebHost {
     }
 
     private fun cancelOtherMediaWork(reason: String) {
+        qualityReloadUntil = 0L
         main.removeCallbacks(droppedResume)
         main.removeCallbacks(droppedResumeJudge)
         endOtherMediaHold(reason)
@@ -2180,13 +2186,17 @@ object WebHost {
     private fun thermalStatus(): Int = if (android.os.Build.VERSION.SDK_INT < 29) 0 else
         runCatching { app.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
 
+    private var qualityReloadUntil = 0L
+    private fun qualityReloadDelay(): Long = OtherMediaHoldPolicy.qualityReloadDelay(
+        qualityReloadUntil, SystemClock.elapsedRealtime())
+
     internal fun postOtherMediaHold(generation: Int) {
         main.post {
             if (generation != webGeneration) return@post
             val current = snapshot.value
             if (!current.playing && !current.buffering && !current.userPaused &&
                 !current.ended && current.id.isNotBlank() && playbackWanted &&
-                !NetworkMonitor.recentlyDisrupted() && otherMediaActive()) {
+                !NetworkMonitor.recentlyDisrupted() && qualityReloadDelay() == 0L && otherMediaActive()) {
                 startOtherMediaHold("page watchdog")
             } else if (otherMediaHeldSince == 0L) {
                 // The bridge returned a provisional hold to JS. Release it if
@@ -2212,6 +2222,12 @@ object WebHost {
         if (NetworkMonitor.recentlyDisrupted()) {
             AppLog.add("FOCUS", "Native recovery decision: network disruption, no other-media hold online=${NetworkMonitor.online}")
             if (NetworkMonitor.online) recoverAfterNetwork("recent disruption")
+            return@Runnable
+        }
+        val qualityDelay = qualityReloadDelay()
+        if (qualityDelay > 0L) {
+            AppLog.add("FOCUS", "Recovery deferred during background quality reload remainingMs=$qualityDelay")
+            main.postDelayed(droppedResume, qualityDelay)
             return@Runnable
         }
         val active = otherMediaActive()

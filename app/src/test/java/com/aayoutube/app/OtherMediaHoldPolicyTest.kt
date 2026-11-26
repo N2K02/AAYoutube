@@ -8,6 +8,13 @@ import org.junit.Test
 import com.aayoutube.app.OtherMediaHoldPolicy.Step
 
 class OtherMediaHoldPolicyTest {
+    @Test fun knownQualityReloadDeferralIsBounded() {
+        assertEquals(0L, OtherMediaHoldPolicy.qualityReloadDelay(0L, 500L))
+        assertEquals(7_000L, OtherMediaHoldPolicy.qualityReloadDelay(12_000L, 5_000L))
+        assertEquals(0L, OtherMediaHoldPolicy.qualityReloadDelay(12_000L, 12_001L))
+        assertEquals(12_000L, OtherMediaHoldPolicy.qualityReloadDelay(30_000L, 1L))
+    }
+
     @Test fun musicOrCallCountsAsOtherMedia() {
         assertTrue(OtherMediaHoldPolicy.othersActive(true, 0))
         assertTrue(OtherMediaHoldPolicy.othersActive(false, 2)) // in call
