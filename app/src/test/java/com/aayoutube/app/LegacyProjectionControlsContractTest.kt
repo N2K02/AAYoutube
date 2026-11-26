@@ -99,7 +99,7 @@ class LegacyProjectionControlsContractTest {
         // Settings keeps its one standard header inside an overlay. The
         // playing WebView must not move when switching from Watch to Settings.
         val root = phone.substringAfter("fun AppRoot(").substringBefore("// ---------------------------------------------------------------------------- web")
-        assertTrue(root.contains("WebPane(Modifier.fillMaxSize())"))
+        assertTrue(root.contains("WebPane(Modifier.fillMaxSize(), previewVisible = watchTab)"))
         assertTrue(root.contains("visible = tab != Tab.Watch.ordinal && !inPip"))
         assertTrue(root.contains("AAYoutubePageHeader("))
         assertTrue(root.contains("Crossfade("))
