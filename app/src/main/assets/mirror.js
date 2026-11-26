@@ -58,6 +58,35 @@
     if (userAction(4000)) send('seek', Math.round(v.currentTime * 1000));
   }, true);
 
+  // Swipe down on the video: the phone's mini-player (same gesture as the normal player).
+  var swipeStart = null;
+  document.addEventListener('touchstart', function (e) {
+    swipeStart = null;
+    if (M.videoOnly || e.touches.length !== 1) return;
+    if (!/^\/(watch|live\/)/.test(location.pathname)) return;
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var full = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (!full && !t.closest('.html5-video-player,#player-container-id,#player,ytm-player,' +
+        'ytm-watch-player,ytm-player-component,#player-control-container,video')) return;
+    swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', function (e) {
+    var start = swipeStart;
+    swipeStart = null;
+    if (!start || !e.isTrusted || !e.changedTouches.length) return;
+    var dx = e.changedTouches[0].clientX - start.x;
+    var dy = e.changedTouches[0].clientY - start.y;
+    if (dy < 75 || Math.abs(dx) > dy * 0.65 || Date.now() - start.at > 1100) return;
+    // Like the YouTube app: from fullscreen, a swipe down first leaves fullscreen.
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (err) {}
+      return;
+    }
+    send('mini', 0);
+  }, { capture: true, passive: true });
+  document.addEventListener('touchcancel', function () { swipeStart = null; }, true);
+
   /** Follow the engine. Small drift: nudge the rate; large drift: one seek. */
   M.sync = function (posMs, playing, rate) {
     var v = vid();

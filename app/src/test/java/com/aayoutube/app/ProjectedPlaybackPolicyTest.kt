@@ -150,7 +150,7 @@ class ProjectedPlaybackPolicyTest {
         assertFalse(PhoneMirrorPolicy.userSelection(0, 10_000))
         assertTrue(PhoneMirrorPolicy.userSelection(9_000, 10_000))
         assertFalse(PhoneMirrorPolicy.userSelection(1_000, 10_000))
-        assertEquals(setOf("play", "pause", "seek"), PhoneMirrorPolicy.ACTIONS)
+        assertEquals(setOf("play", "pause", "seek", "mini"), PhoneMirrorPolicy.ACTIONS)
     }
 
     // ------------------------------------------------------------ phone navigation
@@ -255,5 +255,18 @@ class ProjectedPlaybackPolicyTest {
         m.start("Video->Music", "", 0, 1, true, 0)
         assertFalse(m.running)
         assertNull(m.onState("", true, false, false, false, 1_000, 1, 100))
+    }
+
+    @Test fun phonePlayerSwipeDownOpensThePhoneMiniPlayerOnly() {
+        val js = listOf(java.io.File("app/src/main/assets/mirror.js"), java.io.File("../app/src/main/assets/mirror.js"))
+            .first { it.isFile }.readText()
+        val swipe = js.substringAfter("document.addEventListener('touchend'").substringBefore("touchcancel")
+        assertTrue(swipe.contains("dy < 75 || Math.abs(dx) > dy * 0.65"))
+        assertTrue(swipe.contains("send('mini', 0)"))
+        val mirror = listOf(java.io.File("app/src/main/java/com/aayoutube/app/PhoneMirror.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/PhoneMirror.kt")).first { it.isFile }.readText()
+        val control = mirror.substringAfter("private fun onControl(").substringBefore("private fun onNavigatedTo(")
+        assertTrue(control.contains("\"mini\" -> if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()"))
+        assertFalse("never shrinks the car player", control.contains("WebHost.enterMini()"))
     }
 }

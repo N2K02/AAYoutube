@@ -146,6 +146,8 @@ internal object PhoneMirror {
             "play" -> WebHost.cmd("play")
             "pause" -> WebHost.cmd("pause")
             "seek" -> WebHost.seekTo(value)
+            // Phone-only: the car player and its layout are untouched.
+            "mini" -> if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()
         }
     }
 
@@ -259,7 +261,7 @@ internal object PhoneMirrorPolicy {
     const val IDLE_SYNC_MS = 3_000L
     const val MIN_RELOAD_MS = 1_500L
     const val USER_SELECTION_MS = 3_000L
-    val ACTIONS = setOf("play", "pause", "seek")
+    val ACTIONS = setOf("play", "pause", "seek", "mini")
 
     private fun safeToken(value: String?, lengths: IntRange) =
         value?.takeIf { v -> v.length in lengths && v.all { it.isLetterOrDigit() || it == '_' || it == '-' } }
