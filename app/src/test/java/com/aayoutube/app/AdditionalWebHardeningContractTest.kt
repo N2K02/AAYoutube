@@ -65,7 +65,7 @@ class AdditionalWebHardeningContractTest {
         assertTrue(player.contains("private fun authorized(token: String?): Boolean = token == bridgeToken"))
         assertTrue(player.contains("if (!authorized(token)) return false"))
         assertTrue(player.contains("window.top===window.self"))
-        assertTrue(browse.contains("if (providedToken == token) BrowseHost.openInPlayer(url)"))
+        assertTrue(browse.contains("if (providedToken == token) select(url)"))
         assertTrue(js.contains("N.otherMediaHold(BRIDGE_TOKEN)"))
         assertTrue(js.contains("window.__AAY_BROWSE_TOKEN"))
         assertFalse(browse.contains("Ignored a request to open a non-video link: \$url"))
