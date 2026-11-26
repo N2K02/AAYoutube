@@ -176,12 +176,6 @@ object WebHost {
             "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
     }
 
-    /** Confirmed (not estimated) audio: the system reports an active playback stream. */
-    private fun audioOutputActive(): Boolean = runCatching {
-        (app.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager)
-            .activePlaybackConfigurations.isNotEmpty()
-    }.getOrDefault(false)
-
     private fun reportModeHandoff(state: Snap) {
         if (!modeMeter.running) return
         when (val e = modeMeter.onState(state.id, state.playing, state.buffering, state.userPaused,
@@ -191,8 +185,7 @@ object WebHost {
             is ModeTransitionMeter.Event.Completed -> {
                 modeHandoffStartedAt = 0L
                 AppLog.add("CAR", "Mode handoff complete direction=${e.direction} elapsedMs=${e.elapsedMs} " +
-                    "interruptionMs=${e.interruptionMs}(estimated from the playback clock) " +
-                    "audioActiveAtCompletion=${audioOutputActive()}(confirmed by AudioManager) " +
+                    "estimatedInterruptionMs=${e.interruptionMs}(playback clock; audible output is not measured) " +
                     "bufferingMs=${e.bufferingMs} " +
                     "rendererRecreated=${e.rendererRecreated} positionMs=${state.posMs}")
             }
@@ -932,19 +925,31 @@ object WebHost {
         Uri.parse(web?.url.orEmpty()).takeIf { it.path == "/watch" }?.getQueryParameter("list")
     }.getOrNull()
 
-    /** The engine's real media clock (not the sparse snapshot reports). */
-    fun mediaClock(result: (posMs: Long, playing: Boolean, rate: Double) -> Unit) {
+    /**
+     * The engine's real media clock with its identity and health. The answer is dropped if the
+     * engine's renderer was replaced while the request was pending.
+     */
+    fun mediaClock(result: (EngineClock) -> Unit) {
         val w = web ?: return
+        val gen = webGeneration
         w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
-            "document.querySelector('video');if(!v)return null;return JSON.stringify([" +
-            "Math.round(v.currentTime*1000),!v.paused&&!v.ended,v.playbackRate||1])})()") { raw ->
+            "document.querySelector('video');if(!v)return null;" +
+            "var p=document.getElementById('movie_player')||document.querySelector('.html5-video-player');" +
+            "var id=new URLSearchParams(location.search).get('v')||'';" +
+            "return JSON.stringify([Math.round(v.currentTime*1000),!v.paused&&!v.ended,v.playbackRate||1,id," +
+            "!!v.seeking,v.readyState>=3,!!(p&&p.classList&&p.classList.contains('ad-showing'))])})()") { raw ->
+            if (gen != webGeneration || web !== w) return@evaluateJavascript
             runCatching {
                 val json = org.json.JSONTokener(raw).nextValue() as? String ?: return@runCatching
                 val a = org.json.JSONArray(json)
-                result(a.getLong(0).coerceAtLeast(0L), a.getBoolean(1), a.getDouble(2).coerceIn(0.25, 4.0))
+                result(EngineClock(a.getString(3), a.getLong(0).coerceAtLeast(0L), a.getBoolean(1),
+                    a.getDouble(2).coerceIn(0.25, 4.0), a.getBoolean(4), a.getBoolean(5), a.getBoolean(6)))
             }
         }
     }
+
+    /** Sign-out: selection dedupe must not carry over from the old session. */
+    fun resetSelectionGuards() = openDeduper.reset()
 
     /** Seek the single shared player (phone remote, car, media session). */
     fun seekTo(positionMs: Long) {

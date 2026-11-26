@@ -114,7 +114,7 @@ class PhoneMirrorPolicyTest {
         s.pauses++; s.resumes++; s.crashes++; s.recoveries++; s.duplicates++
         val line = s.summary()
         listOf("syncs=3", "driftMaxMs=4000", "nudges=1", "seeks=1", "ads=1", "pauses=1", "resumes=1",
-            "crashes=1", "recoveries=1", "duplicateNavBlocked=1").forEach { assertTrue(it, line.contains(it)) }
+            "crashes(total)=1", "recoveries(total)=1", "duplicateNavBlocked=1").forEach { assertTrue(it, line.contains(it)) }
         s.reset()
         assertTrue(s.isEmpty())
     }
@@ -127,7 +127,7 @@ class PhoneMirrorPolicyTest {
         // Behaviour is covered by .github/scripts/mirror.test.cjs; this guards the wiring only.
         assertTrue(js.contains("lockProp('muted', true)"))
         assertTrue(js.contains("lockProp('volume', 0)"))
-        assertTrue(js.contains("if (M.stopped) return Promise.resolve()"))
+        assertTrue(js.contains("if (S.stopped) return Promise.resolve()"))
     }
 
     @Test fun lifecycleResumesAfterRendererRecreationAndQuitReleasesEverything() {
@@ -140,5 +140,62 @@ class PhoneMirrorPolicyTest {
         val host = listOf(java.io.File("app/src/main/java/com/aayoutube/app/WebHost.kt"),
             java.io.File("../app/src/main/java/com/aayoutube/app/WebHost.kt")).first { it.isFile }.readText()
         assertTrue(host.substringAfter("fun release(preserveCarOwners").contains("PhoneMirror.release()"))
+    }
+
+    // ------------------------------------------------------------ round 2
+
+    @Test fun bridgeAcceptsOnlyTheRightTokenAndKnownActions() {
+        val got = mutableListOf<String>()
+        val b = MirrorBridge("secret", { true }) { a, _ -> got += a }
+        b.control("pause", 0.0, "wrong")
+        b.control("pause", 0.0, null)
+        b.control("evil", 0.0, "secret")
+        b.control("next", 0.0, "secret")
+        b.control("prev", 0.0, "secret")
+        b.control("seek", 12_345.0, "secret")
+        assertEquals(listOf("next", "prev", "seek"), got)
+        assertTrue("hidden documents start stopped", b.hidden())
+        assertFalse(MirrorBridge("s", { false }) { _, _ -> }.hidden())
+    }
+
+    @Test fun phoneGivesWayToThePrimaryPlayerUnderLoadAndRestoresOnlyWhenCalm() {
+        val g = QualityGovernor(10_000)
+        assertFalse(g.degraded(false, 0))
+        assertTrue("primary buffering", g.degraded(true, 1_000))
+        assertTrue("still within the calm period", g.degraded(false, 8_000))
+        assertFalse("calm for long enough", g.degraded(false, 11_001))
+        assertTrue(PhoneMirrorPolicy.degradeForHeat(2))
+        assertFalse(PhoneMirrorPolicy.degradeForHeat(1))
+        assertTrue(PhoneMirrorPolicy.suspendForHeat(3))
+        assertFalse(PhoneMirrorPolicy.suspendForHeat(2))
+    }
+
+    @Test fun intervalStatsRollButCrashesStayCumulative() {
+        val s = MirrorSyncStats()
+        s.record(SyncResult(200, "ok")); s.crashes = 2; s.recoveries = 1; s.timeouts = 3
+        s.roll()
+        assertEquals(0, s.syncs)
+        assertEquals(0, s.timeouts)
+        assertEquals(2, s.crashes)
+        assertEquals(1, s.recoveries)
+    }
+
+    @Test fun staleAnswersAreRejectedByGenerationAndVideo() {
+        // The engine answered for a video the phone is no longer following (rapid selection).
+        assertFalse(PhoneMirrorPolicy.current(5, 5, "AAAAAAAAAAA", "BBBBBBBBBBB"))
+        // The mirror page was replaced while the answer was in flight.
+        assertFalse(PhoneMirrorPolicy.current(5, 6, "AAAAAAAAAAA", "AAAAAAAAAAA"))
+    }
+
+    @Test fun phoneBrowseUsesTheExistingNavigationAndSecondaryPlayerNeverInjectsLate() {
+        val browse = listOf(java.io.File("app/src/main/java/com/aayoutube/app/BrowseHost.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/BrowseHost.kt")).first { it.isFile }.readText()
+        val fn = browse.substringAfter("fun phoneBrowse(").substringBefore("fun phoneMini(")
+        assertTrue(fn.contains("phone.navigate(url)"))
+        assertFalse(fn.contains("showFrom"))
+        val mirror = listOf(java.io.File("app/src/main/java/com/aayoutube/app/PhoneMirror.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/PhoneMirror.kt")).first { it.isFile }.readText()
+        assertFalse("no late script injection after the page has started", mirror.contains("view.evaluateJavascript(script()"))
+        assertFalse("no generic audio-configuration claim", mirror.contains("activePlaybackConfigurations"))
     }
 }

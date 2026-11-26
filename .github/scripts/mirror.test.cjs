@@ -97,7 +97,7 @@ function page(options = {}) {
     setTimeout(fn, ms) { const id = nextTimer++; timers.set(id, { fn, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
     getComputedStyle: () => ({ transform: 'matrix(1, 0, 0, 1, 0, 10)', contain: 'none', filter: 'none', willChange: '' }),
-    AAYMirror: { control(action, value, token) { bridgeCalls.push({ action, value, token }); } },
+    AAYMirror: { control(action, value, token) { bridgeCalls.push({ action, value, token }); }, hidden: () => !!options.hidden },
     __AAYM_TOKEN: 'tok',
     addEventListener() {},
     dispatchEvent() { sandbox.resizeEvents++; },
@@ -105,7 +105,7 @@ function page(options = {}) {
   };
   sandbox.window = sandbox;
   sandbox.self = sandbox;
-  sandbox.top = sandbox;
+  sandbox.top = options.frame ? {} : sandbox;
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox);
 
@@ -221,7 +221,7 @@ test('only a trusted tap inside the player counts as the user\'s control action'
   p.fire('pause', p.video);
   assert.equal(p.bridgeCalls.length, 0, 'a tap outside the player (feed, scroll) is not a control');
 
-  const inside = { tagName: 'DIV', closest: (sel) => (/progress/.test(sel) ? null : inside) };
+  const inside = { tagName: 'DIV', closest: (sel) => (/progress|next|prev/i.test(sel) ? null : inside) };
   p.fire('click', inside, { isTrusted: false });
   p.fire('pause', p.video);
   assert.equal(p.bridgeCalls.length, 0, 'an untrusted (YouTube generated) event is not a control');
@@ -234,7 +234,7 @@ test('only a trusted tap inside the player counts as the user\'s control action'
 
 test('a scroll that ends on the player is not a control tap', () => {
   const p = page();
-  const inside = { tagName: 'DIV', closest: (sel) => (/progress/.test(sel) ? null : inside) };
+  const inside = { tagName: 'DIV', closest: (sel) => (/progress|next|prev/i.test(sel) ? null : inside) };
   p.fire('touchstart', inside, { touches: [{ clientX: 10, clientY: 10 }] });
   p.fire('touchend', inside, { changedTouches: [{ clientX: 12, clientY: 200 }] });
   p.fire('pause', p.video);
@@ -248,7 +248,7 @@ test('a scroll that ends on the player is not a control tap', () => {
 
 test('the engine\'s own corrections are never reported back as user actions', () => {
   const p = page();
-  const inside = { tagName: 'DIV', closest: (sel) => (/progress/.test(sel) ? null : inside) };
+  const inside = { tagName: 'DIV', closest: (sel) => (/progress|next|prev/i.test(sel) ? null : inside) };
   p.fire('click', inside);
   p.video.paused = false;
   p.setTime(10);
@@ -289,4 +289,87 @@ test('the phone player decodes a size-appropriate quality', () => {
   const n = p.qualityCalls.length;
   p.M.layout(false);
   assert.equal(p.qualityCalls.length, n, 'no repeated quality changes');
+});
+
+const tapTarget = () => { const t = { tagName: 'DIV', closest: (sel) => (/progress|next|prev/i.test(sel) ? null : t) }; return t; };
+const barTarget = () => { const t = { tagName: 'DIV', closest: (sel) => (/next|prev/i.test(sel) ? null : t) }; return t; };
+
+test('a document loaded while hidden starts stopped and cannot autoplay', async () => {
+  const p = page({ hidden: true });
+  assert.equal(p.M.stopped, true);
+  await p.video.play();
+  assert.equal(p.video.playCalls, 0);
+});
+
+test('audio isolation also covers embedded frames, before anything else runs', async () => {
+  const p = page({ frame: true });
+  assert.equal(p.sandbox.__aayMirror, undefined, 'a frame gets no controls, only the mute lock');
+  p.video.volume = 1;
+  p.video.muted = false;
+  assert.equal(p.video.muted, true);
+  assert.equal(p.video.volume, 0);
+  await p.video.play();
+  assert.equal(p.video.muted, true);
+});
+
+test('one gesture authorises one action only', () => {
+  const p = page();
+  p.fire('click', tapTarget());
+  p.fire('pause', p.video);
+  p.fire('play', p.video);
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['pause']);
+});
+
+test('a tap cannot authorise a seek and a seek-bar drag cannot authorise play or pause', () => {
+  const p = page();
+  p.fire('click', tapTarget());
+  p.fire('seeked', p.video);
+  assert.equal(p.bridgeCalls.length, 0);
+  p.fire('click', barTarget());
+  p.fire('pause', p.video); // YouTube pauses while scrubbing
+  p.fire('play', p.video);
+  assert.equal(p.bridgeCalls.length, 0);
+  p.fire('seeked', p.video);
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['seek']);
+});
+
+test('a seek made by synchronisation is never reported as the user\'s, even if it lands late', () => {
+  const p = page();
+  p.fire('click', barTarget());
+  p.advance(1600); // the user hold is over, the engine moved on
+  p.setTime(0);
+  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', false, ''), /seek$/);
+  p.advance(3500); // the seeked event arrives long after the call
+  p.fire('seeked', p.video);
+  assert.equal(p.bridgeCalls.length, 0);
+});
+
+test('native Next and Previous are forwarded explicitly', () => {
+  const p = page();
+  const next = { tagName: 'BUTTON', closest: (sel) => (/ytp-next-button/.test(sel) || /html5-video-player/.test(sel) ? next : null) };
+  const prev = { tagName: 'BUTTON', closest: (sel) => (/ytp-prev-button/.test(sel) ? prev : /html5-video-player/.test(sel) ? prev : null) };
+  p.fire('click', next);
+  p.fire('click', prev);
+  assert.deepEqual(p.bridgeCalls.map((c) => c.action), ['next', 'prev']);
+});
+
+test('no seek while the engine is buffering or seeking', () => {
+  const p = page();
+  p.setTime(0);
+  const w = p.seekWrites();
+  assert.match(p.M.sync(30_000, true, 1, 'AAAAAAAAAAA', true, ''), /wait$/);
+  assert.equal(p.seekWrites(), w);
+});
+
+test('quality drops under load and is restored when the cap is lifted, without churn', () => {
+  const p = page();
+  p.M.layout(false);
+  p.setTime(10);
+  p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, 'small');
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+  const n = p.qualityCalls.length;
+  p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, 'small');
+  assert.equal(p.qualityCalls.length, n);
+  p.M.sync(10_000, true, 1, 'AAAAAAAAAAA', false, '');
+  assert.deepEqual(p.qualityCalls.at(-1), ['large', 'large']);
 });

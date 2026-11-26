@@ -8,8 +8,10 @@ import android.content.ContextWrapper
 import android.content.MutableContextWrapper
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
@@ -64,7 +66,12 @@ internal object PhoneMirror {
     private var lastStatsAt = 0L
     private var lastDriftMs: Long? = null
     private var generation = 0
+    private var syncSeq = 0
     private var syncInFlight = false
+    @Volatile private var hiddenFlag = true
+    private var transportAt = 0L
+    private var heatSuspended = false
+    private val governor = QualityGovernor()
     private var syncStartedAt = 0L
     private var customView: View? = null
     private var customCallback: WebChromeClient.CustomViewCallback? = null
@@ -73,6 +80,11 @@ internal object PhoneMirror {
     val stats = MirrorSyncStats()
     @Volatile private var pageHost: String? = "youtube.com"
     val revision = MutableStateFlow(0)
+
+    /** Without document-start injection the mute lock could come too late: no secondary player then. */
+    val supported: Boolean by lazy {
+        runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.getOrDefault(false)
+    }
     /** Too many renderer crashes: the phone shows its browse page instead of looping. */
     val failed = MutableStateFlow(false)
 
@@ -107,7 +119,9 @@ internal object PhoneMirror {
         val on = wantVisible
         if (visible == on) return
         visible = on
+        hiddenFlag = !on                 // new documents start in this state
         main.removeCallbacks(syncTick)
+        main.removeCallbacks(idleRelease)
         if (on) {
             stats.resumes++
             w.onResume()
@@ -120,7 +134,26 @@ internal object PhoneMirror {
             hideCustomView()
             w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
             w.onPause()
+            // Pausing a WebView does not promise the hardware decoder is freed: after a bounded
+            // hidden period the whole secondary renderer is released.
+            main.postDelayed(idleRelease, PhoneMirrorPolicy.HIDDEN_RELEASE_MS)
         }
+    }
+
+    private val idleRelease = Runnable {
+        if (!visible && web != null) {
+            AppLog.add("MIRROR", "Phone player released after ${PhoneMirrorPolicy.HIDDEN_RELEASE_MS / 1000}s hidden")
+            teardown()
+            revision.value++
+        }
+    }
+
+    /** After the crash limit the user may try the phone player again. */
+    fun retry() {
+        crashGuard.reset()
+        reloadGuard.reset()
+        failed.value = false
+        revision.value++
     }
 
     /** Mini-player and PiP show only the video; full shows YouTube's watch page. */
@@ -150,9 +183,13 @@ internal object PhoneMirror {
     fun onSessionCleared() {
         val w = web ?: return
         generation++
+        syncSeq++
         syncInFlight = false
         loadedId = ""
         pageId = null
+        tapAt = 0L
+        transportAt = 0L
+        WebHost.resetSelectionGuards()
         w.stopLoading()
         w.clearCache(true)
         w.clearHistory()
@@ -187,6 +224,9 @@ internal object PhoneMirror {
 
     private fun teardown() {
         main.removeCallbacks(syncTick)
+        main.removeCallbacks(idleRelease)
+        hiddenFlag = true
+        syncSeq++
         hideCustomView()
         val w = web
         web = null
@@ -223,6 +263,19 @@ internal object PhoneMirror {
                 main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
                 return
             }
+            val thermal = thermalStatus()
+            if (PhoneMirrorPolicy.suspendForHeat(thermal)) {
+                if (!heatSuspended) {
+                    heatSuspended = true
+                    AppLog.add("MIRROR", "Phone player suspended: thermal status=$thermal")
+                    w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
+                }
+                main.postDelayed(this, PhoneMirrorPolicy.IDLE_SYNC_MS)
+                return
+            }
+            heatSuspended = false
+            // The primary player always comes first: the phone copy gives way under load.
+            val cap = if (governor.degraded(s.buffering || PhoneMirrorPolicy.degradeForHeat(thermal), now)) "small" else ""
             // An advertisement on the engine has its own clock: never copy it onto the video.
             if (s.ad) {
                 stats.ads++
@@ -234,20 +287,29 @@ internal object PhoneMirror {
                 main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
                 return
             }
+            if (syncInFlight) stats.timeouts++
             syncInFlight = true
             syncStartedAt = now
+            val seq = ++syncSeq          // a later request supersedes every earlier answer
             val gen = generation
             val id = s.id
-            WebHost.mediaClock { posMs, playing, rate ->
-                if (!PhoneMirrorPolicy.current(gen, generation, id, WebHost.snapshot.value.id) ||
-                    web !== w || !visible) {
+            WebHost.mediaClock { clock ->
+                val stale = seq != syncSeq || web !== w || !visible ||
+                    !PhoneMirrorPolicy.current(gen, generation, id, clock.id) || WebHost.snapshot.value.id != id
+                if (stale) {
                     stats.stale++
-                    if (gen == generation) syncInFlight = false
+                    if (seq == syncSeq) syncInFlight = false
                     return@mediaClock
                 }
-                w.evaluateJavascript(
-                    "window.__aayMirror&&window.__aayMirror.sync($posMs,$playing,$rate,${JSONObject.quote(id)})") { raw ->
-                    if (gen != generation || web !== w) { stats.stale++; return@evaluateJavascript }
+                if (clock.ad) {
+                    stats.ads++
+                    syncInFlight = false
+                    return@mediaClock
+                }
+                val busy = clock.seeking || !clock.ready
+                w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.sync(" +
+                    "${clock.posMs},${clock.playing},${clock.rate},${JSONObject.quote(id)},$busy,${JSONObject.quote(cap)})") { raw ->
+                    if (seq != syncSeq || gen != generation || web !== w) { stats.stale++; return@evaluateJavascript }
                     syncInFlight = false
                     val result = SyncResult.parse(raw)
                     stats.record(result)
@@ -257,6 +319,11 @@ internal object PhoneMirror {
             main.postDelayed(this, PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
         }
     }
+
+    private fun thermalStatus(): Int =
+        if (Build.VERSION.SDK_INT >= 29) runCatching {
+            (app.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus
+        }.getOrDefault(0) else 0
 
     private fun load(w: WebView, s: Snap, now: Long) {
         if (!reloadGuard.record(now)) {
@@ -268,6 +335,7 @@ internal object PhoneMirror {
         if (url == null || !WebHost.isSafePageUrl(url)) return
         stats.reloads++
         generation++               // sync state of the previous page is void
+        syncSeq++
         syncInFlight = false
         lastDriftMs = null
         loadedId = s.id
@@ -284,6 +352,7 @@ internal object PhoneMirror {
         if (stats.isEmpty()) return
         val rt = Runtime.getRuntime()
         AppLog.add("MIRROR", stats.summary() + " visible=$visible heapMb=${(rt.totalMemory() - rt.freeMemory()) shr 20}")
+        stats.roll()
     }
 
     /** From the mirror's own YouTube controls (trusted touches only). */
@@ -293,6 +362,9 @@ internal object PhoneMirror {
             "play" -> WebHost.cmd("play")
             "pause" -> WebHost.cmd("pause")
             "seek" -> WebHost.seekTo(value)
+            // Explicit transport: the engine moves, the mirror then follows (its own navigation is ignored).
+            "next" -> { transportAt = SystemClock.elapsedRealtime(); WebHost.cmd("next") }
+            "prev" -> { transportAt = SystemClock.elapsedRealtime(); WebHost.cmd("prev") }
             // Phone-only: the car player and its layout are untouched.
             "mini" -> if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()
         }
@@ -303,7 +375,8 @@ internal object PhoneMirror {
      * Only a real tap counts as the user's choice; YouTube's own autoplay never does.
      */
     private fun onNavigatedTo(uri: Uri, alreadyShown: Boolean): Boolean {
-        val tapped = PhoneMirrorPolicy.userSelection(tapAt, SystemClock.elapsedRealtime())
+        val now = SystemClock.elapsedRealtime()
+        val tapped = PhoneMirrorPolicy.userSelection(tapAt, now) && now - transportAt > PhoneMirrorPolicy.TRANSPORT_SUPPRESS_MS
         return when (PhoneMirrorPolicy.classify(uri.path)) {
             PhoneMirrorPolicy.Page.WATCH -> {
                 val id = uri.getQueryParameter("v") ?: return false
@@ -392,8 +465,12 @@ internal object PhoneMirror {
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
         val t = token
-        w.addJavascriptInterface(MirrorBridge(t) { action, value ->
-            main.post { if (web === w && token == t) onControl(action, value) }
+        w.addJavascriptInterface(MirrorBridge(t, { hiddenFlag }) { action, value ->
+            // Only the current document of the current, visible renderer, showing the engine's video.
+            main.post {
+                if (web === w && token == t && visible && loadedId.isNotEmpty() &&
+                    loadedId == WebHost.snapshot.value.id) onControl(action, value)
+            }
         }, "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
@@ -422,7 +499,8 @@ internal object PhoneMirror {
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
-                if (uri.scheme != "https" || !WebHost.isSafePageUrl(uri.toString())) return true
+                if (web !== view || uri.scheme != "https" || !WebHost.isSafePageUrl(uri.toString())) return true
+                if (!request.isForMainFrame) return false
                 return onNavigatedTo(uri, alreadyShown = false)
             }
 
@@ -435,7 +513,6 @@ internal object PhoneMirror {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 pageHost = runCatching { Uri.parse(url).host }.getOrNull()
-                if (handler == null && WebHost.isYouTubeHost(pageHost)) view.evaluateJavascript(script(), null)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
@@ -478,7 +555,15 @@ internal object PhoneMirror {
 }
 
 /** What the mirror page script can call. */
-internal class MirrorBridge(private val token: String, private val onControl: (String, Long) -> Unit) {
+internal class MirrorBridge(
+    private val token: String,
+    private val isHidden: () -> Boolean,
+    private val onControl: (String, Long) -> Unit,
+) {
+    /** A new document asks first: while hidden it starts stopped and cannot autoplay. */
+    @JavascriptInterface
+    fun hidden(): Boolean = isHidden()
+
     @JavascriptInterface
     fun control(action: String, value: Double, providedToken: String?) {
         if (providedToken != token || action !in PhoneMirrorPolicy.ACTIONS) return
@@ -517,7 +602,7 @@ internal data class SyncResult(val driftMs: Long?, val action: String) {
 internal class MirrorSyncStats {
     var syncs = 0; var nudges = 0; var seeks = 0; var ads = 0; var userHolds = 0
     var mismatches = 0; var overlapSkipped = 0; var stale = 0; var duplicates = 0
-    var pauses = 0; var resumes = 0; var crashes = 0; var recoveries = 0; var reloads = 0
+    var pauses = 0; var resumes = 0; var crashes = 0; var recoveries = 0; var reloads = 0; var timeouts = 0
     private var driftSum = 0L
     var driftMax = 0L
         private set
@@ -541,14 +626,21 @@ internal class MirrorSyncStats {
     fun isEmpty() = syncs == 0 && reloads == 0 && crashes == 0 && pauses == 0 && resumes == 0 && duplicates == 0
     fun avgDriftMs(): Long = if (syncs == 0) 0L else driftSum / syncs
 
-    fun summary() = "stats syncs=$syncs driftAvgMs=${avgDriftMs()} driftMaxMs=$driftMax nudges=$nudges seeks=$seeks " +
-        "ads=$ads userHolds=$userHolds mismatches=$mismatches overlapSkipped=$overlapSkipped stale=$stale " +
+    /** Interval statistics are logged then cleared; crashes and recoveries stay cumulative. */
+    fun roll() {
+        val c = crashes; val r = recoveries
+        reset()
+        crashes = c; recoveries = r
+    }
+
+    fun summary() = "interval stats syncs=$syncs driftAvgMs=${avgDriftMs()} driftMaxMs=$driftMax nudges=$nudges seeks=$seeks " +
+        "ads=$ads userHolds=$userHolds mismatches=$mismatches overlapSkipped=$overlapSkipped timeouts=$timeouts stale=$stale " +
         "duplicateNavBlocked=$duplicates pauses=$pauses resumes=$resumes reloads=$reloads " +
-        "crashes=$crashes recoveries=$recoveries"
+        "crashes(total)=$crashes recoveries(total)=$recoveries"
 
     fun reset() {
         syncs = 0; nudges = 0; seeks = 0; ads = 0; userHolds = 0; mismatches = 0; overlapSkipped = 0
-        stale = 0; duplicates = 0; pauses = 0; resumes = 0; crashes = 0; recoveries = 0; reloads = 0
+        stale = 0; timeouts = 0; duplicates = 0; pauses = 0; resumes = 0; crashes = 0; recoveries = 0; reloads = 0
         driftSum = 0L; driftMax = 0L
     }
 }
@@ -566,11 +658,19 @@ internal object PhoneMirrorPolicy {
     const val MIN_POKE_MS = 250L
     const val SEEK_POKE_MS = 2_500L
     const val STATS_MS = 30_000L
+    const val HIDDEN_RELEASE_MS = 60_000L
+    const val TRANSPORT_SUPPRESS_MS = 2_500L
+    const val THERMAL_DEGRADE = 2   // PowerManager.THERMAL_STATUS_MODERATE
+    const val THERMAL_SUSPEND = 3   // PowerManager.THERMAL_STATUS_SEVERE
+    const val STABLE_BEFORE_RESTORE_MS = 10_000L
     const val MAX_CRASHES = 3
     const val CRASH_WINDOW_MS = 60_000L
     const val MAX_RELOADS = 6
     const val RELOAD_WINDOW_MS = 60_000L
-    val ACTIONS = setOf("play", "pause", "seek", "mini")
+    val ACTIONS = setOf("play", "pause", "seek", "mini", "next", "prev")
+
+    fun degradeForHeat(thermal: Int) = thermal >= THERMAL_DEGRADE
+    fun suspendForHeat(thermal: Int) = thermal >= THERMAL_SUSPEND
 
     enum class Page { WATCH, HOME, SEARCH, OTHER }
 
@@ -622,3 +722,24 @@ internal object PhoneMirrorPolicy {
         else -> kotlin.math.abs(next.posMs - previous.posMs) > SEEK_POKE_MS
     }
 }
+
+/** Phone quality gives way under load and returns only after playback has been calm for a while. */
+internal class QualityGovernor(private val stableMs: Long = PhoneMirrorPolicy.STABLE_BEFORE_RESTORE_MS) {
+    private var degradedUntil = 0L
+
+    fun degraded(pressure: Boolean, nowMs: Long): Boolean {
+        if (pressure) degradedUntil = nowMs + stableMs
+        return nowMs < degradedUntil
+    }
+}
+
+/** The primary engine's clock and health at one instant. */
+internal data class EngineClock(
+    val id: String,
+    val posMs: Long,
+    val playing: Boolean,
+    val rate: Double,
+    val seeking: Boolean,
+    val ready: Boolean,
+    val ad: Boolean,
+)

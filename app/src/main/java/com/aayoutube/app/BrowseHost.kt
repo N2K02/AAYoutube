@@ -335,7 +335,7 @@ object BrowseHost : BrowseSession() {
     /** The mirror's own YouTube Home/Search: browse it on the phone with the mini-player above. */
     fun phoneBrowse(url: String) {
         phoneMode.value = WebHost.PlayerMode.MINI
-        phone.showFrom(url)
+        phone.navigate(url) // also when the browse page already exists
     }
 
     fun phoneMini() {

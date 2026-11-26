@@ -27,7 +27,7 @@ class ProjectedPhoneNavigationTest {
         assertFalse(pane.contains("WebHost.closePlayer()"))
         // The phone shows the original YouTube player, decoding only while shown, released after projection.
         assertTrue(pane.contains("PhoneMirror.attach(ctx)"))
-        assertTrue(pane.contains("PhoneMirror.setVisible(mirrorShown && started && (visible || pip))"))
+        assertTrue(pane.contains("PhoneMirror.setVisible(mirrorShown && ((pip && started) || (resumed && visible)))"))
         assertTrue(pane.contains("PhoneMirror.release()"))
         assertFalse("no PixelCopy preview loop on the phone", pane.contains("CarPhonePreview"))
     }

@@ -1636,7 +1636,8 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     val phoneMode by BrowseHost.phoneMode.collectAsState()
     val revision by BrowseHost.phone.revision.collectAsState()
     val mirrorRevision by PhoneMirror.revision.collectAsState()
-    val mirrorFailed by PhoneMirror.failed.collectAsState()
+    val mirrorCrashed by PhoneMirror.failed.collectAsState()
+    val mirrorFailed = mirrorCrashed || !PhoneMirror.supported
     val activity = LocalContext.current.findActivity()
     val pip = activity?.previewPip?.value == true
     val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
@@ -1657,8 +1658,8 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
         if (browsing && visible && resumed) BrowseHost.phone.resume() else BrowseHost.phone.pause()
     }
     // Decode on the phone only while its video is actually on screen (PiP counts).
-    LaunchedEffect(mirrorShown, visible, started, pip, mirrorRevision) {
-        PhoneMirror.setVisible(mirrorShown && started && (visible || pip))
+    LaunchedEffect(mirrorShown, visible, started, resumed, pip, mirrorRevision) {
+        PhoneMirror.setVisible(mirrorShown && ((pip && started) || (resumed && visible)))
     }
     LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
     DisposableEffect(Unit) {
@@ -1680,6 +1681,21 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
                     },
                     onRelease = { BrowseHost.phone.detach(it) },
                 )
+            }
+        }
+        if (mirrorCrashed && hasVideo) {
+            // Lightweight fallback: what is playing on the car, and a way to try the phone player again.
+            androidx.compose.material3.Surface(
+                Modifier.align(Alignment.BottomCenter).padding(12.dp).zIndex(12f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                tonalElevation = 6.dp,
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(snap.title.ifBlank { "Playing on Android Auto" }, maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false))
+                    Spacer(Modifier.width(12.dp))
+                    androidx.compose.material3.TextButton(onClick = { PhoneMirror.retry() }) { Text("Retry") }
+                }
             }
         }
         if (mirrorShown) ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = visible && resumed,
