@@ -345,6 +345,7 @@ object WebHost {
     fun setCarScreen(on: Boolean) {
         if (carScreen.value == on) return
         carScreen.value = on
+        NativePlayback.onVisibilityChanged()
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
         js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
@@ -549,6 +550,7 @@ object WebHost {
     }
 
     private fun applyFeatures(f: FeatureFlags) {
+        NativePlayback.onVisibilityChanged()
         val desktopChanged = f.desktopSite != lastDesktop
         lastDesktop = f.desktopSite
         // The mini-player BrowseHost shares the same features and YouTube session.
@@ -1184,7 +1186,10 @@ object WebHost {
         js("window.__aay&&window.__aay.showCarControls&&window.__aay.showCarControls()")
     }
 
-    fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
+    fun pip(on: Boolean) {
+        if (on) NativePlayback.returnToWeb("pip-visible")
+        js("window.__aay&&window.__aay.pip($on)")
+    }
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
     fun pipSourceRect(out: android.graphics.Rect): Boolean {
@@ -1199,6 +1204,7 @@ object WebHost {
     }
 
     fun refreshBackgroundQuality() {
+        NativePlayback.onVisibilityChanged()
         js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
     }
 
@@ -1525,6 +1531,7 @@ object WebHost {
     }
 
     private fun resetSessionPlayback() {
+        NativePlayback.release()
         playbackWanted = false
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null

@@ -72,6 +72,7 @@ internal class NativeAudioEngine(
     private fun build(stream: AudioStream, positionMs: Long, offload: Boolean) {
         offloadRequested = offload
         offloadActive = false
+        sleepingForOffload = false
         decoderName = ""
         val http = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(false)
@@ -101,8 +102,8 @@ internal class NativeAudioEngine(
         p.setMediaItem(MediaItem.Builder().setUri(stream.url).setMimeType(stream.mimeType.substringBefore(';')).build(), positionMs)
         p.playWhenReady = false
         p.volume = 0f // silent until start(): never audible while web still plays
-        p.prepare()
         player = p
+        p.prepare()
         listener.log("state=preparing codec=${stream.codecMime} container=${stream.mimeType.substringBefore(';')} " +
             "bitrate=${stream.bitrate} offloadRequested=$offload startMs=$positionMs")
     }
@@ -118,13 +119,14 @@ internal class NativeAudioEngine(
     }
 
     override fun silence() {
+        started = false // callbacks from pausing must not publish or re-arm the clock
         player?.let { it.playWhenReady = false; it.volume = 0f }
         main.removeCallbacks(tick)
     }
 
     override fun pause() { player?.playWhenReady = false }
     override fun play() { player?.playWhenReady = true }
-    override fun seek(positionMs: Long) { player?.seekTo(positionMs) }
+    override fun seek(positionMs: Long) { player?.seekTo(positionMs); if (started) tick.run() }
     override fun positionMs(): Long = player?.currentPosition ?: 0L
 
     override fun release() {
@@ -142,14 +144,15 @@ internal class NativeAudioEngine(
         sleepingForOffload = false
     }
 
-    /** Position updates for the media session while started (1 s; offload sleep keeps it cheap). */
+    /** Position updates: sparse while DSP sleeps; state changes still report immediately. */
     private val tick = object : Runnable {
         override fun run() {
             val p = player ?: return
             if (!started) return
             listener.onState(p.isPlaying, p.playbackState == Player.STATE_BUFFERING, p.currentPosition, p.playWhenReady)
             main.removeCallbacks(this)
-            if (p.playWhenReady) main.postDelayed(this, 1_000L)
+            PlaybackHandoffPolicy.nativeClockIntervalMs(p.playWhenReady, offloadActive, sleepingForOffload)
+                ?.let { main.postDelayed(this, it) }
         }
     }
 
@@ -235,6 +238,7 @@ internal class NativeAudioEngine(
         override fun onSleepingForOffloadChanged(isSleepingForOffload: Boolean) {
             sleepingForOffload = isSleepingForOffload
             listener.log("offloadSleeping=$isSleepingForOffload")
+            if (started) tick.run()
         }
     }
 }

@@ -5,7 +5,7 @@ default and the fallback for everything.
 
 ## Status
 
-The engine, ownership coordinator, capability/offload probes and handoff are complete and tested.
+The engine, ownership coordinator and capability/offload probes are experimental; real-device handoff and offload verification remain required.
 **No stream source ships**: `StreamProviders.current` is `NoStreamProvider`, so with the switch on
 the app logs `NATIVE-AUDIO engine=web reason=NO_PROVIDER` once per video and the WebView keeps
 playing. NewPipeExtractor, InnerTune and OuterTune are GPL-3.0 (this repository is MIT) and extracting
@@ -27,8 +27,9 @@ A provider is accepted only if `authorized = true` (a source licensed for direct
 
 ### Ownership rules
 
+* Native audio is eligible only during background playback with no visible phone, PiP or car video; returning to video cancels pending preparation or returns ownership to WebView. The native position clock samples every 10 seconds while confirmed offload is sleeping, otherwise every second while playing.
 * Preparation is silent; the WebView keeps playing until native reports READY. Then: web silenced
-  (paused at `tiny`, explicit pause so no recovery resumes it) → native starts at the compensated position.
+  (paused at `tiny`, explicit pause so no recovery resumes it) → native starts at the compensated position. The WebView's asynchronous pause and network activity still require physical verification; a paused page alone does not prove video downloads have stopped.
 * While native owns: play/pause/seek from any controller go to native; next/prev, page navigation to
   another video and the end of the video return to the WebView (it owns queue and autoplay).
 * Native error → WebView resumes at the native position with the user's intent. Preparation timeout

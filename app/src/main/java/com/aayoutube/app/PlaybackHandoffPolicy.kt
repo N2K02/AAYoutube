@@ -36,6 +36,17 @@ internal object PlaybackHandoffPolicy {
     /** Positions closer than this to the end are not handed off (the next video is imminent). */
     const val END_MARGIN_MS = 5_000L
 
+    /** Native audio may replace video only when no visible player needs it. */
+    fun audioOnlyAllowed(featureOn: Boolean, backgroundPlay: Boolean, shown: Boolean, pip: Boolean, car: Boolean): Boolean =
+        featureOn && backgroundPlay && !shown && !pip && !car
+
+    /** The clock still reports periodically, but DSP sleep should not be interrupted every second. */
+    fun nativeClockIntervalMs(playWhenReady: Boolean, offloadActive: Boolean, sleeping: Boolean): Long? = when {
+        !playWhenReady -> null
+        offloadActive && sleeping -> 10_000L
+        else -> 1_000L
+    }
+
     /** Position now: a playing clock kept moving since it was captured. */
     fun positionAt(s: HandoffState, nowMs: Long): Long {
         val moved = if (s.playing && !s.userPaused) ((nowMs - s.capturedAtMs).coerceAtLeast(0L) * s.rate).toLong() else 0L

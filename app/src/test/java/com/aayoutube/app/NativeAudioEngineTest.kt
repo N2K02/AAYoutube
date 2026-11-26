@@ -198,6 +198,23 @@ class NativeAudioEngineTest {
         assertTrue(PlaybackHandoffPolicy.merge(playing.copy(playing = false, userPaused = true), 45_000, false, false, true).userPaused)
     }
 
+    @Test fun nativeAudioNeverTakesOverVisibleVideoOrDisabledBackgroundPlayback() {
+        assertTrue(PlaybackHandoffPolicy.audioOnlyAllowed(true, true, false, false, false))
+        assertFalse(PlaybackHandoffPolicy.audioOnlyAllowed(false, true, false, false, false))
+        assertFalse(PlaybackHandoffPolicy.audioOnlyAllowed(true, false, false, false, false))
+        assertFalse(PlaybackHandoffPolicy.audioOnlyAllowed(true, true, true, false, false))
+        assertFalse(PlaybackHandoffPolicy.audioOnlyAllowed(true, true, false, true, false))
+        assertFalse(PlaybackHandoffPolicy.audioOnlyAllowed(true, true, false, false, true))
+    }
+
+    @Test fun nativeClockAvoidsFrequentWakeupsWhileDspSleeps() {
+        assertEquals(1_000L, PlaybackHandoffPolicy.nativeClockIntervalMs(true, false, false))
+        assertEquals(1_000L, PlaybackHandoffPolicy.nativeClockIntervalMs(true, true, false))
+        assertEquals(1_000L, PlaybackHandoffPolicy.nativeClockIntervalMs(true, false, true))
+        assertEquals(10_000L, PlaybackHandoffPolicy.nativeClockIntervalMs(true, true, true))
+        assertNull(PlaybackHandoffPolicy.nativeClockIntervalMs(false, true, true))
+    }
+
     @Test fun handoffOnlyForOrdinaryPlayingVideos() {
         assertTrue(PlaybackHandoffPolicy.canHandToNative(playing, true).allowed)
         assertEquals("feature-off", PlaybackHandoffPolicy.canHandToNative(playing, false).reason)

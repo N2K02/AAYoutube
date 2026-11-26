@@ -2794,6 +2794,9 @@
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
   var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'tiny';
+  // Only an already enabled background battery saver may react earlier under pressure.
+  // Never change the visible player's quality or flip a saver already armed during a cool-down.
+  function bgSaverDelay() { return perfState.level >= 2 ? 20000 : perfState.level === 1 ? 30000 : BG_SAVER_DELAY; }
   var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
   function realHidden() {
     try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
@@ -2801,7 +2804,7 @@
   }
   function bgSaverActive() {
     if (A.audioOnly || !A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
-    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
+    if (bgSaver.broken || !bgSaver.since || (!bgSaver.armed && Date.now() - bgSaver.since < bgSaverDelay())) return false;
     if (isAd()) return false;
     var v = getVideo();
     if (!v || !isFinite(v.duration)) return false; // never on live streams
@@ -2897,6 +2900,7 @@
     console.log('[aay] performance level ' + perfState.level + ' -> ' + next);
     perfState.level = next;
     if (capChanged) { qualityApply.key = ''; applyPreferredQuality(); }
+    if (A.isBg && bgSaver.since && !bgSaver.armed) armBgSaverTimer();
   };
   function capForDevice(q) {
     var cap = effectiveCap();
@@ -3217,18 +3221,25 @@
     }, true);
   });
 
+  function armBgSaverTimer() {
+    clearTimeout(bgSaver.timer);
+    bgSaver.timer = 0;
+    if (!A.isBg || !bgSaver.since || bgSaver.armed || bgSaver.broken) return;
+    bgSaver.timer = setTimeout(function () {
+      bgSaver.timer = 0;
+      if (!bgSaverActive()) return;
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, Math.max(0, bgSaverDelay() - (Date.now() - bgSaver.since)) + 500);
+  }
   A.setBg = function (on) {
     var wasBg = A.isBg;
     A.isBg = !!on;
-    clearTimeout(bgSaver.timer);
     if (A.isBg && !wasBg) {
       bgSaver.since = Date.now();
-      bgSaver.timer = setTimeout(function () {
-        if (!bgSaverActive()) return;
-        qualityApply.key = '';
-        applyPreferredQuality();
-      }, BG_SAVER_DELAY + 500);
+      armBgSaverTimer();
     } else if (!A.isBg) {
+      clearTimeout(bgSaver.timer); bgSaver.timer = 0;
       bgSaver.since = 0; bgSaver.switchedAt = 0; bgSaver.pos = -1; bgSaver.armed = false;
       if (wasBg) qualityApply.key = ''; // visible again: saved quality right away
     }

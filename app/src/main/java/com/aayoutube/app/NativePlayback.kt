@@ -75,8 +75,18 @@ internal object NativePlayback {
         return web
     }
 
+    private fun audioOnlyAllowed(): Boolean = PlaybackHandoffPolicy.audioOnlyAllowed(
+        Features.current.nativeAudio, Features.current.backgroundPlay, WebHost.shown,
+        WebHost.inPip.value, WebHost.carProjectionActive() || WebHost.carDisplay,
+    )
+
+    /** Returning to any visible video surface cancels resolution/preparation or returns to video. */
+    fun onVisibilityChanged() {
+        if (!audioOnlyAllowed()) returnToWeb("video-visible-or-disabled")
+    }
+
     private fun maybeHandoff(s: Snap) {
-        if (!Features.current.nativeAudio) return
+        if (!audioOnlyAllowed()) return
         if (s.id == attemptedVideo) return
         val decision = PlaybackHandoffPolicy.canHandToNative(s, featureOn = true)
         if (!decision.allowed) return
@@ -85,7 +95,7 @@ internal object NativePlayback {
         val provider = StreamProviders.current
         scope.launch {
             val result = withContext(Dispatchers.IO) { StreamProviders.resolve(s.id, provider) }
-            if (serial != resolveSerial || !Features.current.nativeAudio ||
+            if (serial != resolveSerial || !audioOnlyAllowed() ||
                 StreamProviders.current !== provider || WebHost.snapshot.value.id != s.id) return@launch
             when (result) {
                 is StreamResult.Unavailable -> AppLog.add("NATIVE-AUDIO",
@@ -99,7 +109,7 @@ internal object NativePlayback {
     private fun startHandoff(streams: ResolvedStreams) {
         val current = WebHost.snapshot.value
         if (current.id != streams.videoId ||
-            !PlaybackHandoffPolicy.canHandToNative(current, Features.current.nativeAudio).allowed) return
+            !PlaybackHandoffPolicy.canHandToNative(current, audioOnlyAllowed()).allowed) return
         val c = coordinator() ?: return
         val now = SystemClock.elapsedRealtime()
         val route = currentRoute()
@@ -123,6 +133,7 @@ internal object NativePlayback {
 
     private val engineListener = object : NativeAudioEngine.Listener {
         override fun onReady() {
+            if (!audioOnlyAllowed()) { returnToWeb("video-visible-or-disabled"); return }
             coordinator?.onNativeReady(HandoffState.from(WebHost.snapshot.value, SystemClock.elapsedRealtime()))
         }
 

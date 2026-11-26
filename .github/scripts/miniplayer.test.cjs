@@ -2530,3 +2530,24 @@ test('decoder overload does not inherit bad windows after a video or counter res
     assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], reset + ': sustained new overload still handled');
   }
 });
+
+
+test('repeated background reports keep the saver timer and heat reduces the hidden-only delay', () => {
+  const p = playerPage({ quality: true, cfg: { lowQuality: true } });
+  p.flush();
+  p.window.__aay.setBg(true);
+  p.advance(10000);
+  p.window.__aay.setBg(true);
+  p.advance(51000); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'duplicate background report preserves deadline');
+  p.window.__aay.setBg(false);
+  p.window.__aay.perfLevel(1);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible quality unchanged');
+  p.window.__aay.setBg(true);
+  p.advance(31000); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'elevated heat shortens hidden grace');
+  p.window.__aay.perfLevel(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'cooling does not reverse an armed saver');
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+});
