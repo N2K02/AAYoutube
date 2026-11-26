@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * opening a video here sends it to the player page and expands it. It is created the first
  * time the mini player opens and paused whenever the app screen is hidden.
  */
-object BrowseHost {
+open class BrowseSession(private val onSelected: () -> Unit = {}) {
     // Network requests are intercepted off-thread: do not call WebView.getUrl()
     // inside shouldInterceptRequest.
     @Volatile private var adPageHost: String? = "youtube.com"
@@ -51,7 +51,7 @@ object BrowseHost {
     val created = MutableStateFlow(false)
     val revision = MutableStateFlow(0)
 
-    fun init(application: Application) {
+    open fun init(application: Application) {
         app = application
     }
 
@@ -92,7 +92,7 @@ object BrowseHost {
     fun resume() { web?.onResume() }
 
     /** Dispose the secondary WebView and its injected scripts during explicit Quit. */
-    fun release() {
+    open fun release() {
         val previous = web
         web = null
         runCatching { handler?.remove() }
@@ -108,13 +108,13 @@ object BrowseHost {
         revision.value++
     }
     /** A second YouTube WebView must not keep a stale account UI after sign-out. */
-    fun onSessionCleared() {
+    open fun onSessionCleared() {
         web?.clearCache(true)
         web?.loadUrl(WebHost.home())
     }
 
     /** Changes on Features also affect the browse page behind the mini player. */
-    fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
+    open fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
         val w = web ?: return
         w.settings.textZoom = if (browseDisplayId != android.view.Display.DEFAULT_DISPLAY) 100 else f.pageZoom
         if (desktopChanged) {
@@ -185,7 +185,10 @@ object BrowseHost {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, true)
-        w.addJavascriptInterface(BrowseBridge(browseToken), "AAYBrowse")
+        val token = browseToken
+        w.addJavascriptInterface(BrowseBridge(token) { url ->
+            main.post { if (web === w && browseToken == token) openInPlayer(url) }
+        }, "AAYBrowse")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(
                 w, browseScript(), setOf("https://*.youtube.com"),
@@ -271,14 +274,49 @@ object BrowseHost {
         main.post {
             AppLog.add("NAV", "Browse page opened a video")
             WebHost.openUrl(url)
+            onSelected()
         }
     }
 }
 
+/** Independent browsing histories; both select into the same playback engine. */
+object BrowseHost : BrowseSession() {
+    val phoneMode = MutableStateFlow(WebHost.PlayerMode.FULL)
+    val phone = BrowseSession { phoneMode.value = WebHost.PlayerMode.FULL }
+
+    override fun init(application: Application) {
+        super.init(application)
+        phone.init(application)
+    }
+    override fun release() {
+        phone.release()
+        phoneMode.value = WebHost.PlayerMode.FULL
+        super.release()
+    }
+    override fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
+        super.applyFeatures(f, desktopChanged)
+        phone.applyFeatures(f, desktopChanged)
+    }
+    override fun onSessionCleared() {
+        super.onSessionCleared()
+        phone.onSessionCleared()
+    }
+
+    fun phoneHome() {
+        phoneMode.value = if (WebHost.snapshot.value.id.isNotBlank()) WebHost.PlayerMode.MINI
+            else WebHost.PlayerMode.HIDDEN
+        phone.navigate(WebHost.home())
+    }
+    fun phoneMini() {
+        phoneMode.value = WebHost.PlayerMode.MINI
+        phone.showFrom(WebHost.home())
+    }
+}
+
 /** What the browse page script can call. */
-class BrowseBridge(private val token: String) {
+class BrowseBridge(private val token: String, private val select: (String) -> Unit = BrowseHost::openInPlayer) {
     @JavascriptInterface
     fun open(url: String, providedToken: String?) {
-        if (providedToken == token) BrowseHost.openInPlayer(url)
+        if (providedToken == token) select(url)
     }
 }
