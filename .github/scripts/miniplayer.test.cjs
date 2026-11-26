@@ -328,6 +328,25 @@ test('car video to audio handoff recovers before the normal watchdog interval', 
   assert.equal(p.video.paused, false, 'handoff must recover without waiting five seconds');
 });
 
+test('retained audio mode preserves quality, position and explicit pause', () => {
+  const p = playerPage({ car: true, quality: true });
+  p.flush();
+  const n = p.qualityCalls.length;
+  p.video.currentTime = 42;
+  p.window.__aay.modeTransit();
+  p.window.__aay.audioMode(true);
+  p.window.__aay.car(false);
+  p.window.__aay.setBg(true);
+  p.advance(2000);
+  p.runIntervals();
+  assert.equal(p.qualityCalls.length, n, 'audio mode does not request a different stream');
+  assert.equal(p.video.currentTime, 42, 'handoff does not seek');
+  assert.equal(p.video.paused, false);
+  p.window.__aay.cmd('pause');
+  p.runIntervals();
+  assert.equal(p.video.paused, true, 'explicit pause remains authoritative');
+});
+
 test('car handoff recovery never overrides explicit Pause', () => {
   const p = playerPage({ car: true });
   p.flush();
