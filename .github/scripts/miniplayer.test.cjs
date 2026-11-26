@@ -2241,3 +2241,70 @@ test('diagnostics separate a silent clock stall from buffering and read displaye
   assert.ok(buffering.bufferMs >= 30000);
   assert.ok(rvfc <= 4, 'one frame callback per window, never per frame');
 });
+
+test('mini size is evaluated by its own timer when no DOM mutation or tick happens', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mini(true);
+  p.advance(20000);
+  p.flush(); // only the settle timer runs: no mutations, no navigation, no tick trigger
+  assert.equal(p.window.__aay.miniSized(), 'small');
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
+});
+
+test('mini size measurement retries while dimensions are unavailable, a bounded number of times', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  let calls = 0;
+  p.video.getBoundingClientRect = () => (++calls <= 2 ? { width: 0, height: 0 } : { width: 320, height: 180 });
+  p.window.__aay.mini(true);
+  p.advance(20000);
+  p.flush(); // settle timer: 0x0, retry, 0x0, retry, measured
+  assert.equal(calls, 3);
+  assert.equal(p.window.__aay.miniSized(), 'small');
+
+  const q = playerPage({ quality: true });
+  q.flush();
+  let tries = 0;
+  q.video.getBoundingClientRect = () => { tries++; return { width: 0, height: 0 }; };
+  q.window.__aay.mini(true);
+  q.advance(20000);
+  q.flush(); // never measurable: stops after the retries, no endless timer chain
+  // First measurement plus 6 retries (one more read may come from the layout code).
+  assert.ok(tries >= 7 && tries <= 8, 'bounded retries: ' + tries);
+  const after = tries;
+  q.flush();
+  assert.equal(tries, after, 'nothing left scheduled');
+  assert.equal(q.window.__aay.miniSized(), '');
+  const n = q.qualityCalls.length;
+  q.window.__aay.mini(false);
+  q.flush();
+  assert.ok(q.qualityCalls.length - n <= 1);
+});
+
+test('at most one outstanding frame callback; a new video element cancels and invalidates it', () => {
+  const p = playerPage();
+  const requested = [], cancelled = [];
+  let next = 1;
+  const neverFires = (video) => {
+    video.requestVideoFrameCallback = () => { const h = next++; requested.push(h); return h; };
+    video.cancelVideoFrameCallback = (h) => cancelled.push(h);
+  };
+  neverFires(p.video); // e.g. hidden video: the compositor never presents a frame
+  p.flush();
+  for (let i = 0; i < 4; i++) { p.advance(31000); p.runIntervals(); }
+  assert.equal(requested.length, 1, 'no pile-up across windows');
+  // Element replaced: the old request is cancelled, old readings are not reused.
+  const fresh = p.replaceVideo();
+  fresh.currentTime = 5;
+  let presented = 50;
+  fresh.requestVideoFrameCallback = (cb) => { const h = next++; requested.push(h); cb(0, { presentedFrames: presented }); return h; };
+  p.advance(31000); p.runIntervals();
+  assert.deepEqual(cancelled, [1]);
+  assert.equal(p.perfReports.at(-1).displayed, -1, 'obsolete samples invalidated');
+  presented = 80;
+  p.advance(31000); p.runIntervals();
+  presented = 140;
+  p.advance(31000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).displayed, 30, 'new element readings only');
+});

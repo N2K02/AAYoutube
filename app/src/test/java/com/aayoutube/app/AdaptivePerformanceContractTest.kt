@@ -115,6 +115,30 @@ class AdaptivePerformanceContractTest {
         assertTrue(service.contains("wakeHeldMs="))
     }
 
+    @Test fun stallReleaseHasItsOwnDeadline() {
+        val service = kt("PlaybackService.kt")
+        val update = service.substringAfter("private fun updatePlaybackWakeLock(active: Boolean) {")
+            .substringBefore("// A transient WebView pause")
+        // Armed on every hold decision, cancelled when not wanted or released for a stall.
+        assertTrue(update.indexOf("scheduleStallRelease(now)") in 0 until update.indexOf("runCatching {"))
+        assertEquals(2, Regex("cancelStallRelease\\(\\)").findAll(update).count())
+        assertTrue(service.contains("val due = WakeLockPolicy.releaseDueAt(mediaClock.progressAt())"))
+        assertTrue(service.contains("if (due == stallReleaseAt) return"))
+        assertTrue(service.contains("handler.postDelayed(stallRelease, WakeLockPolicy.delayUntil(due, now))"))
+        // The deadline re-evaluates the decision rather than releasing blindly.
+        val runnable = service.substringAfter("private val stallRelease = Runnable {").substringBefore("\n    }")
+        assertTrue(runnable.contains("updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(snapshot, recoveringPlayback))"))
+    }
+
+    @Test fun miniSizeAndFrameCallbacksAreSelfContained() {
+        val js = read("assets/aay.js")
+        assertTrue(js.contains("if (on) miniSized.timer = setTimeout(miniSizeTimerFired, MINI_SIZE_SETTLE_MS);"))
+        assertTrue(js.contains("miniSized.retries < MINI_SIZE_RETRIES"))
+        assertTrue(js.contains("if (playing && !perf.rvfcHandle && typeof v.requestVideoFrameCallback === 'function')"))
+        assertTrue(js.contains("perf.rvfcSrc.cancelVideoFrameCallback(perf.rvfcHandle)"))
+        assertTrue(js.contains("if (src !== perf.rvfcSrc) return; // obsolete element"))
+    }
+
     @Test fun positionPersistenceUsesThePolicyAndQuitStillSavesAtOnce() {
         val service = kt("PlaybackService.kt")
         assertTrue(service.contains("PositionPersistPolicy.shouldSave(lastSavedId, lastSavedPosition, lastSavedAt, s, savedNow, PerformanceMonitor::screenOn)"))

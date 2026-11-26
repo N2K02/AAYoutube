@@ -82,7 +82,8 @@ how long the previous level lasted and every signal value.
 
 * `PERF` (page window, 30 s; 60 s at HIGH+; 120 s with the screen off): `decodedFrames`,
   `presentedEstFrames` (decoded − dropped, an estimate), `displayedFrames` (compositor `presentedFrames` from one
-  `requestVideoFrameCallback` per window, −1 when unsupported or hidden; lags one window),
+  `requestVideoFrameCallback` per window, never more than one outstanding; a new video element cancels it and
+  invalidates earlier readings; −1 when unsupported, hidden or just replaced; lags one window),
   `bufferEvents`/`bufferMs` (`waiting` → `playing`) and `clockStallMs` (clock not moving although the element
   claims enough data) — audio interruption estimates, audible output is not measured, `dupReports` (bridge reports suppressed),
   `domObserved` (false while the hidden page's MutationObserver is disconnected), `perfLevel`,
@@ -99,7 +100,9 @@ how long the previous level lasted and every signal value.
 * CPU wake lock: always acquired with a 10-minute timeout, refreshed every 5 minutes while wanted
   (state reports or the health tick). Stalls are judged by the **media clock** (`MediaClockWatch`): when the
   position has not moved for 3 minutes while playback is wanted — including a player stuck buffering that keeps
-  reporting `playing=true`, or a recovery that never started — the lock is released. `HEALTH` reports
+  reporting `playing=true`, or a recovery that never started — the lock is released. The release has its own
+  deadline (last clock movement + 3 min), re-armed only when the clock moves, so it is exact even when the
+  health tick is 180 s apart with the screen off. `HEALTH` reports
   `mediaClock=IDLE|PROGRESSING|BUFFERING|STALLED`, `clockBufferingMs` and `clockStalledMs` separately.
 * Engine lifecycle (`PerformanceSession`): runs only while a primary renderer exists; any release stops it,
   late thermal/memory/frame callbacks are ignored, and a new renderer drops stale dropped-frame and buffering
@@ -125,7 +128,8 @@ how long the previous level lasted and every signal value.
   player fed with extracted stream URLs, which would replace the reliable YouTube engine. Not adopted;
   the retained audio-only renderer remains the audio path.
 * **Primary mini-player size ceiling** (adopted in the follow-up): applied only after the mini player stays
-  open for 20 s, then sized to the real player (240p ≤ 260 px, 360p ≤ 400 px, 480p ≤ 540 px, else 720p);
+  open for 20 s (its own timer, independent of DOM mutations; up to 6 re-measurements 5 s apart while the
+  player has no layout box yet), then sized to the real player (240p ≤ 260 px, 360p ≤ 400 px, 480p ≤ 540 px, else 720p);
   brief mini/full toggles never switch quality, and leaving the mini player restores the saved quality.
 * **Audio-only / offload, device check (Pixel 8 Pro, 26 Nov 2026)**: `dumpsys audio` shows the app's audio
   focus entries come from Chromium's media session only (the app requests none itself). Offload eligibility is

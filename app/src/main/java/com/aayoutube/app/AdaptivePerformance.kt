@@ -256,6 +256,12 @@ internal object WakeLockPolicy {
         else -> nowMs - stalledSince < STALL_LIMIT_MS
     }
 
+    /** When the stall limit will end the hold, counted from the last clock movement; 0 = not applicable. */
+    fun releaseDueAt(progressAt: Long): Long = if (progressAt <= 0L) 0L else progressAt + STALL_LIMIT_MS
+
+    /** Handler delay for [dueAt]; never negative (an overdue release runs at once). */
+    fun delayUntil(dueAt: Long, nowMs: Long): Long = (dueAt - nowMs).coerceAtLeast(0L)
+
     fun needsRefresh(acquiredAt: Long, nowMs: Long): Boolean = acquiredAt <= 0L || nowMs - acquiredAt >= REFRESH_MS
 }
 
@@ -301,6 +307,9 @@ internal class MediaClockWatch(
         if (videoId != id || kotlin.math.abs(positionMs - posMs) >= MIN_STEP_MS || !wantsPlay) posMs = positionMs
         id = videoId
     }
+
+    /** Last clock movement while playback is wanted; 0 while idle. */
+    fun progressAt(): Long = if (wanted) lastProgressAt else 0L
 
     /** Last clock movement while playback is wanted but the clock is not moving; 0 otherwise. */
     fun stalledSince(nowMs: Long): Long =

@@ -163,21 +163,49 @@ class PlaybackService : MediaBrowserServiceCompat() {
         wakeRefreshedAt = 0L
     }
 
+    /** Absolute (elapsedRealtime) time of the scheduled stall release; 0 = none. */
+    private var stallReleaseAt = 0L
+    private val stallRelease = Runnable {
+        stallReleaseAt = 0L
+        updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(snapshot, recoveringPlayback))
+    }
+
+    /**
+     * Re-arms the stall release only when its deadline moved (clock progress pushes it later).
+     * The handler's uptime clock runs because the wake lock itself keeps the CPU awake.
+     */
+    private fun scheduleStallRelease(now: Long) {
+        val due = WakeLockPolicy.releaseDueAt(mediaClock.progressAt())
+        if (due == stallReleaseAt) return
+        handler.removeCallbacks(stallRelease)
+        stallReleaseAt = due
+        if (due > 0L) handler.postDelayed(stallRelease, WakeLockPolicy.delayUntil(due, now))
+    }
+
+    private fun cancelStallRelease() {
+        handler.removeCallbacks(stallRelease)
+        stallReleaseAt = 0L
+    }
+
     private fun updatePlaybackWakeLock(active: Boolean) {
         val now = android.os.SystemClock.elapsedRealtime()
         if (!active || quitRequested || shuttingDown) {
             mediaClock.onSample(snapshot.id, snapshot.posMs, wantsPlay = false, isBuffering = false, nowMs = now)
+            cancelStallRelease()
             releaseWakeLock("not-wanted")
             return
         }
         // Wanted (playing or recovering) but the media clock has not moved: bounded by WakeLockPolicy.
         if (!WakeLockPolicy.hold(true, mediaClock.stalledSince(now), now)) {
+            cancelStallRelease()
             if (playbackWakeLock?.isHeld == true) {
                 wakeStallReleases++
                 releaseWakeLock("stalled-recovery")
             }
             return
         }
+        // The stall limit has its own deadline: the health tick may be 3 minutes apart (screen off).
+        scheduleStallRelease(now)
         runCatching {
             val lock = playbackWakeLock ?: (getSystemService(Context.POWER_SERVICE) as PowerManager)
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AAYouTube:BackgroundAudio")

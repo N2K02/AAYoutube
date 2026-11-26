@@ -225,7 +225,8 @@
   var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
     lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0,
-    lastClock: -1, lastClockSrc: null, rvfcTotal: -1, rvfcPrev: -1 };
+    lastClock: -1, lastClockSrc: null, rvfcTotal: -1, rvfcPrev: -1,
+    rvfcSrc: null, rvfcHandle: 0, rvfcPending: false };
   /* Adaptive performance level from the app (0 normal, 1 elevated, 2 high, 3 severe):
    * scales nonessential DOM work, sets a primary quality ceiling (high 1080p, severe 720p;
    * Auto stays adaptive under it) and the diagnostics window. Playback events stay immediate. */
@@ -1958,6 +1959,13 @@
         clockStallMs = span;
       // Actually displayed frames: one requestVideoFrameCallback per window reads the compositor's
       // cumulative presentedFrames (no per-frame callback). -1 when unsupported or not rendered.
+      // presentedFrames belongs to one element: a new element cancels the old request and
+      // invalidates its readings.
+      if (perf.rvfcSrc !== (v || null)) {
+        if (perf.rvfcHandle && perf.rvfcSrc && typeof perf.rvfcSrc.cancelVideoFrameCallback === 'function')
+          try { perf.rvfcSrc.cancelVideoFrameCallback(perf.rvfcHandle); } catch (e) {}
+        perf.rvfcHandle = 0; perf.rvfcTotal = -1; perf.rvfcPrev = -1; perf.rvfcSrc = v || null;
+      }
       var displayed = perf.rvfcTotal >= 0 && perf.rvfcPrev >= 0 && perf.rvfcTotal >= perf.rvfcPrev ?
         perf.rvfcTotal - perf.rvfcPrev : -1;
       if (playing && N && typeof N.perf === 'function') try {
@@ -1981,10 +1989,18 @@
       perf.dupReports = 0; perf.stalls = 0; perf.stallMs = 0; if (perf.stallAt) perf.stallAt = now;
       perf.lastClock = ct; perf.lastClockSrc = v || null;
       perf.rvfcPrev = perf.rvfcTotal;
-      if (playing && typeof v.requestVideoFrameCallback === 'function') try {
-        v.requestVideoFrameCallback(function (t, md) {
+      // At most one outstanding request: a hidden or paused video never fires it, and requests
+      // must not pile up window after window.
+      if (playing && !perf.rvfcHandle && typeof v.requestVideoFrameCallback === 'function') try {
+        var src = v;
+        perf.rvfcPending = true;
+        var handle = v.requestVideoFrameCallback(function (t, md) {
+          if (src !== perf.rvfcSrc) return; // obsolete element
+          perf.rvfcHandle = 0; perf.rvfcPending = false;
           if (md && isFinite(md.presentedFrames)) perf.rvfcTotal = md.presentedFrames;
         });
+        // A synchronous callback already cleared the request; otherwise keep its handle.
+        if (perf.rvfcPending) perf.rvfcHandle = handle || -1;
       } catch (e) {}
     };
     var perfTimer = setInterval(perfSample, perfState.diagMs);
@@ -2600,6 +2616,10 @@
     miniSized.since = on ? Date.now() : 0;
     var wasSized = miniSized.active;
     miniSized.active = false;
+    miniSized.retries = 0;
+    if (miniSized.timer) { clearTimeout(miniSized.timer); miniSized.timer = 0; }
+    // The size check does not depend on DOM mutations (a still page has none): its own timer.
+    if (on) miniSized.timer = setTimeout(miniSizeTimerFired, MINI_SIZE_SETTLE_MS);
     if (wasSized) { qualityApply.key = ''; } // full player gets its quality back with the next apply
     smallLayout();
     carLayout();
@@ -2702,26 +2722,41 @@
    * switches quality: the size tier applies only after the mini player stayed open for
    * MINI_SIZE_SETTLE_MS, and is checked on the normal tick (no extra timer). */
   var MINI_SIZE_SETTLE_MS = 20000;
-  var miniSized = { since: 0, active: false, quality: '' };
+  var MINI_SIZE_RETRY_MS = 5000, MINI_SIZE_RETRIES = 6;
+  var miniSized = { since: 0, active: false, quality: '', timer: 0, retries: 0 };
+  /* Tier for the shown size; '' = large enough for the 720p ceiling; null = size not known yet
+   * (no video, no layout box). */
   function smallPlayerQuality() {
     var v = getVideo();
-    if (!v || typeof v.getBoundingClientRect !== 'function') return '';
+    if (!v || typeof v.getBoundingClientRect !== 'function') return null;
     var r = null;
     try { r = v.getBoundingClientRect(); } catch (e) {}
     var dpr = window.devicePixelRatio || 1;
     var shown = r && r.width > 0 && r.height > 0 ? Math.min(r.height, r.width * 9 / 16) * dpr : 0;
-    if (!shown) return '';
+    if (!shown) return null;
     if (shown <= 260) return 'small';
     if (shown <= 400) return 'medium';
     if (shown <= 540) return 'large';
     return '';
   }
-  function checkMiniSize() {
+  function miniSizeTimerFired() { miniSized.timer = 0; checkMiniSize(true); }
+  function checkMiniSize(fromTimer) {
     if (miniSized.active || !miniSized.since || !A.isMini || A.inPip || A.isCar) return;
-    if (Date.now() - miniSized.since < MINI_SIZE_SETTLE_MS) return;
-    miniSized.quality = smallPlayerQuality();
+    // Timers may fire a few ms early; never re-arm here (the tick and the retry timer cover it).
+    if (Date.now() - miniSized.since < MINI_SIZE_SETTLE_MS - 250) return;
+    var q = smallPlayerQuality();
+    if (q === null) {
+      // Dimensions not available yet: measure again a little later, a bounded number of times.
+      if (fromTimer && !miniSized.timer && miniSized.retries < MINI_SIZE_RETRIES) {
+        miniSized.retries++;
+        miniSized.timer = setTimeout(miniSizeTimerFired, MINI_SIZE_RETRY_MS);
+      }
+      return;
+    }
+    if (miniSized.timer) { clearTimeout(miniSized.timer); miniSized.timer = 0; }
+    miniSized.quality = q;
     miniSized.active = true;
-    if (!miniSized.quality) return; // unknown or large: keep the 720p small-window ceiling
+    if (!miniSized.quality) return; // large: keep the 720p small-window ceiling
     console.log('[aay] mini player sustained: quality ceiling ' + miniSized.quality);
     qualityApply.key = '';
     applyPreferredQuality();

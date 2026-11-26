@@ -213,6 +213,27 @@ class AdaptivePerformanceTest {
         assertTrue(holds(c, t + 1_000))
     }
 
+    @Test fun stallReleaseDeadlineIsIndependentOfTheHealthInterval() {
+        val c = MediaClockWatch()
+        val start = 5_000L
+        c.onSample("v", 0, wantsPlay = true, isBuffering = false, nowMs = start)
+        val due = WakeLockPolicy.releaseDueAt(c.progressAt())
+        assertEquals(start + WakeLockPolicy.STALL_LIMIT_MS, due)
+        // Screen off: health ticks 180 s apart would check at start+180 s and start+360 s; the
+        // deadline fires exactly at the limit instead.
+        val healthTick = start + AdaptivePerformancePolicy.healthIntervalMs(screenOn = false)
+        assertTrue(due <= healthTick)
+        assertTrue(holds(c, due - 1))
+        assertFalse(holds(c, due))
+        assertEquals(WakeLockPolicy.STALL_LIMIT_MS, WakeLockPolicy.delayUntil(due, start))
+        assertEquals("overdue runs at once", 0L, WakeLockPolicy.delayUntil(due, due + 50))
+        // Progress moves the deadline later; idling cancels it.
+        c.onSample("v", 10_000, wantsPlay = true, isBuffering = false, nowMs = start + 10_000)
+        assertEquals(start + 10_000 + WakeLockPolicy.STALL_LIMIT_MS, WakeLockPolicy.releaseDueAt(c.progressAt()))
+        c.onSample("v", 10_000, wantsPlay = false, isBuffering = false, nowMs = start + 20_000)
+        assertEquals(0L, WakeLockPolicy.releaseDueAt(c.progressAt()))
+    }
+
     @Test fun silentClockWithoutAnyReportsIsStalledToo() {
         val c = MediaClockWatch()
         val start = 1_000L
