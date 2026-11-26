@@ -119,6 +119,9 @@ dependencies {
     implementation("androidx.media:media:${v["mediaCompat"]}")
     // Experimental native audio engine (off by default): audio-only ExoPlayer with offload.
     implementation("androidx.media3:media3-exoplayer:1.8.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.8.0")
+    implementation(project(":sabr-proto"))
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // WebView extras: script injection at document start, header control
     implementation("androidx.webkit:webkit:${v["webkit"]}")

@@ -72,7 +72,8 @@ internal class AuthorizedAudioProvider private constructor(
                 val streams = mutableListOf<AudioStream>()
                 for (i in 0 until minOf(array.length(), 32)) {
                     val a = array.optJSONObject(i) ?: continue
-                    val url = a.optString("url")
+                    val sabr = a.optString("sabrMpd").takeIf { it.isNotBlank() }
+                    val url = if (sabr == null) a.optString("url") else "https://example.invalid/aay.sabr.mpd"
                     val mime = a.optString("mimeType").substringBefore(';').trim().lowercase()
                     val codecs = a.optString("codecs")
                     val bitrate = a.optInt("bitrate")
@@ -82,7 +83,8 @@ internal class AuthorizedAudioProvider private constructor(
                     if (url.length > 8192 || httpsUri(url) == null || mime !in audioTypes || bitrate !in 1..10000000 ||
                         rate !in 0..384000 || channels !in 1..8 || codecs.length > 128 ||
                         expires < 0L || (expires != 0L && expires <= nowMs + 30000L)) continue
-                    streams += AudioStream(url, mime, codecs, bitrate, rate, channels, expires)
+                    if (sabr != null && !SabrManifestPolicy.valid(sabr, mime, codecs)) continue
+                    streams += AudioStream(url, mime, codecs, bitrate, rate, channels, expires, sabrManifest = sabr)
                 }
                 if (streams.isEmpty()) StreamResult.Unavailable(UnavailableReason.NO_AUDIO)
                 else StreamResult.Resolved(ResolvedStreams(videoId, streams, durationMs = json.optLong("durationMs").coerceAtLeast(0L)))

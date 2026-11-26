@@ -20,6 +20,8 @@ internal data class AudioStream(
     /** Wall-clock expiry of [url]; 0 = does not expire. */
     val expiresAtMs: Long = 0L,
     val headers: Map<String, String> = emptyMap(),
+    /** Inline authorized audio-only SABR DASH manifest; never logged. */
+    val sabrManifest: String? = null,
 ) {
     /** Codec MIME understood by MediaCodec / AudioTrack. */
     val codecMime: String get() = StreamSelection.codecMime(mimeType, codecs)

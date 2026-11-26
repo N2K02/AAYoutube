@@ -31,3 +31,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "AAYoutube"
 include(":app")
+
+include(":sabr-proto")

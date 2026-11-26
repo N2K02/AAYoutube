@@ -47,6 +47,7 @@ internal class NativeAudioEngine(
     override val id = EngineId.NATIVE
     private val main = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
+    private var sabrPlayback: SabrAudioSource? = null
     private var stream: AudioStream? = null
     private var readyReported = false
     private var started = false
@@ -99,7 +100,20 @@ internal class NativeAudioEngine(
         p.addListener(playerListener)
         p.addAnalyticsListener(analytics)
         p.addAudioOffloadListener(offloadListener)
-        p.setMediaItem(MediaItem.Builder().setUri(stream.url).setMimeType(stream.mimeType.substringBefore(';')).build(), positionMs)
+        try {
+            if (stream.sabrManifest != null) {
+                val sabr = SabrAudioSource.create(stream)
+                sabrPlayback = sabr
+                sabr.updatePosition(positionMs)
+                p.setMediaSource(sabr.source, positionMs)
+                listener.log("transport=sabr audioOnly=true")
+            } else p.setMediaItem(MediaItem.Builder().setUri(stream.url).setMimeType(stream.mimeType.substringBefore(';')).build(), positionMs)
+        } catch (_: Exception) {
+            p.removeListener(playerListener); p.removeAnalyticsListener(analytics); p.removeAudioOffloadListener(offloadListener); p.release()
+            sabrPlayback?.close(); sabrPlayback = null
+            listener.onError(offloaded = false, codecMime = stream.codecMime, detail = "invalid-sabr-source")
+            return
+        }
         p.playWhenReady = false
         p.volume = 0f // silent until start(): never audible while web still plays
         player = p
@@ -126,11 +140,12 @@ internal class NativeAudioEngine(
 
     override fun pause() { player?.playWhenReady = false }
     override fun play() { player?.playWhenReady = true }
-    override fun seek(positionMs: Long) { player?.seekTo(positionMs); if (started) tick.run() }
+    override fun seek(positionMs: Long) { sabrPlayback?.updatePosition(positionMs); player?.seekTo(positionMs); if (started) tick.run() }
     override fun positionMs(): Long = player?.currentPosition ?: 0L
 
     override fun release() {
         main.removeCallbacks(tick)
+        sabrPlayback?.close(); sabrPlayback = null
         player?.let {
             it.removeListener(playerListener)
             it.removeAnalyticsListener(analytics)
@@ -149,6 +164,7 @@ internal class NativeAudioEngine(
         override fun run() {
             val p = player ?: return
             if (!started) return
+            sabrPlayback?.updatePosition(p.currentPosition)
             listener.onState(p.isPlaying, p.playbackState == Player.STATE_BUFFERING, p.currentPosition, p.playWhenReady)
             main.removeCallbacks(this)
             PlaybackHandoffPolicy.nativeClockIntervalMs(p.playWhenReady, offloadActive, sleepingForOffload)
@@ -196,6 +212,7 @@ internal class NativeAudioEngine(
                 main.removeCallbacks(tick)
                 player?.let { it.removeListener(this); it.removeAnalyticsListener(analytics); it.removeAudioOffloadListener(offloadListener); it.release() }
                 player = null
+                sabrPlayback?.close(); sabrPlayback = null
                 build(s, pos, offload = false)
                 if (wasStarted) { started = true; player?.volume = 1f; player?.playWhenReady = resume }
                 return
