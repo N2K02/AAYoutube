@@ -44,7 +44,7 @@ class AndroidAutoInstallHelpContractTest {
         assertTrue(screens.contains("phoneDisplay && AndroidAutoInstallHelp.shouldPrompt"))
         assertTrue(screens.contains("onOpenGuide = { hide ->"))
         assertTrue(screens.contains("Tab.InstallationHelp -> AndroidAutoInstallationPage()"))
-        assertTrue(screens.contains("Tab.ExperimentalVideo, Tab.InstallationHelp"))
+        assertTrue(screens.contains("Tab.NativeAudio, Tab.InstallationHelp"))
     }
 
     @Test fun visibleStatusIsNotMisrepresentedAndServiceRemainsUnchanged() {

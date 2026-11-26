@@ -57,8 +57,9 @@ class CarWindowPixelPolicyTest {
         assertTrue(probe.contains("private const val TIMEOUT_MS"))
         assertTrue(probe.contains("ExperimentalCarVideoMonitor.state.value.owner"))
         assertTrue(car.contains("CarWindowPixelProbe.unregister(carToken)"))
-        assertTrue(ui.contains("CarWindowPixelProbe.request()"))
-        assertTrue(ui.contains("Check car-window pixels"))
+        // Manual car diagnostics were only reachable from the removed Experimental video page.
+        assertFalse(ui.contains("CarWindowPixelProbe.request()"))
+        assertFalse(ui.contains("Check car-window pixels"))
         assertFalse(probe.contains("WebView("))
         assertFalse(probe.contains("writeBytes("))
         assertFalse(probe.contains("compress("))

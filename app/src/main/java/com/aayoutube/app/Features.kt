@@ -130,7 +130,8 @@ object Features {
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
             controlsPosPortrait = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosPortrait", d.controlsPosPortrait)),
             controlsPosLandscape = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosLandscape", d.controlsPosLandscape)),
-            experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
+            // The Experimental video page was removed: the car recovery tests stay off for everyone.
+            experimentalVideo = false.also { if (prefs.contains("experimentalVideo")) prefs.edit().remove("experimentalVideo").apply() },
             playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
             rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
             loopVideo = prefs.getBoolean("loopVideo", d.loopVideo),
@@ -172,7 +173,6 @@ object Features {
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
             .putFloat("controlsPosPortrait", n.controlsPosPortrait)
             .putFloat("controlsPosLandscape", n.controlsPosLandscape)
-            .putBoolean("experimentalVideo", n.experimentalVideo)
             .putFloat("playbackSpeed", n.playbackSpeed)
             .putBoolean("rememberSpeed", n.rememberSpeed)
             .putBoolean("loopVideo", n.loopVideo)
