@@ -139,6 +139,20 @@ internal object FrameDarkness {
 }
 
 /** Car-window health captures: bounded in time and in outstanding buffers. */
+internal object SharedPreviewPolicy {
+    const val MAX_EDGE = 256
+    const val FRAME_INTERVAL_MS = 500L
+    const val MAX_FAILURES = 3
+    fun use(carProjected: Boolean, small: Boolean, pip: Boolean): Boolean = carProjected && (small || pip)
+    fun capture(visible: Boolean, playing: Boolean, buffering: Boolean, thermal: Int): Boolean =
+        visible && playing && !buffering && thermal < 2
+    fun size(width: Int, height: Int, edge: Int): Pair<Int, Int> {
+        if (width <= 0 || height <= 0 || edge <= 0) return 0 to 0
+        val scale = minOf(1.0, edge.toDouble() / maxOf(width, height))
+        return (width * scale).toInt().coerceAtLeast(1) to (height * scale).toInt().coerceAtLeast(1)
+    }
+}
+
 internal object CaptureBudget {
     /** A PixelCopy whose callback never arrived must not block later captures... */
     const val STUCK_REQUEST_MS = 1_000L

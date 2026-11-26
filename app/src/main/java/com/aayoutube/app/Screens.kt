@@ -1655,6 +1655,8 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     // Allocation follows visibility: nothing is composed (and so nothing is recreated) while hidden.
     val mirrorWanted = (pip && started) || (resumed && visible)
     val small = phoneMode == WebHost.PlayerMode.MINI && !pip
+    val carProjected by WebHost.carProjectionActive.collectAsState()
+    val sharedPreview = SharedPreviewPolicy.use(carProjected, small, pip)
     LaunchedEffect(hasVideo) {
         val next = ProjectedPhoneNav.onVideoChanged(BrowseHost.phoneMode.value, hasVideo)
         if (next != BrowseHost.phoneMode.value) {
@@ -1665,9 +1667,10 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
         if (browsing && visible && resumed) BrowseHost.phone.resume() else BrowseHost.phone.pause()
     }
     // Decode on the phone only while its video is actually on screen (PiP counts).
-    LaunchedEffect(hasVideo, mirrorCrashed, phoneMode, visible, started, resumed, pip, mirrorRevision) {
+    LaunchedEffect(hasVideo, mirrorCrashed, phoneMode, visible, started, resumed, pip, mirrorRevision, sharedPreview) {
         PhoneMirror.setVisible(hasVideo && !mirrorCrashed && PhoneMirror.supported &&
-            (pip || phoneMode != WebHost.PlayerMode.HIDDEN) && mirrorWanted)
+            (pip || phoneMode != WebHost.PlayerMode.HIDDEN) && mirrorWanted && !sharedPreview)
+        if (sharedPreview) PhoneMirror.releaseHiddenRenderer()
     }
     LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
     DisposableEffect(Unit) {
@@ -1691,17 +1694,18 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
                 )
             }
         }
-        val showFallback = mirrorBlocked && hasVideo && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+        val showFallback = !sharedPreview && mirrorBlocked && hasVideo && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
         if (showFallback) MirrorFallback(snap, fallback, large = pip, Modifier.align(
             if (pip) Alignment.Center else Alignment.BottomCenter))
-        if (mirrorShown && mirrorWanted) ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = visible && resumed,
-            revision = mirrorRevision)
+        if ((mirrorShown || sharedPreview && hasVideo) && mirrorWanted)
+            ProjectedMirrorPlayer(snap, small = small, pip = pip, visible = mirrorWanted,
+                revision = mirrorRevision, sharedPreview = sharedPreview)
     }
 }
 
 /** The mirror WebView, resized (never re-parented) between full and mini. */
 @Composable
-private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visible: Boolean, revision: Int) {
+private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visible: Boolean, revision: Int, sharedPreview: Boolean = false) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("aay_ui", Context.MODE_PRIVATE) }
     val density = LocalDensity.current
@@ -1723,7 +1727,8 @@ private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visi
             small -> Modifier.offset { IntOffset(px.roundToInt(), py.roundToInt()) }.size(miniW, miniH).zIndex(10f)
             else -> Modifier.fillMaxSize().statusBarsPadding()
         }
-        key(revision) {
+        if (sharedPreview) SharedCarFrame(snap, visible, frameMod)
+        else key(revision) {
             AndroidView(
                 modifier = frameMod,
                 factory = { ctx ->
@@ -1771,6 +1776,39 @@ private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visi
                     .background(Color(0xFFFF0033)))
             }
         }
+    }
+}
+
+/** Low-rate shared-frame preview, without a secondary network stream. */
+@Composable
+private fun SharedCarFrame(snap: Snap, visible: Boolean, modifier: Modifier) {
+    var frame by remember(snap.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var failures by remember(snap.id) { mutableStateOf(0) }
+    val context = LocalContext.current
+    val pm = remember(context) { context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager }
+    var artworkTick by remember { mutableStateOf(0) }
+    val loader = remember { MediaArtworkLoader { artworkTick++ } }
+    DisposableEffect(loader) { onDispose { loader.shutdown() } }
+    val url = MediaArtworkLoader.urlFor(snap.art, snap.id)
+    LaunchedEffect(url) { loader.request(url) }
+    val artwork = if (artworkTick >= 0) loader.bitmapFor(url) else null
+    LaunchedEffect(snap.id, visible, snap.playing, snap.buffering) {
+        if (!visible) { frame = null; return@LaunchedEffect }
+        while (visible && snap.playing && !snap.buffering) {
+            val thermal = if (android.os.Build.VERSION.SDK_INT >= 29) pm?.currentThermalStatus ?: 0 else 0
+            if (SharedPreviewPolicy.capture(visible, snap.playing, snap.buffering, thermal)) {
+                val next = CarPhonePreview.preview()
+                if (next != null) { frame = next; failures = 0 }
+                else if (++failures >= SharedPreviewPolicy.MAX_FAILURES) frame = null
+            } else frame = null
+            // Published frames remain owned by Compose/GC, never recycle a displayed bitmap.
+            delay(if (failures >= SharedPreviewPolicy.MAX_FAILURES) 2000L else SharedPreviewPolicy.FRAME_INTERVAL_MS)
+        }
+    }
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        val image = frame ?: artwork
+        if (image != null) androidx.compose.foundation.Image(image.asImageBitmap(), null,
+            modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
     }
 }
 

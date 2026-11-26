@@ -1135,7 +1135,9 @@ test('same-video document reload can recover the position through the native bri
   p.video.currentTime = 0;
   p.video.readyState = 1;
   p.window.__aay.restoreAt('86p7SP34qSc', 145.5);
-  assert.ok(p.video.currentTime >= 145, 'same-video document reload should seek back');
+  assert.equal(p.video.currentTime, 0, 'give the player time to restore itself');
+  p.advance(1100); p.flush();
+  assert.ok(p.video.currentTime >= 145, 'fallback restores when the player has not recovered');
   p.video.currentTime = 0;
   p.window.__aay.restoreAt('different-video-id', 220);
   assert.equal(p.video.currentTime, 0, 'never restore a different video ID');
@@ -2048,4 +2050,13 @@ test('an unrelated tap or same-video navigation never starts a paused video', ()
   } });
   p.emitWindow('yt-navigate-finish', {});
   assert.equal(p.video.paused, true, 'reselecting same route is not a new video');
+});
+
+test('document restore does not force a second seek when YouTube restores the timestamp', () => {
+  const p = playerPage(); p.flush();
+  p.video.currentTime = 0; p.video.readyState = 1;
+  p.window.__aay.restoreAt('86p7SP34qSc', 145.5);
+  p.video.currentTime = 146;
+  p.advance(1100); p.flush();
+  assert.equal(p.video.currentTime, 146);
 });

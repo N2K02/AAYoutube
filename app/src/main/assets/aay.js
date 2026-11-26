@@ -1783,7 +1783,7 @@
       if (lastSent && lastSent.id && lastSent.playing !== (!v.paused && !v.ended)) {
         lastProgressReportAt = now;
         report();
-      } else if (now - lastProgressReportAt > (A.isBg && !A.isCar ? BG_PROGRESS_MS : 1400)) {
+      } else if (now - lastProgressReportAt > ((A.isBg || A.audioOnly) && !A.isCar ? BG_PROGRESS_MS : 1400)) {
         lastProgressReportAt = now;
         schedReport(0);
       }
@@ -1826,7 +1826,7 @@
       if (v) bind(v);
       // Background audio still needs player bindings and quality recovery,
       // but visual DOM work is unnecessary when the phone is hidden.
-      if (v && !BROWSE && A.applyQuality) A.applyQuality();
+      if (v && !BROWSE && !A.audioOnly && A.applyQuality) A.applyQuality();
       // Hidden phone, or an audio-only renderer in no window: no visual DOM work.
       if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;
       // Playback and ad handling stay responsive. Heavier noncritical UI

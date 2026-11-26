@@ -14,10 +14,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Tiny on-demand PixelCopy of our own projected car window, used only to verify
- * that a reused renderer paints (CarRendererReusePolicy). The phone shows the
- * real YouTube player (PhoneMirror), not these captures. Secure buffers are
- * never bypassed and no pixels are kept.
+ * Bounded PixelCopy of our own projected car window for verification and low-rate previews.
+ * Full phone playback retains PhoneMirror. Secure buffers are never bypassed.
  */
 internal object CarPhonePreview {
     private data class Source(val owner: String, val window: WeakReference<Window>, val view: WeakReference<View>)
@@ -48,7 +46,15 @@ internal object CarPhonePreview {
         } finally { bitmap.recycle() }
     }
 
-    private suspend fun capture(): Bitmap? {
+    suspend fun preview(): Bitmap? {
+        val bitmap = capture(SharedPreviewPolicy.MAX_EDGE) ?: return null
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        if (FrameDarkness.percent(pixels) >= 98) { bitmap.recycle(); return null }
+        return bitmap
+    }
+
+    private suspend fun capture(maxEdge: Int = SAMPLE_WIDTH): Bitmap? {
         val s = source ?: return null
         if (!CaptureBudget.mayStart(outstanding, lastStartedAt, SystemClock.elapsedRealtime())) return null
         if (!WebHost.carShown || !WebHost.isActiveCarHost(s.owner)) return null
@@ -58,7 +64,7 @@ internal object CarPhonePreview {
         val location = IntArray(2)
         view.getLocationInWindow(location)
         val rect = Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
-        val (w, h) = PlayerTransitionPolicy.captureSize(rect.width(), rect.height(), SAMPLE_WIDTH)
+        val (w, h) = SharedPreviewPolicy.size(rect.width(), rect.height(), maxEdge)
         if (w <= 0 || h <= 0) return null
         return withTimeoutOrNull(TIMEOUT_MS) {
             suspendCancellableCoroutine { cont ->

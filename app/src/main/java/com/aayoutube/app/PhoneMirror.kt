@@ -167,6 +167,11 @@ internal object PhoneMirror {
         }
     }
 
+    /** Shared preview needs no secondary decoder. */
+    fun releaseHiddenRenderer() {
+        if (!wantVisible && web != null) teardown()
+    }
+
     private val idleRelease = Runnable {
         if (!visible && web != null) {
             // No revision bump: nothing is composed while hidden, so nothing recreates the renderer.

@@ -29,7 +29,9 @@ class ProjectedPhoneNavigationTest {
         assertTrue(pane.contains("PhoneMirror.attach(ctx)"))
         assertTrue(pane.contains("PhoneMirror.setVisible(hasVideo && !mirrorCrashed && PhoneMirror.supported"))
         assertTrue(pane.contains("PhoneMirror.release()"))
-        assertFalse("no PixelCopy preview loop on the phone", pane.contains("CarPhonePreview"))
+        assertTrue("bounded shared preview avoids second decoder in mini/PiP", pane.contains("CarPhonePreview.preview()"))
+        assertTrue(pane.contains("!sharedPreview"))
+        assertTrue(pane.contains("PhoneMirror.releaseHiddenRenderer()"))
     }
 
     @Test fun phonePipDoesNotChangeProjectedPlayer() {

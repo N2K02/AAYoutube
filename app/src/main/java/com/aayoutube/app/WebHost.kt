@@ -608,6 +608,7 @@ object WebHost {
     private var lastCrossDisplayFailureAt = 0L
     private var carVerifyEpoch = 0L
     private var crossDisplayTrial = false
+    private var carTrialTimeout: Runnable? = null
     private var carVerifySamples = 0
     private var carBlackSamples = 0
     private var carVerifyGeneration = 0
@@ -658,6 +659,8 @@ object WebHost {
             }
             if (crossDisplayTrial && CarRendererReusePolicy.trialVerified(advancing, decoding, dark)) {
                 crossDisplayTrial = false
+                carTrialTimeout?.let(main::removeCallbacks)
+                carTrialTimeout = null
                 AppLog.add("CAR", "Cross-display retained renderer verified; buffers preserved")
                 return@launch
             }
@@ -677,6 +680,8 @@ object WebHost {
                 if (crossDisplayTrial) lastCrossDisplayFailureAt = now
                 val trialFailed = crossDisplayTrial
                 crossDisplayTrial = false
+                carTrialTimeout?.let(main::removeCallbacks)
+                carTrialTimeout = null
                 carBlackSamples = 0
                 AppLog.add("CAR", "Reused renderer paints black: safe renderer recovery")
                 forcedCarRecreate = if (trialFailed) "cross-display-unverified" else "window-black"
@@ -699,6 +704,24 @@ object WebHost {
         carVerifyLastFrames = -1L
         carVerifyGeneration = webGeneration
         carVerifyOwner = activeCarHost.value
+        carTrialTimeout?.let(main::removeCallbacks)
+        carTrialTimeout = null
+        if (trial) {
+            val epoch = carVerifyEpoch
+            val timeout = Runnable {
+                if (crossDisplayTrial && verifyStillOwned(epoch) && carRebindOwner == carVerifyOwner) {
+                    crossDisplayTrial = false
+                    carVerifyEpoch++
+                    main.removeCallbacks(carRenderVerify)
+                    lastCrossDisplayFailureAt = SystemClock.elapsedRealtime()
+                    forcedCarRecreate = "cross-display-timeout"
+                    AppLog.add("CAR", "Cross-display verification timed out; using safe renderer")
+                    try { carRebind?.invoke() } finally { forcedCarRecreate = null }
+                }
+            }
+            carTrialTimeout = timeout
+            main.postDelayed(timeout, 8_000L)
+        }
         main.postDelayed(carRenderVerify, CarRendererReusePolicy.VERIFY_DELAYS_MS)
     }
 
@@ -723,6 +746,8 @@ object WebHost {
             carVerifyEpoch++
             crossDisplayTrial = false
             main.removeCallbacks(carRenderVerify)
+            carTrialTimeout?.let(main::removeCallbacks)
+            carTrialTimeout = null
         }
         if (carRebindOwner == token) { carRebind = null; carRebindOwner = null }
         val wasActive = carHosts.isActive(token)
@@ -1574,6 +1599,8 @@ object WebHost {
         main.removeCallbacks(carRenderVerify)
         carVerifyEpoch++
         crossDisplayTrial = false
+        carTrialTimeout?.let(main::removeCallbacks)
+        carTrialTimeout = null
         exitFullscreen()
         val w = web
         web = null
