@@ -2575,3 +2575,18 @@ test('native audio feasibility probe reports counts only and refuses stale video
   p.advance(30000); p.runIntervals();
   assert.equal(p.perfReports.at(-1).audioFormats, -1);
 });
+
+
+test('mobile centre icon tracks actual media even when YouTube reports playing', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  p.player.getPlayerState = () => 1;
+  p.window.__aay.mini(true); p.window.__aay.mini(false); p.flush();
+  assert.ok(p.classNames.has('aay-center-transport'));
+  assert.ok(p.classNames.has('aay-center-playing'));
+  const target = { closest: selector => selector.includes('player-control-play-pause-icon') ? target : null };
+  let stopped = false;
+  p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
+  assert.ok(stopped); assert.ok(p.video.paused); assert.ok(!p.classNames.has('aay-center-playing'));
+  p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() {} });
+  assert.equal(p.video.paused, false); assert.ok(p.classNames.has('aay-center-playing'));
+});

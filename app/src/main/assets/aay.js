@@ -329,10 +329,25 @@
   // unrelated DOM clicks must not disable interruption recovery.
   var PLAY_PAUSE_BUTTON = '.ytp-play-button, #play-pause-button, .play-pause-button,' +
     'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
-    '.player-play-pause-button, .player-play-pause-icon,' +
+    '.player-play-pause-button, .player-play-pause-icon, .player-control-play-pause-icon,' +
     'button[aria-label*="pause" i], button[aria-label*="play" i],' +
     'button[title*="pause" i], button[title*="play" i],' +
     '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]';
+  var MOBILE_CENTER = '.player-control-play-pause-icon';
+  function mobileCenterButton(target) {
+    return target && typeof target.closest === 'function' ? target.closest(MOBILE_CENTER) : null;
+  }
+  function updateCenterTransport(v) {
+    var root = document.documentElement;
+    if (!root) return;
+    var active = !BROWSE && !A.audioOnly && !nativeAudio.owned && !isAd() && !!v && !v.ended && /^\/(watch|live\/)/.test(location.pathname);
+    root.classList.toggle('aay-center-transport', active);
+    root.classList.toggle('aay-center-playing', active && !v.paused);
+    if (active) {
+      var button = document.querySelector(MOBILE_CENTER);
+      if (button && button.style && getComputedStyle(button).position === 'static') button.style.position = 'relative';
+    }
+  }
   function actualPlayPauseButton(target) {
     return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
   }
@@ -391,7 +406,14 @@
   document.addEventListener('click', function (e) {
     if (BROWSE || e.isTrusted === false || !actualPlayPauseButton(e.target)) return;
     var v = getVideo(), p = ytPlayer();
-    if (!v || v.paused || v.ended || !p || typeof p.getPlayerState !== 'function') return;
+    if (!v || v.ended || A.audioOnly || nativeAudio.owned || isAd()) return;
+    if (mobileCenterButton(e.target)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (!v.paused) { noteManualPause(); A.cmd('pause'); }
+      else A.cmd('play', 'user');
+      updateCenterTransport(v); schedReport(0); return;
+    }
+    if (v.paused || !p || typeof p.getPlayerState !== 'function') return;
     var st;
     try { st = p.getPlayerState(); } catch (err) { return; }
     if (st !== 2) return; // consistent player state: let YouTube handle the click
@@ -1033,7 +1055,10 @@
     root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
   }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS +
+      'html.aay-center-transport .player-control-play-pause-icon > * {visibility:hidden!important;}' +
+      'html.aay-center-transport .player-control-play-pause-icon::after {content:"";display:block;position:absolute;inset:0;pointer-events:none;background: center / 56% 56% no-repeat url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27white%27 d=%27M8 5v14l11-7z%27/%3E%3C/svg%3E");}' +
+      'html.aay-center-transport.aay-center-playing .player-control-play-pause-icon::after {background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27white%27 d=%27M6 5h4v14H6zm8 0h4v14h-4z%27/%3E%3C/svg%3E");}';
     applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
@@ -1887,6 +1912,7 @@
           }
         }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
+        updateCenterTransport(v);
         if (ev === 'seeked') {
           resetOverloadWindow();
           if (qualityState.reset) restoreAfterSourceChange(v);
@@ -1958,6 +1984,7 @@
     try {
       var v = getVideo();
       if (v) bind(v);
+      updateCenterTransport(v);
       // Background audio still needs player bindings and quality recovery,
       // but visual DOM work is unnecessary when the phone is hidden.
       if (v && !BROWSE && !A.audioOnly && A.applyQuality) A.applyQuality();
@@ -2744,7 +2771,7 @@
     // The fullscreen layout can invalidate YouTube's control state more than once.
     // Reconcile at the existing bounded post-resize checkpoints below, independently
     // of a previous watchdog repair (which has a 12 s cooldown).
-    var expandId = leavingMini ? qualityVideoId() : '';
+    var expandId = leavingMini ? qualityVideoId() : '', expandRoute = leavingMini ? urlId() : '';
     miniSized.since = on ? Date.now() : 0;
     var wasSized = miniSized.active;
     miniSized.active = false;
@@ -2761,7 +2788,8 @@
         if (serial !== miniExpandSerial || A.isMini || A.inPip || A.audioOnly || nativeAudio.owned || PAUSED ||
             bgWatch.explicitPause || bgWatch.held || Date.now() <= userPauseEligibleUntil || isAd()) return;
         var current = getVideo();
-        if (!current || current !== v || current.ended || qualityVideoId() !== expandId) return;
+        if (!current || current !== v || current.ended || qualityVideoId() !== expandId || urlId() !== expandRoute) return;
+        updateCenterTransport(current);
         if (!current.paused) {
           // The final viewport/quality change can mark YouTube paused again after an earlier
           // repair. At most three checks per expansion, and only if the media is really playing.
