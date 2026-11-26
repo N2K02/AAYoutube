@@ -281,6 +281,7 @@ fun AppRoot(activity: MainActivity) {
     val inPip = rendererPip || activity.previewPip.value
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
+    val audioRetained by WebHost.carAudioRetained.collectAsState()
     // While Android Auto projects the video, YouTube's fullscreen view belongs
     // to the car window. A still-composed phone screen must not reparent it
     // (car turns black) or rotate the phone for it.
@@ -288,7 +289,7 @@ fun AppRoot(activity: MainActivity) {
     val snap by WebHost.snapshot.collectAsState()
     val sharedPlayerMode by WebHost.mode.collectAsState()
     val localPhoneMode by BrowseHost.phoneMode.collectAsState()
-    val playerMode = if (projectedToCar && !onCar) localPhoneMode else sharedPlayerMode
+    val playerMode = if ((projectedToCar || audioRetained) && !onCar) localPhoneMode else sharedPlayerMode
     val flags by Features.state.collectAsState()
     val watchTab = tab == Tab.Watch.ordinal
     // Rotating sideways while watching fills the screen with the video (like the YouTube app);
@@ -420,7 +421,7 @@ fun AppRoot(activity: MainActivity) {
     val homeHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     val goYouTubeHome: () -> Unit = {
         tab = Tab.Watch.ordinal
-        if (projectedToCar && !onCar) {
+        if ((projectedToCar || audioRetained) && !onCar) {
             BrowseHost.phoneHome()
         } else when (PlayerNavigationPolicy.home(
             fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
@@ -442,7 +443,7 @@ fun AppRoot(activity: MainActivity) {
         }
     }
     val goBack: () -> Unit = {
-        if (projectedToCar && !onCar && tab == Tab.Watch.ordinal) {
+        if ((projectedToCar || audioRetained) && !onCar && tab == Tab.Watch.ordinal) {
             if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()
             else if (!BrowseHost.phone.goBack()) BrowseHost.phoneHome()
         } else when (PlayerNavigationPolicy.back(
@@ -704,7 +705,8 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
-    if (projectedToCar && !onCar) {
+    val audioRetained by WebHost.carAudioRetained.collectAsState()
+    if ((projectedToCar || audioRetained) && !onCar) {
         ProjectedPhonePane(snap, previewVisible, modifier)
         return
     }
@@ -1637,9 +1639,11 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
     val lifecycleState = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
     val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED ||
         (pip && lifecycleState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true)
-    var frame by remember(snap.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(snap.id, snap.playing, visible, resumed) {
-        if (!CarPhonePreview.allowed(true, snap.playing, resumed, visible)) return@LaunchedEffect
+    val projected by WebHost.carProjectionActive.collectAsState()
+    val audioRetained by WebHost.carAudioRetained.collectAsState()
+    var frame by remember(snap.id, projected) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(snap.id, snap.playing, snap.buffering, visible, resumed, projected, compact) {
+        if (!CarPhonePreview.allowed(projected, snap.playing && !snap.buffering, resumed, visible)) return@LaunchedEffect
         var failures = 0
         while (true) {
             val next = CarPhonePreview.frame()
@@ -1650,7 +1654,7 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
                 failures++
                 if (failures >= 3) frame = null
             }
-            delay(if (failures >= 3) 2000L else CarPhonePreview.INTERVAL_MS)
+            delay(CarPhonePreview.intervalMs(compact, failures))
         }
     }
     // Compose may still be drawing the previous bitmap when a new one arrives.
@@ -1677,7 +1681,9 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                 )
             } else {
-                Text("Video playing on Android Auto", color = Color.White,
+                if (audioRetained && !compact && !pip) {
+                    Button(onClick = { WebHost.restorePhoneVideo() }) { Text("Show video on phone") }
+                } else Text(if (audioRetained) "Music playing" else "Video playing on Android Auto", color = Color.White,
                     modifier = Modifier.padding(16.dp))
             }
         }
