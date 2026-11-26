@@ -37,7 +37,7 @@ class PlaybackQualityAndTransitionTest {
         val ui = read("app/src/main/java/com/aayoutube/app/Screens.kt")
         val root = ui.substringAfter("fun AppRoot(").substringBefore("// ---------------------------------------------------------------------------- web")
         assertFalse("Scaffold header reflows WebPane", root.contains("Scaffold("))
-        assertTrue(root.contains("WebPane(Modifier.fillMaxSize())"))
+        assertTrue(root.contains("WebPane(Modifier.fillMaxSize(), previewVisible = watchTab)"))
         assertTrue(root.contains("AnimatedVisibility("))
         assertTrue(root.contains("Crossfade("))
         assertTrue(root.contains("AAYoutubePageHeader("))
