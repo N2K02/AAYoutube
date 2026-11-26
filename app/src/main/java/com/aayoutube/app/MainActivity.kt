@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
 
     private var compatConnection: CompatMediaConnection? = null
     private var watchTabVisible = true
+    internal val previewPip = mutableStateOf(false)
     internal val sharedLinkOpened = mutableStateOf(false)
     private val relinkPhone: () -> Unit = { runOnUiThread { sayHello() } }
     private val quitPhone: () -> Unit = { runOnUiThread { closeEverything() } }
@@ -125,7 +126,7 @@ class MainActivity : ComponentActivity() {
         resumed += this
         if (!isInPictureInPictureMode) {
             WebHost.setHold(false)
-            WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
+            if (!WebHost.carShown) WebHost.pip(false) // Clear an interrupted PiP entry without reloading.
         }
         LiveUpdater.onResume(this)
         AndroidAutoInstallHelp.refreshInstalledApps()
@@ -157,6 +158,7 @@ class MainActivity : ComponentActivity() {
         // The phone can stop while a car-only mini player is still browsing.
         // Pausing the shared browse WebView would blank that car screen.
         if (!WebHost.carShown) BrowseHost.pause()
+        BrowseHost.phone.pause()
     }
 
     private fun sayHello() {
@@ -231,7 +233,7 @@ class MainActivity : ComponentActivity() {
         // SourceRectHint controls the transition animation, not the desired
         // floating window size. Never feed it a rect measured *inside* PiP:
         // that can keep shrinking the hint across state updates.
-        if (!isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
+        if (!WebHost.carShown && !isInPictureInPictureMode && WebHost.pipSourceRect(bounds))
             builder.setSourceRectHint(bounds)
         if (Build.VERSION.SDK_INT >= 31) {
             builder.setAutoEnterEnabled(
@@ -261,9 +263,9 @@ class MainActivity : ComponentActivity() {
             WebHost.isOnWatchPage() && onPhoneScreen()) {
             // Capture full-player bounds BEFORE PiP CSS mutates the page.
             val params = pipParams()
-            WebHost.pip(true)
+            if (!WebHost.carShown) WebHost.pip(true)
             val entered = runCatching { enterPictureInPictureMode(params) }.getOrDefault(false)
-            if (!entered) WebHost.pip(false)
+            if (!entered && !WebHost.carShown) WebHost.pip(false)
         }
     }
 
@@ -275,6 +277,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (WebHost.carShown || previewPip.value) {
+            previewPip.value = isInPictureInPictureMode
+            AppLog.add("VIEW", "Phone-only projected preview PiP=$isInPictureInPictureMode")
+            return
+        }
         WebHost.noteVisibilityChange()
         WebHost.inPip.value = isInPictureInPictureMode
         AppLog.add("VIEW", "Picture in picture=$isInPictureInPictureMode")
