@@ -15,7 +15,7 @@
     try { return !!(t && t.closest && t.closest(sel)); } catch (e) { return false; }
   }
   function silence(v) {
-    try { if (v && v.tagName === 'VIDEO') { v.muted = true; v.volume = 0; } } catch (e) {}
+    try { if (v && /^(VIDEO|AUDIO)$/.test(v.tagName)) { v.muted = true; v.volume = 0; } } catch (e) {}
   }
   function lockProp(name, forced) {
     try {
@@ -42,14 +42,14 @@
   ['loadstart', 'loadedmetadata', 'canplay', 'play', 'playing', 'volumechange', 'seeking'].forEach(function (t) {
     document.addEventListener(t, function (e) {
       silence(e.target);
-      if (S.stopped && e.target && e.target.tagName === 'VIDEO' && !e.target.paused && t !== 'volumechange') {
+      if (S.stopped && e.target && /^(VIDEO|AUDIO)$/.test(e.target.tagName) && !e.target.paused && t !== 'volumechange') {
         try { e.target.pause(); } catch (err) {}
       }
     }, true);
   });
   silence(document.querySelector && document.querySelector('video'));
   function pauseAll() {
-    try { Array.prototype.forEach.call(document.querySelectorAll('video'), function (v) { if (!v.paused) v.pause(); }); } catch (e) {}
+    try { Array.prototype.forEach.call(document.querySelectorAll('video,audio'), function (v) { if (!v.paused) v.pause(); }); } catch (e) {}
   }
   // Existing frames follow the top document's visibility (new ones ask the app when they start).
   window.addEventListener('message', function (e) {
@@ -57,6 +57,7 @@
     if (isTop || !d || typeof d.aayMirrorStopped !== 'boolean' || e.source !== window.parent) return;
     S.stopped = d.aayMirrorStopped;
     if (S.stopped) pauseAll();
+    try { for (var i = 0; i < window.frames.length; i++) window.frames[i].postMessage(d, '*'); } catch (err) {}
   });
   if (!isTop) return;
 
@@ -227,11 +228,16 @@
     if (!v) return 'novideo';
     // Only ever correct towards the same content: a stale or foreign page is left alone.
     if (id && currentVideoId() !== id) return 'mismatch';
-    if (adShowing()) return 'ad';
+    if (adShowing()) {
+      if (M.stopped) { M.stopped = false; broadcast(); }
+      if (v.paused) { expectOwn('play'); try { var adPlay = v.play(); if (adPlay && adPlay.catch) adPlay.catch(function () {}); } catch (e) {} }
+      return 'ad';
+    }
     if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
     if (M.stopped) { M.stopped = false; broadcast(); }
     if (Date.now() - gestureAt < 1500) return 'user'; // let the user's action reach the engine first
-    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; applyQuality(); }
+    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
+    applyQuality();
     rate = rate > 0 ? rate : 1;
     var drift = v.currentTime - posMs / 1000;
     var action = 'ok';
@@ -273,7 +279,8 @@
     ourActAt = Date.now();
     auth = null;
     broadcast();
-    if (v && !v.paused) { expectOwn('pause'); v.pause(); }
+    if (v && !v.paused) expectOwn('pause');
+    pauseAll();
   };
 
   // Mini-player / PiP: only the video, filling the small WebView.

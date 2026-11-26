@@ -222,12 +222,12 @@ class PhoneMirrorPolicyTest {
         assertTrue("the chosen video", n.authorize("BBBBBBBBBBB", 1_600))
         assertFalse("consumed", n.authorize("BBBBBBBBBBB", 1_700))
         n.onTap(5_000)
-        assertTrue("a bare tap is a short fallback", n.authorize("DDDDDDDDDDD", 5_300))
+        assertFalse("a bare tap cannot authorize navigation", n.authorize("DDDDDDDDDDD", 5_300))
         n.onTap(9_000)
         assertFalse("too late", n.authorize("DDDDDDDDDDD", 9_900))
-        n.onTap(12_000); n.onIntent(null, 12_005)      // Home / Search link
+        n.onTap(12_000); n.onIntent("m.youtube.com/results?search_query=test", 12_005)
         assertFalse(n.authorize("EEEEEEEEEEE", 12_100))
-        assertTrue(n.authorize(null, 12_200))
+        assertTrue(n.authorize("m.youtube.com/results?search_query=test", 12_200))
         n.onTap(20_000); n.reset()
         assertFalse("page change clears authorisation", n.authorize("FFFFFFFFFFF", 20_100))
     }
@@ -345,5 +345,51 @@ class PhoneMirrorPolicyTest {
         assertTrue(read("BrowseHost.kt").contains("TimestampParam.parseMs(uri.getQueryParameter(\"t\")"))
         // The pane composes the player only while it should be visible.
         assertTrue(read("Screens.kt").contains("if (mirrorShown && mirrorWanted) ProjectedMirrorPlayer("))
+    }
+
+    @Test fun rejectedReloadsDoNotExtendTheCooldown() {
+        val g = RateGuard(2, 1000)
+        assertTrue(g.record(10))
+        assertTrue(g.record(20))
+        for (now in 30L..1000L step 10) assertFalse(g.record(now))
+        assertEquals(1011L, g.nextAllowedAt(1000))
+        assertTrue(g.record(1011))
+    }
+
+    @Test fun queuedBridgeCommandsAndIntentsCannotOutliveTheirDocument() {
+        val queued = mutableListOf<() -> Unit>()
+        val got = mutableListOf<String>()
+        val bridge = MirrorBridge("secret", { false }, { a, _, _ -> got += a },
+            { got += it }, { queued += it })
+        val old = bridge.open("secret")
+        bridge.control("pause", 0.0, "secret", old, 1.0, "AAAAAAAAAAA")
+        bridge.intent("https://m.youtube.com/", "secret", old)
+        val fresh = bridge.open("secret")
+        bridge.control("play", 0.0, "secret", fresh, 1.0, "AAAAAAAAAAA")
+        queued.forEach { it() }
+        assertEquals(listOf("play"), got)
+    }
+
+    @Test fun exactNavigationKeysPreserveSearchAndTime() {
+        val a = PhoneMirrorPolicy.navigationKey("https://m.youtube.com/watch?v=AAAAAAAAAAA&t=20")
+        val b = PhoneMirrorPolicy.navigationKey("https://m.youtube.com/watch?t=30&v=AAAAAAAAAAA")
+        assertNotEquals(a, b)
+        assertEquals(a, PhoneMirrorPolicy.navigationKey("https://m.youtube.com/watch?t=20&v=AAAAAAAAAAA"))
+        assertNull(PhoneMirrorPolicy.navigationKey("https://example.com/watch?v=AAAAAAAAAAA"))
+        val n = NavAuthorizer()
+        n.onIntent(a, 100)
+        assertFalse(n.authorize(b, 150))
+        assertTrue(n.authorize(a, 150))
+    }
+
+    @Test fun transportResetAndBusyChangesAreNotLost() {
+        val g = TransportGuard()
+        assertTrue(g.accept("next", 100))
+        assertFalse(g.accept("next", 200))
+        g.reset()
+        assertTrue(g.accept("next", 200))
+        val s = Snap(id = "AAAAAAAAAAA", playing = true)
+        assertTrue(PhoneMirrorPolicy.pokeNeeded(s, s.copy(buffering = true)))
+        assertTrue(PhoneMirrorPolicy.pokeNeeded(s, s.copy(ad = true)))
     }
 }

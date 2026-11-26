@@ -1665,8 +1665,9 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
         if (browsing && visible && resumed) BrowseHost.phone.resume() else BrowseHost.phone.pause()
     }
     // Decode on the phone only while its video is actually on screen (PiP counts).
-    LaunchedEffect(mirrorShown, visible, started, resumed, pip, mirrorRevision) {
-        PhoneMirror.setVisible(mirrorShown && mirrorWanted)
+    LaunchedEffect(hasVideo, mirrorCrashed, phoneMode, visible, started, resumed, pip, mirrorRevision) {
+        PhoneMirror.setVisible(hasVideo && !mirrorCrashed && PhoneMirror.supported &&
+            (pip || phoneMode != WebHost.PlayerMode.HIDDEN) && mirrorWanted)
     }
     LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
     DisposableEffect(Unit) {

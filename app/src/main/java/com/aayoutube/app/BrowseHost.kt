@@ -233,6 +233,8 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (web !== view || WebHost.sessionClearing) return true
+                if (!request.isForMainFrame) return false
                 val uri = request.url
                 if (uri.scheme != "https") return true
                 if (isVideo(uri)) {
@@ -250,6 +252,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
 
             // YouTube changes pages without loading: catch a video page that slipped through.
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
+                if (web !== view || WebHost.sessionClearing) return
                 val uri = Uri.parse(url ?: return)
                 adPageHost = uri.host
                 if (isVideo(uri)) {
@@ -285,6 +288,9 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
     open fun resetSelectionGuards() { selections.reset() }
 
     fun openInPlayer(url: String) {
+        if (WebHost.sessionClearing) return
+        val origin = web ?: return
+        val token = browseToken
         // Also called by the page script (AAYBrowse.open): accept only YouTube video links.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
         if (uri == null || !WebHost.isSafePageUrl(url) || !isVideo(uri)) {
@@ -299,6 +305,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         if (!selections.accept(SelectionDeduper.key(uri.path.orEmpty(), id, uri.getQueryParameter("list"), startMs),
                 SystemClock.elapsedRealtime())) return
         main.post {
+            if (web !== origin || browseToken != token || WebHost.sessionClearing) return@post
             AppLog.add("NAV", "Browse page opened a video")
             WebHost.openUrl(url)
             onSelected()

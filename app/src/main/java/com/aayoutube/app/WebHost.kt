@@ -916,6 +916,7 @@ object WebHost {
             snapshot.value = snapshot.value.copy(userPaused = false)
         }
         js("window.__aay&&window.__aay.cmd('$name')")
+        if (name in setOf("play", "pause", "next", "prev")) PhoneMirror.onExplicitTransport()
     }
 
     fun scrollBy(dx: Double, dy: Double) = js("window.scrollBy($dx,$dy)")
@@ -960,7 +961,7 @@ object WebHost {
         val target = positionMs.coerceIn(0L, s.durMs)
         cmd("seek", (target / 1000.0).toString())
         snapshot.value = s.copy(posMs = target)
-        PhoneMirror.onEngineState(s, snapshot.value)
+        PhoneMirror.onExplicitTransport()
     }
 
     fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
@@ -1057,6 +1058,7 @@ object WebHost {
     }
 
     fun openUrl(url: String) {
+        if (sessionClearing) return
         // Links reach here from the page script, other apps and Android Auto. loadUrl() skips
         // shouldOverrideUrlLoading, so validate HTTPS and trusted destinations directly.
         val uri = runCatching { Uri.parse(url) }.getOrNull()
@@ -1337,28 +1339,43 @@ object WebHost {
 
     /** Sign out and forget everything the page stored, including the mini-player browser.
      * Cookie removal is asynchronous: reloading before it finishes could sign in again. */
+    @Volatile var sessionClearing = false
+        private set
+    private var sessionSerial = 0L
+    private var sessionHomePending = false
+
+    private fun finishSessionReset() {
+        if (!sessionClearing || !sessionHomePending) return
+        sessionHomePending = false
+        sessionClearing = false
+        BrowseHost.onSessionCleared()
+    }
+
     fun clearSession() {
+        if (sessionClearing) return
+        val serial = ++sessionSerial
+        cmd("pause")
+        sessionClearing = true
+        sessionHomePending = false
         // The phone's secondary player stops and drops pending work before any data is cleared.
         PhoneMirror.beginSignOut()
         youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
-        val generation = webGeneration
-        val page = web
         CookieManager.getInstance().removeAllCookies {
             main.post {
+                if (serial != sessionSerial || !sessionClearing) return@post
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                // CookieManager's completion may arrive after Quit, renderer
-                // replacement, or a car/phone handoff. Never navigate a new
-                // page using a callback belonging to the old one.
-                // The secondary browse page shares cookies, so invalidate it
-                // regardless of which player renderer owned the sign-out.
-                BrowseHost.onSessionCleared()
-                if (generation != webGeneration || web !== page) {
-                    AppLog.add("ACCOUNT", "Ignored delayed sign-out navigation for replaced WebView")
-                    return@post
-                }
-                page?.clearCache(true)
-                page?.loadUrl(home())
+                playbackWanted = false
+                mainFrameAllowsPlayback = false
+                expectedWatchVideoId = null
+                snapshot.value = Snap()
+                selectedWatchVideoId.value = ""
+                send(Msg.STATE, Snap().toBundle())
+                sessionHomePending = true
+                val current = web
+                current?.stopLoading()
+                current?.clearCache(true)
+                if (current == null) finishSessionReset() else current.loadUrl(home())
             }
         }
     }
@@ -1455,7 +1472,12 @@ object WebHost {
     fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
         // The phone's secondary player never outlives the engine it follows (Quit, idle shutdown).
-        if (!preserveCarOwners) PhoneMirror.release()
+        if (!preserveCarOwners) {
+            sessionSerial++
+            sessionClearing = false
+            sessionHomePending = false
+            PhoneMirror.release()
+        }
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
@@ -1575,7 +1597,7 @@ object WebHost {
                     putLong("terminalId", d.getLong("terminalId", -1L))
                 })
             }
-            Msg.SEEK -> cmd("seek", (d.getLong("ms") / 1000.0).toString())
+            Msg.SEEK -> seekTo(d.getLong("ms"))
             Msg.NEXT -> {
                 traceTransport("NEXT")
                 cmd("next")
@@ -1656,6 +1678,7 @@ object WebHost {
     }
 
     private fun load(url: String) {
+        if (sessionClearing) return
         if (!isSafePageUrl(url)) {
             AppLog.add("NAV", "Ignored unsafe direct WebView load")
             return
@@ -2030,6 +2053,7 @@ object WebHost {
     }
 
     private fun publish(incoming: Snap) {
+        if (sessionClearing) return
         confirmTransport(incoming)
         reportModeHandoff(incoming)
         val previous = snapshot.value
@@ -2173,6 +2197,7 @@ object WebHost {
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (view !== web) return
+            if (sessionHomePending && runCatching { Uri.parse(url).path.orEmpty() in listOf("", "/") }.getOrDefault(false)) finishSessionReset()
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})", null)
