@@ -323,29 +323,6 @@ class ProjectedPlaybackPolicyTest {
         assertEquals(320_000L, CarRendererReusePolicy.restorePosition("v", "v", "v", 320_000, false, null))
     }
 
-    @Test fun sharedPreviewIsRestrictedToSmallProjectedWindows() {
-        assertTrue(SharedPreviewPolicy.use(true, true, false))
-        assertTrue(SharedPreviewPolicy.use(true, false, true))
-        assertFalse(SharedPreviewPolicy.use(true, false, false))
-        assertFalse(SharedPreviewPolicy.use(false, true, false))
-        assertFalse(SharedPreviewPolicy.use(false, false, true))
-    }
-
-    @Test fun sharedPreviewStopsForHiddenPausedBufferingAndThermalPressure() {
-        assertTrue(SharedPreviewPolicy.capture(true, true, false, 1))
-        assertFalse(SharedPreviewPolicy.capture(false, true, false, 0))
-        assertFalse(SharedPreviewPolicy.capture(true, false, false, 0))
-        assertFalse(SharedPreviewPolicy.capture(true, true, true, 0))
-        assertFalse(SharedPreviewPolicy.capture(true, true, false, 2))
-    }
-
-    @Test fun previewAllocationCapsLongestEdgeInBothOrientations() {
-        assertEquals(256 to 144, SharedPreviewPolicy.size(1920, 1080, 256))
-        assertEquals(144 to 256, SharedPreviewPolicy.size(1080, 1920, 256))
-        assertEquals(20 to 10, SharedPreviewPolicy.size(20, 10, 256))
-        assertEquals(0 to 0, SharedPreviewPolicy.size(0, 1080, 256))
-    }
-
     @Test fun sustainedPressureRequiresTwoFreshSamplesAndRecovers() {
         val policy = ProcessPressurePolicy()
         policy.update(178, 1000)

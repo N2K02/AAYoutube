@@ -65,7 +65,8 @@ internal object PhoneMirror {
     @Volatile private var hiddenFlag = true
     private var transportAt = 0L
     private var adHeld = false
-    private var syncDueAt = Long.MAX_VALUE
+    private val scheduler = MirrorScheduler()
+    private val health = MirrorHealth()
     private var missingMediaCount = 0
     private var clockFailures = 0
     private var intentEpoch = 0L
@@ -96,6 +97,7 @@ internal object PhoneMirror {
             WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO) }.getOrDefault(false)
     }
     /** Too many renderer crashes: the phone shows its browse page instead of looping. */
+    val muteUnavailable = MutableStateFlow(false)
     val failed = MutableStateFlow(false)
     /** Thermal or sustained-buffering suspension: the phone shows the lightweight fallback meanwhile. */
     val suspended = MutableStateFlow(false)
@@ -107,8 +109,9 @@ internal object PhoneMirror {
         return "if(window.top===window.self)window.__AAYM_TOKEN=" + JSONObject.quote(token) + ";\n" + js
     }
 
-    fun attach(context: Context): WebView {
-        val w = web ?: create(context)
+    fun attach(context: Context): View {
+        if (!supported || muteUnavailable.value) return View(context)
+        val w = web ?: create(context) ?: return View(context)
         if (fullscreenOwner != null && fullscreenOwner !== activityOf(context)) hideCustomView()
         wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
@@ -131,13 +134,13 @@ internal object PhoneMirror {
     }
 
     private fun applyVisible() {
-        val on = wantVisible && !failed.value
+        val on = wantVisible && supported && !muteUnavailable.value && !failed.value
         val w = web
         if (w == null) {
             visible = on
             refreshHidden()
             main.removeCallbacks(syncTick)
-            syncDueAt = Long.MAX_VALUE
+            scheduler.clear()
             if (on && suspended.value) scheduleSync(0L)
             return
         }
@@ -145,7 +148,7 @@ internal object PhoneMirror {
         visible = on
         refreshHidden()                  // new documents (and frames) start in this state
         main.removeCallbacks(syncTick)
-        syncDueAt = Long.MAX_VALUE
+        scheduler.clear()
         main.removeCallbacks(idleRelease)
         if (on) {
             stats.resumes++
@@ -165,11 +168,6 @@ internal object PhoneMirror {
             // hidden period the whole secondary renderer is released.
             main.postDelayed(idleRelease, PhoneMirrorPolicy.HIDDEN_RELEASE_MS)
         }
-    }
-
-    /** Shared preview needs no secondary decoder. */
-    fun releaseHiddenRenderer() {
-        if (!wantVisible && web != null) teardown()
     }
 
     private val idleRelease = Runnable {
@@ -204,11 +202,9 @@ internal object PhoneMirror {
     /** Keep the earliest deadline; updates cannot postpone a pending tick. */
     private fun scheduleSync(delayMs: Long) {
         val now = SystemClock.elapsedRealtime()
-        val due = now + delayMs.coerceAtLeast(0L)
-        if (due >= syncDueAt) return
-        syncDueAt = due
+        val delay = scheduler.request(now, delayMs) ?: return
         main.removeCallbacks(syncTick)
-        main.postDelayed(syncTick, (due - now).coerceAtLeast(0L))
+        main.postDelayed(syncTick, delay)
     }
 
     /** The engine's state changed (play/pause/seek/new video): follow now, not at the next interval. */
@@ -245,7 +241,7 @@ internal object PhoneMirror {
         WebHost.resetSelectionGuards()
         BrowseHost.resetSelectionGuards()
         main.removeCallbacks(syncTick)
-        syncDueAt = Long.MAX_VALUE
+        scheduler.clear()
         web?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
     }
 
@@ -301,12 +297,13 @@ internal object PhoneMirror {
 
     private fun teardown() {
         main.removeCallbacks(syncTick)
-        syncDueAt = Long.MAX_VALUE
+        scheduler.clear()
         main.removeCallbacks(idleRelease)
         hiddenFlag = true
         syncSeq++
         // Session-specific state must not leak into the next renderer.
         gate.reset()
+        health.reset()
         adHeld = false
         transport.reset()
         lastReloadRejectedAt = Long.MIN_VALUE / 2
@@ -348,7 +345,7 @@ internal object PhoneMirror {
     /** Load the engine's video, then keep the clock in step. */
     private val syncTick: Runnable = object : Runnable {
         override fun run() {
-            syncDueAt = Long.MAX_VALUE
+            scheduler.clear()
             if (!visible || !wantVisible || failed.value) return
             main.removeCallbacks(this)
             val s = WebHost.snapshot.value
@@ -360,9 +357,12 @@ internal object PhoneMirror {
                 return
             }
             // Load first? No: heat and primary health decide before anything is loaded or synced.
+            if (health.observeGeneration(WebHost.rendererGeneration)) {
+                clockFailures = 0; missingMediaCount = 0; recoveryAttempts = 0; qualityViolations = 0
+            }
             val thermal = thermalStatus()
             val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure())
-            if (state == MirrorLoadGate.State.SUSPENDED) {
+            if (state == MirrorLoadGate.State.SUSPENDED || health.waiting(now)) {
                 if (!suspended.value) enterSuspension(thermal, s.buffering, now)
                 if (web != null && now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS) disposeRenderer()
                 scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
@@ -435,8 +435,7 @@ internal object PhoneMirror {
                     if (PhoneMirrorPolicy.exceedsQualityCap(cap, result.heightPx)) {
                         if (++qualityViolations >= PhoneMirrorPolicy.MAX_QUALITY_VIOLATIONS) {
                             AppLog.add("MIRROR", "Secondary decoder exceeds degraded quality ceiling; using controls")
-                            failed.value = true
-                            teardown()
+                            recoverLater("quality-cap", received)
                             return@evaluateJavascript
                         }
                     } else qualityViolations = 0
@@ -444,8 +443,7 @@ internal object PhoneMirror {
                         if (++missingMediaCount >= PhoneMirrorPolicy.MISSING_MEDIA_LIMIT) {
                             missingMediaCount = 0
                             if (++recoveryAttempts > PhoneMirrorPolicy.MAX_MEDIA_RECOVERIES) {
-                                failed.value = true
-                                teardown()
+                                recoverLater("media-unavailable", received)
                             } else {
                                 loadedId = ""
                                 pageId = null
@@ -456,6 +454,7 @@ internal object PhoneMirror {
                         missingMediaCount = 0
                         recoveryAttempts = 0
                         lastDriftMs = result.driftMs
+                        health.success()
                     }
                 }
             }
@@ -466,9 +465,17 @@ internal object PhoneMirror {
     private fun clockFailure(): Boolean {
         if (++clockFailures < PhoneMirrorPolicy.MAX_CLOCK_FAILURES) return false
         AppLog.add("MIRROR", "Primary clock unavailable; using phone playback controls")
-        failed.value = true
-        teardown()
+        recoverLater("primary-clock", SystemClock.elapsedRealtime())
         return true
+    }
+
+    private fun recoverLater(reason: String, now: Long) {
+        health.backoff(now)
+        clockFailures = 0; missingMediaCount = 0; recoveryAttempts = 0; qualityViolations = 0
+        if (!suspended.value) enterSuspension(thermalStatus(), WebHost.snapshot.value.buffering, now)
+        disposeRenderer()
+        AppLog.add("MIRROR", "Temporary suspension reason=$reason retryMs=${health.remaining(now)}")
+        scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
     }
 
     private fun holdForAd(w: WebView) {
@@ -634,7 +641,8 @@ internal object PhoneMirror {
     }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
-    private fun create(context: Context): WebView {
+    private fun create(context: Context): WebView? {
+        if (!supported || muteUnavailable.value) return null
         val c = MutableContextWrapper(context).also { wrapper = it }
         val w = WebView(c)
         // Native muting covers every frame and audio path before any navigation.
@@ -642,12 +650,14 @@ internal object PhoneMirror {
                 WebViewCompat.setAudioMuted(w, true)
                 WebViewCompat.isAudioMuted(w)
             }.getOrDefault(false)) {
-            failed.value = true
+            w.destroy()
+            wrapper = null
+            muteUnavailable.value = true
             wantVisible = false
-            web = w
-            main.post { if (web === w && failed.value) teardown() }
+            visible = false
+            refreshHidden()
             AppLog.add("MIRROR", "Native mute unavailable; secondary playback disabled")
-            return w
+            return null
         }
         token = java.util.UUID.randomUUID().toString()
         generation++
@@ -682,8 +692,7 @@ internal object PhoneMirror {
                     // An explicit new link selection is distinct from a preceding Next/Previous command.
                     transportAt = 0L
                     nav.onIntent(PhoneMirrorPolicy.navigationKey(url), SystemClock.elapsedRealtime())
-                    onNavigatedTo(Uri.parse(url), alreadyShown = false)
-                    AppLog.add("MIRROR", "Phone link dispatched")
+                    AppLog.add("MIRROR", "Phone link authorized; awaiting main-frame navigation")
                 } else {
                     AppLog.add("MIRROR", "Ignored link from obsolete or unavailable phone document")
                 }
@@ -744,6 +753,10 @@ internal object PhoneMirror {
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 pageHost = runCatching { Uri.parse(url).host }.getOrNull()
                 if (web !== view) return
+                val destination = runCatching { Uri.parse(url) }.getOrNull()
+                if (destination != null && WebHost.isSafePageUrl(destination.toString()) &&
+                    nav.matches(PhoneMirrorPolicy.navigationKey(destination.toString()), SystemClock.elapsedRealtime()))
+                    onNavigatedTo(destination, alreadyShown = true)
                 // A new document invalidates the previous page's navigation and transport authorisation.
                 hideCustomView()
                 fullscreenClosing = false
@@ -926,10 +939,13 @@ internal class NavAuthorizer {
 
     /** [destinationId] is the video ID, or null for a non-video page (Home, Search). Consumed on success. */
     fun authorize(destinationId: String?, nowMs: Long): Boolean {
-        val ok = hasIntent && destinationId != null && nowMs - intentAt in 0..INTENT_MS && intentId == destinationId
+        val ok = matches(destinationId, nowMs)
         if (ok) reset()
         return ok
     }
+
+    fun matches(destinationId: String?, nowMs: Long): Boolean =
+        hasIntent && destinationId != null && nowMs - intentAt in 0..INTENT_MS && intentId == destinationId
 
     fun reset() { hasIntent = false; intentId = null; intentAt = Long.MIN_VALUE / 2 }
 

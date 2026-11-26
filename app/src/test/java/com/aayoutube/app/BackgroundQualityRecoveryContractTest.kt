@@ -186,8 +186,8 @@ class BackgroundQualityRecoveryContractTest {
         assertTrue(js.contains("pending.id !== qualityVideoId()"))
         assertTrue(js.contains("A.restoreAt = function (id, seconds)"))
         val web = source("app/src/main/java/com/aayoutube/app/WebHost.kt")
-        assertTrue(web.contains("incomingId == outgoingId"))
-        assertTrue(web.contains("incomingId == previous.id"))
+        assertTrue(web.contains("CarRendererReusePolicy.restorePosition(incomingId, outgoingId,"))
+        assertTrue(web.contains("previous.id, previous.posMs, previous.ended, explicitStart)"))
         assertTrue(web.contains("sameVideoReloadPosition = null"))
         assertTrue(web.contains("JSONObject.quote(videoId)"))
     }

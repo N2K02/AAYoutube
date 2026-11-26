@@ -68,7 +68,7 @@ class CarWindowOwnershipContractTest {
             .substringBefore("fun claimCarHost(")
         assertTrue(bind.contains("frame.windowToken?.let { System.identityHashCode(it) }"))
         assertTrue(bind.contains("CarRendererReusePolicy.reason("))
-        assertTrue(bind.contains("webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced)"))
+        assertTrue(bind.contains("webDisplayId, targetDisplay, carWindowId, targetWindow, detachedReuse, forced, trial)"))
         assertTrue(bind.indexOf("recreateRenderer(context, targetDisplay ?: -1, reason)") < bind.indexOf("carWindowId = targetWindow"))
         // A new renderer, a phone attach and Quit all forget the car window.
         assertTrue(host.substringAfter("private fun ensureWeb(").substringBefore("val w = BackgroundWebView(context)")

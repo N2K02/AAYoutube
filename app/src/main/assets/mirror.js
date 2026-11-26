@@ -160,8 +160,10 @@
   var linkSequence = 0, pendingLink = null;
   M.navigationResult = function(doc, request, accepted) {
     if (doc !== M.doc || !pendingLink || pendingLink.request !== request) return;
+    var url = pendingLink.url;
     pendingLink = null;
-    if (!accepted && !M.stopped && typeof window.alert === 'function') window.alert('Selection changed before it could be opened. Please tap the link again.');
+    if (accepted && !M.stopped && url) location.assign(url);
+    else if (!accepted && !M.stopped && typeof window.alert === 'function') window.alert('Selection changed before it could be opened. Please tap the link again.');
   };
   // A clicked link names the destination. The native side acknowledges queued ownership and execution.
   document.addEventListener('click', function (e) {
@@ -171,7 +173,7 @@
       if (a && a.href && b && !closest(e.target, NEXT_SEL) && !closest(e.target, PREV_SEL)) {
         var req = String(++linkSequence), accepted = false;
         if (b.intentRequest) {
-          pendingLink = { request: req };
+          pendingLink = { request: req, url: String(a.href) };
           accepted = b.intentRequest(String(a.href), TOKEN, M.doc, req);
           if (!accepted) pendingLink = null;
         } else if (b.intent) accepted = b.intent(String(a.href), TOKEN, M.doc);

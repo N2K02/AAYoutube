@@ -68,6 +68,7 @@ object WebHost {
     private var web: WebView? = null
     private var webDisplayId: Int? = null
     private var webGeneration = 0
+    internal val rendererGeneration: Int get() = webGeneration
     private var scriptHandler: ScriptHandler? = null
     private var link: Messenger? = null
     private var linkEpoch = -1
@@ -618,7 +619,6 @@ object WebHost {
     private var lastCrossDisplayFailureAt = 0L
     private var carVerifyEpoch = 0L
     private var crossDisplayTrial = false
-    internal val verifyingCrossDisplay: Boolean get() = crossDisplayTrial
     private var carTrialTimeout: Runnable? = null
     private var carVerifySamples = 0
     private var carBlackSamples = 0

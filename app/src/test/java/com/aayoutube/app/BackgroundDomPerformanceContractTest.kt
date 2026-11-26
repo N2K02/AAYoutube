@@ -14,7 +14,7 @@ class BackgroundDomPerformanceContractTest {
     @Test fun backgroundSkipsVisualWorkButRetainsMediaBinding() {
         val tick = script.substringAfter("function tick() {").substringBefore("function schedTick()")
         assertTrue(tick.contains("if (v) bind(v);"))
-        assertTrue(tick.contains("if (v && !BROWSE && A.applyQuality) A.applyQuality();"))
+        assertTrue(tick.contains("if (v && !BROWSE && !A.audioOnly && A.applyQuality) A.applyQuality();"))
         val guard = "if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;"
         assertTrue(tick.contains(guard))
         assertTrue(tick.indexOf(guard) < tick.indexOf("skipAd();"))
