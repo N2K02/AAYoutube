@@ -121,7 +121,7 @@ internal class PlaybackEngineCoordinator(
         phase = Phase.WEB
         pending = null
         if (restore != null) web.start(restore.videoId, -1L,
-            reason != "web-video-changed" && reason != "transport:pause" && PlaybackHandoffPolicy.shouldResume(restore))
+            reason !in setOf("web-video-changed", "transport:pause", "transport:next", "transport:prev", "web-intent-changed") && PlaybackHandoffPolicy.shouldResume(restore))
         log("handoff=aborted reason=$reason video=$nativeVideoId engine=web")
         nativeVideoId = ""
     }
@@ -159,7 +159,9 @@ internal class PlaybackEngineCoordinator(
 
     /** Media-session/car/headset transports while native owns playback. False = not handled here. */
     fun command(name: String, positionMs: Long = 0L): Boolean {
-        if (phase == Phase.PREPARING && silencePending) { abortPreparation("transport:$name"); return false }
+        if (phase == Phase.PREPARING && name in setOf("play", "pause", "seek", "next", "prev")) {
+            abortPreparation("transport:$name"); return false
+        }
         if (phase != Phase.NATIVE) return false
         when (name) {
             "play" -> { userPaused = false; native.play() }
@@ -183,17 +185,21 @@ internal class PlaybackEngineCoordinator(
             return false
         }
         if (phase != Phase.NATIVE) return false
-        if (webVideoId.isNotBlank() && webVideoId != nativeVideoId) {
+        if (webVideoId != nativeVideoId) {
             returnToWeb("web-video-changed", resume = true, startWeb = false)
             return false
         }
         if (webPlaying) {
-            web.silence()
-            audibleSet.remove(EngineId.WEB)
-            log("duplicate-prevented web silenced again video=$nativeVideoId")
+            // Web pause is asynchronous. Stop native immediately.
+            returnToWeb("unexpected-web-playback", resume = true)
             return true
         }
         return false
+    }
+
+    /** Preserve a permanent focus loss or becoming-noisy pause on return to web. */
+    fun onNativeIntent(playWhenReady: Boolean) {
+        if (phase == Phase.NATIVE) userPaused = !playWhenReady
     }
 
     /** Native playback failed (offload fallback already tried by the engine): web takes over. */

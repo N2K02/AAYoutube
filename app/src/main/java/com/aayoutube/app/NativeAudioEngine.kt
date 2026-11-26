@@ -157,6 +157,7 @@ internal class NativeAudioEngine(
         started = false
         offloadActive = false
         sleepingForOffload = false
+        stream = null
     }
 
     /** Position updates: sparse while DSP sleeps; state changes still report immediately. */
@@ -200,7 +201,7 @@ internal class NativeAudioEngine(
 
         override fun onPlayerError(error: PlaybackException) {
             val s = stream ?: return
-            val wasOffloaded = offloadActive || offloadRequested
+            val wasOffloaded = offloadActive || (offloadRequested && error.errorCode in 5001..5004)
             listener.log("event=error code=${error.errorCodeName} offloadActive=$offloadActive offloadRequested=$offloadRequested")
             if (wasOffloaded && !retriedWithoutOffload) {
                 // Offload caused (or coincided with) the failure: retry once without it, same position.
@@ -213,8 +214,9 @@ internal class NativeAudioEngine(
                 player?.let { it.removeListener(this); it.removeAnalyticsListener(analytics); it.removeAudioOffloadListener(offloadListener); it.release() }
                 player = null
                 sabrPlayback?.close(); sabrPlayback = null
+                readyReported = wasStarted
                 build(s, pos, offload = false)
-                if (wasStarted) { started = true; player?.volume = 1f; player?.playWhenReady = resume }
+                if (wasStarted && player != null) { started = true; player?.volume = 1f; player?.playWhenReady = resume }
                 return
             }
             listener.onError(offloaded = false, codecMime = s.codecMime, detail = error.errorCodeName)

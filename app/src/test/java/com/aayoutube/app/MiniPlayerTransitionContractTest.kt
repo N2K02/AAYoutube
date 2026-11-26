@@ -57,7 +57,7 @@ class MiniPlayerTransitionContractTest {
         assertTrue(js.contains("object-fit:contain!important"))
         assertTrue(js.contains("html.aay-video-only ytm-player"))
         assertFalse(js.contains("html.aay-pip body *{visibility:hidden!important}"))
-        assertTrue(js.contains("A.inPip || A.isMini || !CFG.lowQuality"))
+        assertTrue(js.contains("A.inPip || (A.isMini && !A.backgroundAudioMode) || !CFG.lowQuality"))
         assertTrue(js.contains("A.applyQuality = applyPreferredQuality"))
         assertTrue(js.contains("CSS_UNMUTE"))
         assertFalse(js.contains("v.style.setProperty('opacity'"))

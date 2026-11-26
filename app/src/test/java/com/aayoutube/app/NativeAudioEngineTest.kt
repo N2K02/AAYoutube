@@ -440,18 +440,41 @@ class NativeAudioEngineTest {
         assertFalse("explicit pause preserved", web2.audible)
     }
 
-    @Test fun webThatBecomesAudibleAgainIsSilencedAndOtherVideoHandsBack() {
+    @Test fun unexpectedWebPlaybackImmediatelyStopsNativeAndNavigationHandsBack() {
         val (c, web, native) = nativeOwning()
-        web.audible = true // YouTube autoplay sneaked in
+        web.audible = true
         assertTrue(c.onWebReport("v", webPlaying = true))
-        assertFalse(web.audible)
-        assertTrue(native.audible)
-        assertFalse(c.onWebReport("v", webPlaying = false))
-        // The user picked another video in the page.
-        c.onWebReport("other", webPlaying = true)
         assertEquals(EngineId.WEB, c.owner)
         assertTrue(native.released)
         assertNeverTwoAudible(web, native)
+        val (c2, web2, native2) = nativeOwning()
+        c2.onWebReport("other", webPlaying = true)
+        assertEquals(EngineId.WEB, c2.owner)
+        assertTrue(native2.released)
+        assertNeverTwoAudible(web2, native2)
+    }
+
+    @Test fun nativePermanentPauseIsPreservedWhenReturningToWeb() {
+        val (c, web, native) = nativeOwning()
+        native.pause()
+        c.onNativeIntent(false)
+        c.returnToWeb("visible")
+        assertFalse(web.audible)
+    }
+
+    @Test fun userTransportCancelsPreparationBeforeSilenceRequest() {
+        val (c, web, native) = setup()
+        c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+        assertFalse(c.command("seek", 50_000))
+        assertTrue(native.released)
+        assertTrue(web.audible)
+        c.onNativeReady(HandoffState.from(playing, now))
+        assertEquals(EngineId.WEB, c.owner)
+    }
+
+    @Test fun bufferingAndNonDefaultSpeedStayOnWeb() {
+        assertFalse(PlaybackHandoffPolicy.canHandToNative(playing.copy(buffering = true), true).allowed)
+        assertFalse(PlaybackHandoffPolicy.canHandToNative(playing.copy(rate = 1.5f), true).allowed)
     }
 
     @Test fun releaseOnQuitStopsNativeAndResetsOwnership() {

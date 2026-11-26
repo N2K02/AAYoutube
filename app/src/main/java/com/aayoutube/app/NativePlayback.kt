@@ -72,6 +72,10 @@ internal object NativePlayback {
             return web
         }
         c?.onWebReport(web.id, web.playing)
+        if (c?.phase == PlaybackEngineCoordinator.Phase.PREPARING && !webNativeMarker &&
+            !PlaybackHandoffPolicy.canHandToNative(web, audioOnlyAllowed()).allowed) {
+            c.abortPreparation("web-intent-changed")
+        }
         c?.checkTimeout()
         maybeHandoff(web)
         return web
@@ -102,6 +106,7 @@ internal object NativePlayback {
     private fun maybeHandoff(s: Snap) {
         syncProvider()
         if (!audioOnlyAllowed()) return
+        if (coordinator?.phase?.let { it != PlaybackEngineCoordinator.Phase.WEB } == true) return
         if (s.id == attemptedVideo) return
         val decision = PlaybackHandoffPolicy.canHandToNative(s, featureOn = true)
         if (!decision.allowed) return
@@ -157,7 +162,11 @@ internal object NativePlayback {
     private val engineListener = object : NativeAudioEngine.Listener {
         override fun onReady() {
             if (!audioOnlyAllowed()) { returnToWeb("video-visible-or-disabled"); return }
-            coordinator?.onNativeReady(HandoffState.from(WebHost.snapshot.value, SystemClock.elapsedRealtime()))
+            val current = WebHost.snapshot.value
+            if (!PlaybackHandoffPolicy.canHandToNative(current, audioOnlyAllowed()).allowed) {
+                coordinator?.abortPreparation("web-intent-changed"); return
+            }
+            coordinator?.onNativeReady(HandoffState.from(current, SystemClock.elapsedRealtime()))
         }
 
         override fun onState(playing: Boolean, buffering: Boolean, positionMs: Long, playWhenReady: Boolean) {
@@ -166,6 +175,7 @@ internal object NativePlayback {
             nativeBuffering = buffering && playWhenReady
             val c = coordinator ?: return
             if (c.owner != EngineId.NATIVE) return
+            c.onNativeIntent(playWhenReady)
             WebHost.publishFromNative { web ->
                 PlaybackHandoffPolicy.merge(web, positionMs, playing, nativeBuffering, c.userPaused || !playWhenReady)
             }

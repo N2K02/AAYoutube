@@ -66,6 +66,8 @@ internal object PlaybackHandoffPolicy {
         s.id.isBlank() -> HandoffDecision(false, "no-video")
         s.live -> HandoffDecision(false, "live")
         s.ad -> HandoffDecision(false, "ad")
+        s.buffering -> HandoffDecision(false, "buffering")
+        kotlin.math.abs(s.rate - 1f) > 0.001f -> HandoffDecision(false, "non-default-speed")
         s.ended -> HandoffDecision(false, "ended")
         s.durMs <= 0L -> HandoffDecision(false, "unknown-duration")
         s.durMs - s.posMs < END_MARGIN_MS -> HandoffDecision(false, "near-end")
