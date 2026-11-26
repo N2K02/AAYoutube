@@ -50,7 +50,8 @@ class PlayerPrefsPolicyTest {
         // Smooth mode changes fade; the WebView size is never animated per frame.
         assertTrue(ui.contains("scrim.animateTo(0f, tween(240))"))
         assertFalse("WebView must stay opaque", ui.contains("playerMod.graphicsLayer { alpha = fade"))
-        assertTrue(ui.contains("if (!snap.playing) return@LaunchedEffect"))
+        assertTrue("mini progress ticks only while playing and shown",
+            ui.contains("if (!snap.playing || !paneShown) return@LaunchedEffect"))
         // Speed memory ignores YouTube's reset on a new video; double tap keeps one jump.
         assertTrue(js.contains("now - loadAt < 3000"))
         assertTrue(js.contains("seekHold = { v: v, target: target"))
