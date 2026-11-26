@@ -30,7 +30,7 @@ class PlaybackLifecycleCleanupTest {
         assertTrue(hold.contains("main.post {"))
         assertTrue(hold.contains("if (generation != webGeneration) return@post"))
         assertTrue(hold.contains("!current.playing && !current.buffering && !current.userPaused"))
-        assertTrue(hold.contains("!current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        assertTrue(hold.contains("!current.ended && current.id.isNotBlank() && playbackWanted &&\n                !NetworkMonitor.recentlyDisrupted() && otherMediaActive()"))
         assertTrue(hold.contains("startOtherMediaHold(\"page watchdog\")"))
         assertTrue(hold.indexOf("if (generation != webGeneration) return@post") <
             hold.indexOf("startOtherMediaHold"))

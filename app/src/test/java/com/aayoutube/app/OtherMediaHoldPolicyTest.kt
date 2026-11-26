@@ -39,7 +39,8 @@ class OtherMediaHoldPolicyTest {
         assertTrue(web.contains("main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)"))
         val judge = web.substringAfter("private val droppedResumeJudge = Runnable {").substringBefore("\n    }")
         assertTrue(judge.contains("val active = otherMediaActive()"))
-        assertTrue(judge.contains("if (active) startOtherMediaHold(\"native resume\") else cmd(\"play\")"))
+        // Recovery resumes as an automatic Play (a real hold still wins over it).
+        assertTrue(judge.contains("if (active) startOtherMediaHold(\"native resume\") else autoPlay()"))
         assertTrue(judge.indexOf("val active = otherMediaActive()") < judge.indexOf("if (active)"))
         assertTrue(web.contains("fun otherMediaHold(token: String?): Boolean"))
         val js = read("app/src/main/assets/aay.js")

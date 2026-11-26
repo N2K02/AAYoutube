@@ -2358,3 +2358,100 @@ test('page navigation to another video drops native ownership of the old one', (
   assert.equal(p.window.__aay.nativeOwned(), false);
   assert.equal(p.stateReports.at(-1).native, false);
 });
+
+test('the user\'s Play ends an other-media hold at once (one press), automatic Play still waits', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  assert.equal(p.video.paused, true);
+  p.window.__aay.cmd('play'); // app recovery
+  assert.equal(p.video.paused, true, 'automatic Play respects the hold');
+  p.window.__aay.cmd('play', 'user'); // notification / car / headset / app button
+  assert.equal(p.video.paused, false, 'one user press resumes');
+  // YouTube's late play event no longer re-pauses: the hold is over.
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'watchdogs do not pause again');
+});
+
+test('a play the user just tapped in the page is not paused again by a hold', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  p.window.__aay.cmd('play', 'user');
+  p.window.__aay.mediaHold(true); // a later hold (e.g. still-reported output)
+  p.window.__aay.cmd('play', 'user');
+  p.video.paused = false;
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false);
+});
+
+test('offline: no resume attempts are spent; the connection\'s return resumes at the last position', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 95;
+  p.video.trigger('timeupdate');
+  p.flush();
+  p.window.__aay.network(false);
+  // YouTube's error resets the element and pauses it.
+  p.video.currentTime = 0;
+  p.video.paused = true;
+  p.video.trigger('pause');
+  let plays = 0;
+  const origPlay = p.video.play.bind(p.video);
+  p.video.play = () => { plays++; return origPlay(); };
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(plays, 0, 'no futile retries while offline');
+  assert.equal(p.video.paused, true);
+  const r = p.window.__aay.recoverNetwork(-1);
+  assert.match(r, /^resumed@95/);
+  assert.equal(p.video.currentTime, 95, 'same video, same place');
+  assert.equal(p.video.paused, false);
+  assert.equal(p.window.__aay.recoverNetwork(-1), 'recent', 'one recovery per reconnect');
+});
+
+test('network recovery keeps an explicit user pause and reloads a player that gave up', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause');
+  assert.equal(p.window.__aay.recoverNetwork(50), 'user-paused');
+  assert.equal(p.video.paused, true);
+
+  const q = playerPage({ quality: true });
+  q.flush();
+  const player = q.document.getElementById('movie_player');
+  const loads = [];
+  player.loadVideoById = (o) => loads.push(o);
+  q.video.error = { code: 2 }; // MEDIA_ERR_NETWORK
+  q.video.paused = true;
+  const r = q.window.__aay.recoverNetwork(123.4);
+  assert.equal(r, 'reloaded@123');
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].videoId, '86p7SP34qSc');
+  assert.equal(loads[0].startSeconds, 123);
+});
+
+test('starved playback is nudged to fetch again after reconnect', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.readyState = 2;
+  assert.equal(p.window.__aay.recoverNetwork(-1), 'nudged');
+});
+
+test('leaving the mini player repairs YouTube\'s stale centre Play icon promptly', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2; // YouTube thinks paused
+  player.playVideo = () => { repairs++; };
+  player.getPlayerState(); // video element is playing
+  p.window.__aay.mini(true);
+  p.flush();
+  const before = repairs;
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.ok(repairs > before, 'icon reconciled on return to full player');
+});

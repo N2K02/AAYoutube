@@ -68,7 +68,8 @@ class MediaInterruptionRegressionTest {
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("if (generation != webGeneration) return@post"))
         assertTrue(web.contains("!current.playing && !current.buffering && !current.userPaused"))
-        assertTrue(web.contains("current.id.isNotBlank() && playbackWanted && otherMediaActive()"))
+        // A pause right after a connection loss is the network's, never another app's.
+        assertTrue(web.contains("current.id.isNotBlank() && playbackWanted &&\n                !NetworkMonitor.recentlyDisrupted() && otherMediaActive()"))
         assertTrue(web.contains("else if (otherMediaHeldSince == 0L)"))
         assertTrue(web.contains("window.__aay.mediaHold(false)"))
         assertEquals(2, Regex("s.playing \\|\\| s.buffering \\|\\| !playbackWanted").findAll(web).count())

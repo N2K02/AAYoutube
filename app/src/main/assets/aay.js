@@ -371,6 +371,8 @@
       lastTransportPointer = { video: v, target: t, at: now };
     if (v.paused && (playerControl || insideVideo || playerSurface)) {
       userResumeEligibleUntil = Date.now() + 1500;
+      // The user's own Play beats an "other app is playing" hold (it may be a false positive).
+      if (bgWatch.held) { bgWatch.held = false; console.log('[aay] user Play ends media hold'); }
       PAUSED = false;
       bgWatch.explicitPause = false;
       bgWatch.wanted = true;
@@ -410,6 +412,7 @@
         PAUSED = false;
         bgWatch.explicitPause = false;
         bgWatch.wanted = true;
+        bgWatch.held = false;
         userResumeEligibleUntil = Date.now() + 1500;
         userPauseEligibleUntil = 0;
       } else userPauseEligibleUntil = Date.now() + 2000;
@@ -1218,6 +1221,7 @@
       if (pv.author) mi.a = pv.author;
     }
     var d = v.duration;
+    if (v.currentTime > 0 && !isAd()) { net.lastPos = v.currentTime; net.lastId = urlId(); }
     var state = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
@@ -1724,6 +1728,9 @@
         return;
       }
     } catch (e) {}
+    // Offline: a retry cannot succeed. Keep the intent without growing the backoff; the
+    // connection's return resumes playback (A.recoverNetwork / 'online').
+    if (!net.online || navigator.onLine === false) return;
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
@@ -1739,6 +1746,61 @@
     schedReport(150);
   }
   A.checkBackgroundPlayback = backgroundWatchdog;
+
+  /* Connection loss: YouTube stalls, then errors and may reset the video to 0 with no
+   * duration. On reconnect the same video resumes at its last good position; an explicit
+   * user pause is kept. One recovery per reconnect (native callback and 'online' event). */
+  var net = { online: true, lastPos: 0, lastId: '', recoveredAt: 0 };
+  A.network = function (on) {
+    net.online = !!on;
+    console.log('[aay] network ' + (on ? 'restored' : 'lost'));
+  };
+  function playerErrored(v, p) {
+    if (v && v.error) return true;
+    if (document.querySelector('.ytp-error, .ytm-player-error-message-renderer, .player-error-message-container')) return true;
+    var st = null;
+    try { st = p && typeof p.getPlayerState === 'function' ? p.getPlayerState() : null; } catch (e) {}
+    return !!(v && v.readyState === 0 && !v.currentSrc && !v.src && st !== 1 && st !== 3);
+  }
+  A.recoverNetwork = function (posSec) {
+    net.online = true;
+    if (PAUSED || bgWatch.explicitPause) return 'user-paused';
+    if (Date.now() - net.recoveredAt < 3000) return 'recent';
+    if (!/^\/(watch|live\/)/.test(location.pathname)) return 'not-watch';
+    var v = getVideo();
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    var id = urlId();
+    var known = id && id === net.lastId ? net.lastPos : 0;
+    var start = Math.max(0, Math.floor(posSec > 0 ? posSec : (known || (v && v.currentTime) || 0)));
+    net.recoveredAt = Date.now();
+    bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; bgWatch.wanted = true; bgWatch.held = false;
+    var result;
+    if (playerErrored(v, p) && p && typeof p.loadVideoById === 'function' && id) {
+      // The player gave up: load the same video again where it was.
+      try { p.loadVideoById({ videoId: id, startSeconds: start }); result = 'reloaded@' + start; }
+      catch (e) { result = 'reload-failed'; }
+    } else if (v && v.paused) {
+      if (start > 0 && v.currentTime < 1 && start - v.currentTime > 2) { try { v.currentTime = start; } catch (e) {} }
+      requestPlayerPlay(v);
+      result = 'resumed@' + start;
+    } else if (v && v.readyState < 3) {
+      // Still "playing" but starved: re-seek in place so the player fetches again.
+      try { v.currentTime = v.currentTime; } catch (e) {}
+      result = 'nudged';
+    } else {
+      result = 'playing';
+    }
+    console.log('[aay] network recovery: ' + result);
+    stateFixAt = 0; scheduleStateRepair(1200); // YouTube's icon after its error screen
+    schedReport(300);
+    return result;
+  };
+  window.addEventListener('offline', function () { net.online = false; });
+  window.addEventListener('online', function () {
+    net.online = true;
+    // Fallback for the native callback (e.g. WebView-only); the 3 s guard avoids a double resume.
+    setTimeout(function () { if (bgWatch.wanted && !PAUSED) A.recoverNetwork(-1); }, 1500);
+  });
   setInterval(backgroundWatchdog, 5000);
 
   // Capturing media events arrive for a newly-created <video> even if the
@@ -1769,7 +1831,11 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (bgWatch.held) {
+          if (bgWatch.held && Date.now() <= userResumeEligibleUntil) {
+            // A play the user just asked for: the hold ends, the app learns it from the report.
+            bgWatch.held = false;
+            PAUSED = false; bgWatch.wanted = true; bgWatch.explicitPause = false;
+          } else if (bgWatch.held) {
             // YouTube can issue a delayed play() after another app takes audio.
             allowPause = true;
             try { v.pause(); } finally { allowPause = false; }
@@ -2162,7 +2228,7 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held) { console.log('[aay] Play deferred while other media holds focus'); break; } if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held && arg !== 'user') { console.log('[aay] Play deferred while other media holds focus'); break; } if (bgWatch.held) { bgWatch.held = false; userResumeEligibleUntil = Date.now() + 1500; console.log('[aay] user Play ends media hold'); } if (!v) AUTO = true; else requestPlayerPlay(v); stateFixAt = 0; scheduleStateRepair(800); break;
         case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
@@ -2646,6 +2712,9 @@
     var serial = ++miniExpandSerial;
     if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
+    // Back to the full player: YouTube may still draw its centre Play icon from a pause that
+    // happened in the mini player. Reconcile it promptly (no 12 s cooldown carried over).
+    if (leavingMini) { stateFixAt = 0; scheduleStateRepair(700); }
     miniSized.since = on ? Date.now() : 0;
     var wasSized = miniSized.active;
     miniSized.active = false;
