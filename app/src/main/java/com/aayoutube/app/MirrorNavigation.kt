@@ -16,6 +16,7 @@ internal class MirrorBridge(
     private val canAcceptNavigation: () -> Boolean = { true },
     private val onLinkResult: (doc: Int, request: String, accepted: Boolean) -> Unit = { _, _, _ -> },
     private val dispatchLink: (() -> Unit) -> Unit = dispatch,
+    private val isVideoOnly: () -> Boolean = { false },
 ) {
     private var currentDoc = 0
     private var lastSeq = 0L
@@ -26,6 +27,10 @@ internal class MirrorBridge(
 
     @JavascriptInterface
     fun initialCap(): String = initialQuality()
+
+    /** Mini-player / PiP layout from the first frame of a new document (no YouTube header flash). */
+    @JavascriptInterface
+    fun videoOnly(): Boolean = isVideoOnly()
 
     /** A new document registers itself; commands from any earlier document are rejected from now on. */
     @JavascriptInterface

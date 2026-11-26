@@ -183,6 +183,7 @@ class MainActivity : ComponentActivity() {
     fun quit() {
         SleepTimer.cancel()
         AppLog.add("UI", "Quit")
+        MemoryCheckpoint.record("quit", settleMs = 1_500L)
         compatConnection?.command(Commands.EXIT)
         // Deliver Quit even when MediaBrowser is disconnected or still reconnecting.
         // The service deduplicates this with the MediaSession custom action.
@@ -284,6 +285,7 @@ class MainActivity : ComponentActivity() {
             PhoneMirror.exitFullscreen(this)
             previewPip.value = isInPictureInPictureMode
             AppLog.add("VIEW", "Phone-only projected preview PiP=$isInPictureInPictureMode")
+            MemoryCheckpoint.record(if (isInPictureInPictureMode) "pip-enter" else "pip-exit")
             return
         }
         WebHost.noteVisibilityChange()

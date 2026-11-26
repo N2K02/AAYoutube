@@ -428,7 +428,8 @@ class PhoneMirrorPolicyTest {
     @Test fun decodedQualityViolationsAreOnlyFlaggedUnderPressure() {
         assertFalse(PhoneMirrorPolicy.exceedsQualityCap("", 1080))
         assertFalse(PhoneMirrorPolicy.exceedsQualityCap("small", null))
-        assertFalse(PhoneMirrorPolicy.exceedsQualityCap("small", 360))
+        assertFalse(PhoneMirrorPolicy.exceedsQualityCap("small", 240))
+        assertTrue("small is 240p", PhoneMirrorPolicy.exceedsQualityCap("small", 360))
         assertTrue(PhoneMirrorPolicy.exceedsQualityCap("small", 720))
     }
 
@@ -474,5 +475,77 @@ class PhoneMirrorPolicyTest {
         assertTrue(screens.contains("val mirrorCrashed = playerFailed || muteUnavailable"))
         assertTrue(screens.contains("PhoneMirrorPolicy.fallback(mirrorSupported, mirrorCrashed, mirrorSuspended)"))
         assertTrue(PhoneMirrorPolicy.canRetry(PhoneMirrorPolicy.fallback(true, true, false)))
+    }
+
+    // ------------------------------------------------------------ sync phases and seeks
+
+    @Test fun parsesPhasePositionsAndSeekOutcome() {
+        val r = SyncResult.parse("\"-138905|seek|360|align|0|139155|-1\"")
+        assertEquals(-138_905L, r.driftMs)
+        assertEquals("align", r.phase)
+        assertEquals(0L, r.phoneMs)
+        assertEquals(139_155L, r.seekTargetMs)
+        assertTrue(r.seekReported)
+        assertFalse("never completed", r.seekLanded)
+        val ok = SyncResult.parse("\"40|ok|360|stable|30290|30250|30270\"")
+        assertTrue(ok.seekLanded)
+        val off = SyncResult.parse("\"40|ok|360|stable|30290|30250|0\"")
+        assertFalse("landed far from the target", off.seekLanded)
+        assertEquals("stable", SyncResult.parse("\"10|ok|360\"").phase)
+        assertFalse(SyncResult.parse("\"10|ok|360|stable|0|-1|-1\"").seekReported)
+    }
+
+    @Test fun initialAlignmentIsMeasuredApartFromSteadyStateDrift() {
+        val s = MirrorSyncStats()
+        s.record(SyncResult.parse("\"-138905|seek|360|align|0|139155|-1\""))
+        s.record(SyncResult.parse("\"-400|nudge|360|align|138800|-1|-1\""))
+        s.record(SyncResult.parse("\"5000|wait|360|seeking|0|-1|-1\""))
+        s.record(SyncResult.parse("\"120|ok|360|stable|10|-1|-1\""))
+        s.record(SyncResult.parse("\"-500|nudge|360|stable|10|-1|-1\""))
+        assertEquals(2, s.alignSyncs)
+        assertEquals(1, s.alignSeeks)
+        assertEquals(138_905L, s.alignMaxMs)
+        assertEquals("only stable syncs count as drift", 2, s.syncs)
+        assertEquals(500L, s.driftMax)
+        assertEquals(50, s.inStepPercent())
+        assertTrue(s.summary().contains("alignMaxMs=138905"))
+        assertTrue(s.summary().contains("inStep300Pct=50"))
+    }
+
+    @Test fun seekOutcomesAndRecoveriesAreCounted() {
+        val s = MirrorSyncStats()
+        s.record(SyncResult.parse("\"10|ok|360|stable|1|30250|30270\""))
+        s.record(SyncResult.parse("\"10|ok|360|stable|1|30250|-1\""))
+        s.record(SyncResult.parse("seekfail"))
+        assertEquals(1, s.seeksVerified)
+        assertEquals(1, s.seeksFailed)
+        assertEquals(1, s.seekRecoveries)
+        assertFalse(s.isEmpty())
+    }
+
+    @Test fun alignmentAndSeekVerificationAreFollowedClosely() {
+        assertEquals(PhoneMirrorPolicy.ALIGN_SYNC_MS, PhoneMirrorPolicy.nextSyncMs(-138_905, "align"))
+        assertEquals(PhoneMirrorPolicy.ALIGN_SYNC_MS, PhoneMirrorPolicy.nextSyncMs(100, "seeking"))
+        assertEquals(PhoneMirrorPolicy.STABLE_SYNC_MS, PhoneMirrorPolicy.nextSyncMs(100, "stable"))
+    }
+
+    @Test fun nativeAndScriptQualityCeilingsAreTheSame() {
+        assertEquals(mapOf("small" to 240, "medium" to 360, "large" to 480, "hd720" to 720), PhoneMirrorPolicy.QUALITY_HEIGHT)
+        val js = listOf(java.io.File("app/src/main/assets/mirror.js"), java.io.File("../app/src/main/assets/mirror.js"))
+            .first { it.isFile }.readText()
+        assertTrue(js.contains("var QUALITY_HEIGHT = { small: 240, medium: 360, large: 480, hd720: 720 };"))
+    }
+
+    @Test fun phoneCopyAlwaysRunsAtASmallCeilingWhileTheCarPlays() {
+        assertEquals("small", PhoneMirrorPolicy.projectedCap(videoOnly = true, degraded = false))
+        assertEquals("medium", PhoneMirrorPolicy.projectedCap(videoOnly = false, degraded = false))
+        assertEquals("small", PhoneMirrorPolicy.projectedCap(videoOnly = false, degraded = true))
+        assertEquals(360, PhoneMirrorPolicy.QUALITY_HEIGHT[PhoneMirrorPolicy.projectedCap(false, false)])
+    }
+
+    @Test fun memoryCheckpointLineNamesPointCycleAndRenderers() {
+        val line = MemoryPolicy.line("pip-exit", 3, 401, 40, 120, mirror = false, engine = true)
+        listOf("checkpoint=pip-exit", "cycle=3", "appPssMb=401", "phoneRenderer=released", "engineRenderer=allocated")
+            .forEach { assertTrue(it, line.contains(it)) }
     }
 }

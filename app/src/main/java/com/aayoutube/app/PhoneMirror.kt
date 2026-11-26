@@ -52,7 +52,7 @@ internal object PhoneMirror {
     /** What the UI wants; survives a renderer crash so the new renderer resumes syncing. */
     private var wantVisible = false
     private var visible = false
-    private var videoOnly = false
+    @Volatile private var videoOnly = false
     private var layoutSentTo: WebView? = null
     private var lastLoadAt = 0L
     private var lastPokeAt = 0L
@@ -86,6 +86,7 @@ internal object PhoneMirror {
     val stats = MirrorSyncStats()
     @Volatile private var pageHost: String? = "youtube.com"
     val revision = MutableStateFlow(0)
+    internal val rendererAllocated: Boolean get() = web != null
 
     /** Without document-start injection the mute lock could come too late: no secondary player then. */
     val supported: Boolean by lazy {
@@ -277,7 +278,9 @@ internal object PhoneMirror {
 
     /** Full teardown (projection ended or Quit): no WebView, no timers, no crash history. */
     fun release() {
+        val had = web != null
         teardown()
+        if (had) MemoryCheckpoint.record("phone-player-released")
         crashGuard.reset()
         reloadGuard.reset()
         wantVisible = false
@@ -339,6 +342,7 @@ internal object PhoneMirror {
         loadedId = ""
         pageId = null
         lastDriftMs = null
+        lastPhase = "align"
     }
 
     /** Load the engine's video, then keep the clock in step. */
@@ -367,7 +371,9 @@ internal object PhoneMirror {
                 scheduleSync(PhoneMirrorPolicy.IDLE_SYNC_MS)
                 return
             }
-            val cap = if (state == MirrorLoadGate.State.DEGRADED) "small" else ""
+            // The phone copy shares Chromium's single renderer process and the network with the car's
+            // player: it always runs at a small, display-appropriate ceiling, lower still under pressure.
+            val cap = PhoneMirrorPolicy.projectedCap(videoOnly, state == MirrorLoadGate.State.DEGRADED)
             startupCap = cap
             if (suspended.value) exitSuspension(now)
             val w = web ?: run { visible = false; refreshHidden(); revision.value++; return }
@@ -431,7 +437,18 @@ internal object PhoneMirror {
                     if (epoch != intentEpoch) { scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS); return@evaluateJavascript }
                     val result = SyncResult.parse(raw)
                     stats.record(result)
-                    if (PhoneMirrorPolicy.exceedsQualityCap(cap, result.heightPx)) {
+                    lastPhase = result.phase
+                    if (result.seekReported || result.action == "seek") logSeek(clock.posMs, result)
+                    if (result.action == "seekfail") {
+                        // Controlled recovery: reload the page at the engine's position (bounded by reloadGuard).
+                        AppLog.add("MIRROR", "Phone seeks keep failing; reloading at primaryMs=${clock.posMs}")
+                        loadedId = ""
+                        pageId = null
+                        scheduleSync(PhoneMirrorPolicy.MIN_RELOAD_MS)
+                        return@evaluateJavascript
+                    }
+                    // Only the pressure ceiling is enforced; the normal ceiling is a hint YouTube may round.
+                    if (state == MirrorLoadGate.State.DEGRADED && PhoneMirrorPolicy.exceedsQualityCap(cap, result.heightPx)) {
                         if (++qualityViolations >= PhoneMirrorPolicy.MAX_QUALITY_VIOLATIONS) {
                             AppLog.add("MIRROR", "Secondary decoder exceeds degraded quality ceiling; using controls")
                             recoverLater("quality-cap", received)
@@ -457,8 +474,19 @@ internal object PhoneMirror {
                     }
                 }
             }
-            scheduleSync(PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
+            scheduleSync(PhoneMirrorPolicy.nextSyncMs(lastDriftMs, lastPhase))
         }
+    }
+
+    private var lastPhase = "align"
+    private val seekLogGuard = RateGuard(12, 60_000L)
+
+    /** Primary position, phone position, requested target and actual landing of each correction. */
+    private fun logSeek(primaryMs: Long, r: SyncResult) {
+        if (!seekLogGuard.record(SystemClock.elapsedRealtime())) return
+        val what = if (r.action == "seek") "issued" else if (r.seekLanded) "verified" else "failed"
+        AppLog.add("MIRROR", "Seek $what phase=${r.phase} primaryMs=$primaryMs phoneMs=${r.phoneMs} " +
+            "driftMs=${r.driftMs} targetMs=${r.seekTargetMs ?: -1} landedMs=${r.seekLandedMs ?: -1}")
     }
 
     private fun clockFailure(): Boolean {
@@ -534,6 +562,7 @@ internal object PhoneMirror {
         syncSeq++
         syncInFlight = false
         lastDriftMs = null
+        lastPhase = "align"
         loadedId = s.id
         pageId = s.id
         nav.reset()
@@ -691,6 +720,7 @@ internal object PhoneMirror {
                 if (web === w && token == t) w.evaluateJavascript(
                     "window.__aayMirror&&window.__aayMirror.navigationResult($doc,${JSONObject.quote(request)},$accepted)", null)
             },
+            isVideoOnly = { videoOnly },
         ), "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
@@ -828,15 +858,36 @@ internal class MirrorLoadGate(
 }
 
 /** The page script's answer to one sync: "<driftMs>|<action>[|<decodedHeightPx>]" or a bare reason. */
-internal data class SyncResult(val driftMs: Long?, val action: String, val heightPx: Int? = null) {
+/**
+ * The page script's answer to one sync:
+ * "<driftMs>|<action>|<heightPx>|<phase>|<phoneMs>|<seekTargetMs>|<seekLandedMs>" or a bare reason.
+ * Older/shorter answers stay readable. phase: align (just loaded/resumed), seeking, stable.
+ */
+internal data class SyncResult(
+    val driftMs: Long?,
+    val action: String,
+    val heightPx: Int? = null,
+    val phase: String = "stable",
+    val phoneMs: Long? = null,
+    val seekTargetMs: Long? = null,
+    val seekLandedMs: Long? = null,
+) {
+    /** A finished correction was reported (target and landing known; landing -1 = never completed). */
+    val seekReported: Boolean get() = seekTargetMs != null && seekTargetMs >= 0
+    val seekLanded: Boolean
+        get() = seekReported && seekLandedMs != null && seekLandedMs >= 0 &&
+            kotlin.math.abs(seekLandedMs - seekTargetMs!!) <= PhoneMirrorPolicy.SEEK_TOLERANCE_MS
+
     companion object {
         fun parse(raw: String?): SyncResult {
             val text = raw?.trim()?.trim('"').orEmpty()
             if (text.isEmpty() || text == "null") return SyncResult(null, "none")
-            val parts = text.split('|', limit = 3)
+            val parts = text.split('|')
             val drift = parts[0].toLongOrNull()
-            return if (drift != null && parts.size >= 2) SyncResult(drift, parts[1], parts.getOrNull(2)?.toIntOrNull())
-            else SyncResult(null, text)
+            if (drift == null || parts.size < 2) return SyncResult(null, text)
+            return SyncResult(drift, parts[1], parts.getOrNull(2)?.toIntOrNull(),
+                parts.getOrNull(3)?.takeIf { it.isNotBlank() } ?: "stable",
+                parts.getOrNull(4)?.toLongOrNull(), parts.getOrNull(5)?.toLongOrNull(), parts.getOrNull(6)?.toLongOrNull())
         }
     }
 }
@@ -848,6 +899,11 @@ internal class MirrorSyncStats {
     var pauses = 0; var resumes = 0; var crashes = 0; var recoveries = 0; var reloads = 0; var timeouts = 0
     var suspensions = 0; var suspendedMs = 0L; var blockedFrames = 0
     var heightPx = 0
+    /** Alignment after a load or resume is measured apart from steady-state drift. */
+    var alignSyncs = 0; var alignMaxMs = 0L; var alignSeeks = 0
+    var seeksVerified = 0; var seeksFailed = 0; var seekRecoveries = 0
+    /** Steady-state syncs within the 300 ms target. */
+    var inStep = 0
     private var driftSum = 0L
     var driftMax = 0L
         private set
@@ -860,18 +916,31 @@ internal class MirrorSyncStats {
             "user" -> userHolds++
             "mismatch" -> mismatches++
         }
+        if (r.action == "seekfail") seekRecoveries++
         r.heightPx?.let { if (it > 0) heightPx = it }
+        if (r.seekReported) { if (r.seekLanded) seeksVerified++ else seeksFailed++ }
         val d = r.driftMs ?: return
-        syncs++
         val a = kotlin.math.abs(d)
+        if (r.phase == "align") {
+            alignSyncs++
+            if (r.action == "seek") alignSeeks++
+            if (a > alignMaxMs) alignMaxMs = a
+            return
+        }
+        if (r.phase != "stable") return // a correction in flight is not steady-state drift
+        syncs++
+        if (a <= PhoneMirrorPolicy.IN_STEP_MS) inStep++
         driftSum += a
         if (a > driftMax) driftMax = a
     }
 
+    fun inStepPercent(): Int = if (syncs == 0) 0 else inStep * 100 / syncs
+
     /** Nothing worth a log line happened this interval (timeouts, mismatches and stale answers count). */
     fun isEmpty() = syncs == 0 && reloads == 0 && pauses == 0 && resumes == 0 &&
         duplicates == 0 && timeouts == 0 && mismatches == 0 && stale == 0 && suspensions == 0 &&
-        blockedFrames == 0 && overlapSkipped == 0 && ads == 0 && userHolds == 0 && suspendedMs == 0L
+        blockedFrames == 0 && overlapSkipped == 0 && ads == 0 && userHolds == 0 && suspendedMs == 0L &&
+        alignSyncs == 0 && seeksVerified == 0 && seeksFailed == 0 && seekRecoveries == 0
     fun avgDriftMs(): Long = if (syncs == 0) 0L else driftSum / syncs
 
     /** Interval statistics are logged then cleared; crashes and recoveries stay cumulative. */
@@ -881,8 +950,9 @@ internal class MirrorSyncStats {
         crashes = c; recoveries = r
     }
 
-    fun summary(includeTotals: Boolean = true) = "interval stats syncs=$syncs driftAvgMs=${avgDriftMs()} " +
-        "driftMaxMs=$driftMax nudges=$nudges seeks=$seeks ads=$ads userHolds=$userHolds mismatches=$mismatches " +
+    fun summary(includeTotals: Boolean = true) = "interval stats steadySyncs=$syncs driftAvgMs=${avgDriftMs()} " +
+        "driftMaxMs=$driftMax inStep300Pct=${inStepPercent()} alignSyncs=$alignSyncs alignMaxMs=$alignMaxMs " +
+        "alignSeeks=$alignSeeks seeksVerified=$seeksVerified seeksFailed=$seeksFailed seekRecoveries=$seekRecoveries nudges=$nudges seeks=$seeks ads=$ads userHolds=$userHolds mismatches=$mismatches " +
         "overlapSkipped=$overlapSkipped timeouts=$timeouts stale=$stale duplicateNavBlocked=$duplicates " +
         "pauses=$pauses resumes=$resumes reloads=$reloads suspensions=$suspensions suspendedMs=$suspendedMs " +
         "blockedFrames=$blockedFrames decodedHeightPx=$heightPx" +
@@ -892,6 +962,8 @@ internal class MirrorSyncStats {
         syncs = 0; nudges = 0; seeks = 0; ads = 0; userHolds = 0; mismatches = 0; overlapSkipped = 0
         stale = 0; timeouts = 0; duplicates = 0; pauses = 0; resumes = 0; crashes = 0; recoveries = 0; reloads = 0
         suspensions = 0; suspendedMs = 0L; blockedFrames = 0; heightPx = 0
+        alignSyncs = 0; alignMaxMs = 0L; alignSeeks = 0; seeksVerified = 0; seeksFailed = 0; seekRecoveries = 0
+        inStep = 0
         driftSum = 0L; driftMax = 0L
     }
 }
@@ -931,7 +1003,7 @@ internal object PhoneMirrorPolicy {
     const val THERMAL_DEGRADE = 2   // PowerManager.THERMAL_STATUS_MODERATE
     const val THERMAL_SUSPEND = 3   // PowerManager.THERMAL_STATUS_SEVERE
     const val STABLE_BEFORE_RESTORE_MS = 10_000L
-    const val BUFFERING_SUSPEND_MS = 8_000L
+    const val BUFFERING_SUSPEND_MS = 15_000L
     const val MAX_CRASHES = 3
     const val CRASH_WINDOW_MS = 60_000L
     const val MAX_RELOADS = 6
@@ -994,7 +1066,21 @@ internal object PhoneMirrorPolicy {
         "$host$path?$query"
     }.getOrNull()
 
-    fun exceedsQualityCap(cap: String, height: Int?): Boolean = cap == "small" && height != null && height > 360
+    /**
+     * Quality ceiling of the phone copy while Android Auto plays: mini-player/PiP 240p, full 360p,
+     * and 240p whenever the primary player or the device is under pressure.
+     */
+    fun projectedCap(videoOnly: Boolean, degraded: Boolean): String = if (videoOnly || degraded) "small" else "medium"
+
+    /** Same table as mirror.js QUALITY_HEIGHT. */
+    val QUALITY_HEIGHT = mapOf("small" to 240, "medium" to 360, "large" to 480, "hd720" to 720)
+    const val SEEK_TOLERANCE_MS = 1_000L
+    const val ALIGN_SYNC_MS = 500L
+
+    fun exceedsQualityCap(cap: String, height: Int?): Boolean {
+        val limit = QUALITY_HEIGHT[cap] ?: return false
+        return height != null && height > limit
+    }
 
     fun supportedLink(url: String): Boolean = runCatching {
         if (navigationKey(url) == null) return@runCatching false
@@ -1006,8 +1092,11 @@ internal object PhoneMirrorPolicy {
     }.getOrDefault(false)
 
     /** In step: check rarely (less renderer work); drifting or unknown: check soon. */
-    fun nextSyncMs(driftMs: Long?): Long =
-        if (driftMs != null && kotlin.math.abs(driftMs) <= IN_STEP_MS) STABLE_SYNC_MS else SYNC_MS
+    fun nextSyncMs(driftMs: Long?, phase: String = "stable"): Long = when {
+        phase != "stable" -> ALIGN_SYNC_MS          // aligning or verifying a seek: follow closely
+        driftMs != null && kotlin.math.abs(driftMs) <= IN_STEP_MS -> STABLE_SYNC_MS
+        else -> SYNC_MS
+    }
 
     /** A touch is a tap (and so may select something) only if it barely moved and was short. */
     fun isTap(dx: Float, dy: Float, durationMs: Long, slopPx: Float): Boolean =

@@ -328,6 +328,17 @@ test('car video to audio handoff recovers before the normal watchdog interval', 
   assert.equal(p.video.paused, false, 'handoff must recover without waiting five seconds');
 });
 
+test('surface-detach pause during a mode handoff resumes within about 300 ms', () => {
+  const p = playerPage({ car: true });
+  p.flush();
+  p.window.__aay.modeTransit();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.advance(300);
+  p.flush();
+  assert.equal(p.video.paused, false);
+});
+
 test('retained audio mode preserves quality, position and explicit pause', () => {
   const p = playerPage({ car: true, quality: true });
   p.flush();

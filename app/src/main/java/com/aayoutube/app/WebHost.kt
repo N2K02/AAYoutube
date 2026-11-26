@@ -66,6 +66,7 @@ object WebHost {
 
     private var wrapper: MutableContextWrapper? = null
     private var web: WebView? = null
+    internal val rendererAllocated: Boolean get() = web != null
     private var webDisplayId: Int? = null
     private var webGeneration = 0
     internal val rendererGeneration: Int get() = webGeneration
@@ -172,9 +173,33 @@ object WebHost {
         val now = SystemClock.elapsedRealtime()
         modeHandoffStartedAt = now
         val direction = if (toVideo) "Music->Video" else "Video->Music"
-        modeMeter.start(direction, state.id, state.posMs, webGeneration, state.playing, now)
+        val previous = modeMeter.currentDirection
+        val previousElapsed = modeMeter.elapsed(now)
+        when (modeMeter.start(direction, state.id, state.posMs, webGeneration, state.playing, now)) {
+            ModeTransitionMeter.Start.DUPLICATE -> {
+                AppLog.add("CAR", "Mode handoff duplicate ignored direction=$direction")
+                return
+            }
+            ModeTransitionMeter.Start.SUPERSEDED ->
+                AppLog.add("CAR", "Mode handoff superseded direction=$previous elapsedMs=$previousElapsed by=$direction")
+            ModeTransitionMeter.Start.STARTED -> Unit
+        }
         AppLog.add("CAR", "Mode handoff start direction=$direction positionMs=${state.posMs} " +
             "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
+    }
+
+    /**
+     * The snapshot can arrive late: ask the real media clock whether playback is advancing now,
+     * so a delayed report is not mistaken for (or hides) the actual recovery.
+     */
+    private fun confirmHandoffByClock(direction: String, reportedMs: Long) {
+        val askedAt = SystemClock.elapsedRealtime()
+        mediaClock { c ->
+            val lagMs = SystemClock.elapsedRealtime() - askedAt
+            AppLog.add("CAR", "Mode handoff clock check direction=$direction playing=${c?.playing} " +
+                "clockMs=${c?.posMs} reportedMs=$reportedMs confirmed=${HandoffConfirm.confirmed(c?.playing, c?.posMs, reportedMs)} " +
+                "lagMs=$lagMs")
+        }
     }
 
     private fun reportModeHandoff(state: Snap) {
@@ -185,6 +210,7 @@ object WebHost {
                 AppLog.add("CAR", "Mode handoff buffering direction=${e.direction} elapsedMs=${e.elapsedMs}")
             is ModeTransitionMeter.Event.Completed -> {
                 modeHandoffStartedAt = 0L
+                confirmHandoffByClock(e.direction, state.posMs)
                 AppLog.add("CAR", "Mode handoff complete direction=${e.direction} elapsedMs=${e.elapsedMs} " +
                     "estimatedInterruptionMs=${e.interruptionMs}(playback clock; audible output is not measured) " +
                     "bufferingMs=${e.bufferingMs} " +
@@ -220,6 +246,7 @@ object WebHost {
         if (carAudioRetained.value || retainedRendererDetached)
             endAudioRetention("Android Auto disconnected", reattachPhone = true)
         BrowseHost.phoneMode.value = PlayerMode.FULL
+        MemoryCheckpoint.record("car-disconnected")
     }
     private val carDisconnected: Boolean get() = carConnectionType == CarConnectionPolicy.NOT_CONNECTED
     private fun traceTransport(command: String, expected: String? = null) {
@@ -576,6 +603,10 @@ object WebHost {
         val targetDisplay = displayId(context)
         val targetWindow = frame.windowToken?.let { System.identityHashCode(it) }
         val forced = forcedCarRecreate
+        // Surface ownership trail: system codec/ImageReader warnings are correlated against these
+        // lines; such warnings alone never recreate a healthy renderer.
+        AppLog.add("SURFACE", "Car window bind display=$targetDisplay window=$targetWindow " +
+            "previousDisplay=$webDisplayId previousWindow=$carWindowId generation=$webGeneration forced=$forced")
         forcedCarRecreate = null
         // Repeated AndroidView/window binds must not destroy a retained renderer
         // while its cross-display trial is still running or already verified.
@@ -957,6 +988,7 @@ object WebHost {
             js("window.__aay&&window.__aay.modeTransit&&window.__aay.modeTransit()")
             AppLog.add("CAR", "Playback handoff before car surface detach")
         }
+        if (mine) AppLog.add("SURFACE", "Engine detached from ${if (carShown) "car" else "phone"} window generation=$webGeneration")
         container.removeAllViews()
         // Another screen (phone or car) may already have taken the page over; leave it alone then.
         if (mine) wrapper?.setBaseContext(app)

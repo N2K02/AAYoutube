@@ -219,8 +219,18 @@ internal class ModeTransitionMeter(private val timeoutMs: Long = 30_000L) {
 
     val running: Boolean get() = active
 
+    enum class Start { STARTED, DUPLICATE, SUPERSEDED }
+
+    /**
+     * The same direction while one is running is a duplicate (ignored); the other direction
+     * supersedes it (reported by the caller), then a new measurement starts.
+     */
     fun start(direction: String, videoId: String, positionMs: Long, generation: Int,
-              playing: Boolean, nowMs: Long) {
+              playing: Boolean, nowMs: Long): Start {
+        if (active && direction == this.direction && videoId == this.videoId && nowMs - startedAt <= timeoutMs) {
+            return Start.DUPLICATE
+        }
+        val superseded = active
         active = videoId.isNotBlank()
         this.direction = direction
         this.videoId = videoId
@@ -231,7 +241,11 @@ internal class ModeTransitionMeter(private val timeoutMs: Long = 30_000L) {
         bufferingTotal = 0L
         bufferingReported = false
         stalledSince = if (playing) 0L else nowMs
+        return if (superseded) Start.SUPERSEDED else Start.STARTED
     }
+
+    val currentDirection: String get() = direction
+    fun elapsed(nowMs: Long) = nowMs - startedAt
 
     fun cancel() { active = false }
 
@@ -277,4 +291,10 @@ internal object CarConnectionPolicy {
     const val NOT_CONNECTED = 0
     fun disconnected(previous: Int, current: Int): Boolean =
         current == NOT_CONNECTED && previous > NOT_CONNECTED
+}
+
+/** A reported recovery is real only if the media clock itself is playing at or past the reported position. */
+internal object HandoffConfirm {
+    fun confirmed(clockPlaying: Boolean?, clockMs: Long?, reportedMs: Long): Boolean =
+        clockPlaying == true && clockMs != null && clockMs + 250 >= reportedMs
 }

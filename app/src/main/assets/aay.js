@@ -1679,7 +1679,8 @@
     // Let an audio-focus handoff settle: the other app starts its output shortly
     // after Chromium pauses us, so an instant resume would steal focus back.
     var modeHandoff = Date.now() < modeTransitUntil;
-    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < (modeHandoff ? 400 : MEDIA_SETTLE_MS)) return;
+    // Surface detach during a car mode handoff is our own pause, not another app's focus: resume fast.
+    if (bgWatch.pausedAt && Date.now() - bgWatch.pausedAt < (modeHandoff ? 120 : MEDIA_SETTLE_MS)) return;
     try {
       if (N && typeof N.otherMediaHold === 'function' && N.otherMediaHold(BRIDGE_TOKEN)) {
         bgWatch.held = true;
@@ -1690,7 +1691,7 @@
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
-    var retryMs = modeHandoff ? 750 : Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)));
+    var retryMs = modeHandoff ? 300 : Math.min(60000, 5000 * Math.pow(2, Math.min(bgWatch.attempts, 4)));
     if (bgWatch.lastAttemptAt && now - bgWatch.lastAttemptAt < retryMs) return;
     bgWatch.lastAttemptAt = now;
     bgWatch.attempts++;
@@ -1750,7 +1751,7 @@
             modeRecoveryTimer = setTimeout(function () {
               modeRecoveryTimer = 0;
               if (Date.now() < modeTransitUntil) backgroundWatchdog();
-            }, 800);
+            }, 150);
           }
         }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();

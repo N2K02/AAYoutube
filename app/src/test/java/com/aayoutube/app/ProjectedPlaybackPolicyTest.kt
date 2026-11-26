@@ -241,6 +241,25 @@ class ProjectedPlaybackPolicyTest {
         assertEquals(400, done.elapsedMs)
     }
 
+    @Test fun duplicateHandoffStartIsIgnoredAndTheOtherDirectionSupersedes() {
+        val m = ModeTransitionMeter()
+        assertEquals(ModeTransitionMeter.Start.STARTED, m.start("Video->Music", "vid", 10_000, 1, true, 0))
+        assertEquals(ModeTransitionMeter.Start.DUPLICATE, m.start("Video->Music", "vid", 10_400, 1, true, 400))
+        assertEquals("the first start still defines the measurement", 400L, m.elapsed(400))
+        assertEquals(ModeTransitionMeter.Start.SUPERSEDED, m.start("Music->Video", "vid", 10_600, 1, true, 600))
+        assertEquals("Music->Video", m.currentDirection)
+        m.cancel()
+        assertEquals(ModeTransitionMeter.Start.STARTED, m.start("Music->Video", "vid", 10_800, 1, true, 800))
+    }
+
+    @Test fun recoveryIsConfirmedByTheMediaClockNotTheDelayedSnapshot() {
+        assertTrue(HandoffConfirm.confirmed(true, 20_300, 20_200))
+        assertTrue("within report jitter", HandoffConfirm.confirmed(true, 20_000, 20_200))
+        assertFalse("clock still paused: the snapshot was ahead of reality", HandoffConfirm.confirmed(false, 20_300, 20_200))
+        assertFalse("clock behind the reported position", HandoffConfirm.confirmed(true, 18_000, 20_200))
+        assertFalse("no clock", HandoffConfirm.confirmed(null, null, 20_200))
+    }
+
     @Test fun stuckHandoffTimesOut() {
         val m = meter()
         val e = m.onState("vid", false, false, false, false, 10_000, 1, 31_000)

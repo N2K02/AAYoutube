@@ -63,7 +63,7 @@
   if (!isTop) return;
 
   var M = window.__aayMirror = S;
-  M.videoOnly = false; M.lastId = ''; M.lastSeekAt = 0; M.quality = ''; M.qualityAt = 0; M.cap = '';
+  M.videoOnly = false; M.lastId = ''; M.lastSeekAt = 0; M.phase = 'align'; M.seek = null; M.seekFails = 0; M.alignSince = 0; M.quality = ''; M.qualityAt = 0; M.cap = '';
   try { if (b0 && b0.initialCap) M.cap = b0.initialCap() || ''; } catch (e) {}
   M.doc = 0; M.seq = 0;
   // Every command names this document: a newer document invalidates the commands of older ones.
@@ -243,12 +243,65 @@
    * (novideo, mismatch, ad, user). Small drift: nudge the rate; large drift: one seek.
    * busy: the engine is seeking or buffering. cap: quality ceiling under load ('' = none).
    */
+  // Alignment: a freshly loaded or resumed page is hidden until it shows the engine's position.
+  var ALIGN_SHOW_MS = 300, STABLE_MS = 300, SEEK_DRIFT_MS = 1500, ALIGN_SEEK_MS = 1000;
+  var SEEK_VERIFY_MS = 4000, SEEK_TOLERANCE_MS = 1000, MAX_SEEK_FAILS = 3, ALIGN_GIVE_UP_MS = 8000;
+  var LIVE_DRIFT_MS = 3000;
+  function setAligning(on) {
+    try { document.documentElement.classList.toggle('aaym-aligning', !!on); } catch (e) {}
+  }
+  function beginAlign() {
+    M.phase = 'align'; M.seek = null; M.seekFails = 0; M.alignSince = Date.now();
+    setAligning(true);
+  }
+  function isLive(v) {
+    if (!isFinite(v.duration)) return true;
+    try { var d = player() && player().getVideoData && player().getVideoData(); return !!(d && d.isLive); } catch (e) { return false; }
+  }
+  /** Valid target inside the media: VOD [0, end), live within the seekable window. */
+  function clampTarget(v, sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    if (isFinite(v.duration) && v.duration > 0) return Math.min(sec, Math.max(0, v.duration - 0.25));
+    try {
+      var r = v.seekable;
+      if (r && r.length) return Math.min(Math.max(sec, r.start(0)), r.end(r.length - 1));
+    } catch (e) {}
+    return sec;
+  }
+  // Hidden from the first frame until aligned; a safety net never leaves it hidden if no sync arrives.
+  setAligning(true);
+  setTimeout(function () { if (M.phase === 'align' && !M.stopped && !M.alignSince) setAligning(false); }, 10000);
+  document.addEventListener('seeked', function (e) {
+    var v = e.target;
+    if (!v || v.tagName !== 'VIDEO' || !M.seek || M.seek.done) return;
+    M.seek.done = true;
+    M.seek.landedMs = Math.round(v.currentTime * 1000);
+  }, true);
+  function issueSeek(v, targetMs, playing) {
+    // Playing: aim a little ahead, the seek itself takes time.
+    var sec = clampTarget(v, targetMs / 1000 + (playing ? 0.25 : 0));
+    M.seek = { target: Math.round(sec * 1000), at: Date.now(), done: false, landedMs: -1 };
+    M.lastSeekAt = Date.now();
+    if (M.phase === 'stable') M.phase = 'seeking';
+    expectOwn('seek');
+    v.currentTime = sec;
+  }
+  function out(drift, action, v, seekInfo) {
+    return [Math.round(drift), action, v.videoHeight || 0, M.phase, Math.round(v.currentTime * 1000),
+      seekInfo ? seekInfo.target : -1, seekInfo ? seekInfo.landedMs : -1].join('|');
+  }
+
+  /**
+   * Follow the engine. Result: "<driftMs>|<action>|<height>|<phase>|<phoneMs>|<seekTargetMs>|<seekLandedMs>"
+   * or a bare reason (novideo, mismatch, ad, user, seekfail). Phases: align (just loaded or resumed,
+   * hidden), seeking (a correction in flight, verified before the next one), stable.
+   */
   M.sync = function (posMs, playing, rate, id, busy, cap) {
     var v = vid();
     if (!v) return 'novideo';
     // Only ever correct towards the same content: a stale or foreign page is left alone.
     if (id && currentVideoId() !== id) return 'mismatch';
-    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
+    if ((cap || '') !== M.cap) { M.cap = cap || ''; }
     applyQuality();
     if (adShowing()) {
       if (!playing || busy) { if (!v.paused) { expectOwn('pause'); v.pause(); } return 'ad'; }
@@ -256,49 +309,95 @@
       if (v.paused) { expectOwn('play'); try { var adPlay = v.play(); if (adPlay && adPlay.catch) adPlay.catch(function () {}); } catch (e) {} }
       return 'ad';
     }
-    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; if (v.playbackRate !== 1) v.playbackRate = 1; }
-    if (M.stopped) { M.stopped = false; broadcast(); }
+    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; if (v.playbackRate !== 1) v.playbackRate = 1; beginAlign(); }
+    if (M.stopped) { M.stopped = false; broadcast(); beginAlign(); }
     // Pause and primary buffering outrank pending phone gestures. Only protect a pending seek.
     if ((!playing || busy) && !v.paused) { expectOwn('pause'); v.pause(); auth = null; }
     if (playing && !busy && auth && auth.kind === 'seek' && Date.now() - auth.at < 1500) return 'user';
     rate = rate > 0 ? rate : 1;
-    var drift = v.currentTime - posMs / 1000;
-    var action = 'ok';
-    ourActAt = Date.now();
-    if (playing && !busy) {
+    var now = Date.now();
+    var drift = v.currentTime * 1000 - posMs;
+    var live = isLive(v);
+    ourActAt = now;
+    if (playing && !busy && M.phase === 'stable') {
       if (v.paused) { expectOwn('play'); try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
-    } else if (!v.paused) {
+    } else if (!v.paused && (!playing || busy)) {
       expectOwn('pause');
       v.pause();
     }
-    // Hysteresis: only touch the media pipeline when really out of step.
-    var want = rate;
-    if (busy || v.seeking || v.readyState < 3) {
-      return String(Math.round(drift * 1000)) + '|wait|' + (v.videoHeight || 0);
-    }
-    if (Math.abs(drift) > 1.5 && isFinite(v.duration)) {
-      // Earlier readiness guard already excludes buffering and seeking.
-      if (Date.now() - M.lastSeekAt > 3000) {
-        M.lastSeekAt = Date.now();
-        expectOwn('seek');
-        v.currentTime = posMs / 1000;
-        action = 'seek';
-      } else {
-        action = 'wait';
+    // A correction in flight is verified before anything else is corrected.
+    var seekInfo = null;
+    if (M.seek) {
+      if (!M.seek.done && now - M.seek.at < SEEK_VERIFY_MS) {
+        if (v.playbackRate !== rate) v.playbackRate = rate;
+        return out(drift, 'wait', v, null);
       }
-    } else if (playing && Math.abs(drift) > 0.5) {
-      want = rate * (drift > 0 ? 0.95 : 1.05); action = 'nudge';
-    } else if (playing && v.playbackRate !== rate && Math.abs(drift) > 0.15) {
-      want = v.playbackRate; // keep nudging until close, then settle
+      seekInfo = M.seek;
+      M.seek = null;
+      var landed = seekInfo.done && Math.abs(seekInfo.landedMs - seekInfo.target) <= SEEK_TOLERANCE_MS;
+      if (landed) M.seekFails = 0;
+      else if (++M.seekFails >= MAX_SEEK_FAILS) {
+        // Controlled recovery: the app reloads the page at the engine's position.
+        M.seekFails = 0;
+        beginAlign();
+        return 'seekfail';
+      }
+      if (M.phase === 'seeking') M.phase = 'stable';
+    }
+    // Initial alignment does not wait for the car to finish buffering: its position is known.
+    if (M.phase === 'align' && busy && !v.seeking && v.readyState >= 1 && Math.abs(drift) > (isLive(v) ? LIVE_DRIFT_MS : ALIGN_SEEK_MS)) {
+      issueSeek(v, posMs, false);
+      return out(drift, 'seek', v, seekInfo);
+    }
+    // Never leave the phone black while the car buffers: close enough (or waited long enough) is shown.
+    if (M.phase === 'align' && !v.seeking && v.readyState >= 2 &&
+        (Math.abs(drift) <= ALIGN_SEEK_MS || now - M.alignSince > ALIGN_GIVE_UP_MS) && (busy || !playing)) {
+      M.phase = 'stable';
+      setAligning(false);
+    }
+    if (busy) { if (v.playbackRate !== rate) v.playbackRate = rate; return out(drift, 'wait', v, seekInfo); }
+    var abs = Math.abs(drift), action = 'ok', want = rate;
+    if (M.phase === 'align') {
+      // A paused or never-buffered page still aligns: seeking does not need readyState >= 3.
+      if (!v.seeking && v.readyState >= 1 && abs > (live ? LIVE_DRIFT_MS : ALIGN_SEEK_MS)) {
+        issueSeek(v, posMs, playing);
+        return out(drift, 'seek', v, seekInfo);
+      }
+      if (v.seeking || v.readyState < 1) return out(drift, 'wait', v, seekInfo);
+      if (abs <= (live ? LIVE_DRIFT_MS : ALIGN_SHOW_MS) || !playing || now - M.alignSince > ALIGN_GIVE_UP_MS) {
+        M.phase = 'stable';
+        setAligning(false);
+        if (playing && v.paused) { expectOwn('play'); try { var p2 = v.play(); if (p2 && p2.catch) p2.catch(function () {}); } catch (e) {} }
+      } else {
+        // Close enough to play: converge by rate while still hidden.
+        if (playing && v.paused) { expectOwn('play'); try { var p3 = v.play(); if (p3 && p3.catch) p3.catch(function () {}); } catch (e) {} }
+        want = rate * (drift > 0 ? 0.94 : 1.06);
+        if (v.playbackRate !== want) v.playbackRate = want;
+        return out(drift, 'nudge', v, seekInfo);
+      }
+    }
+    if (v.seeking || v.readyState < 3) { if (v.playbackRate !== rate) v.playbackRate = rate; return out(drift, 'wait', v, seekInfo); }
+    if (live) {
+      // Live: no rate games against a moving edge; one seek inside the window when far off.
+      if (abs > LIVE_DRIFT_MS && now - M.lastSeekAt > SEEK_VERIFY_MS) { issueSeek(v, posMs, playing); action = 'seek'; }
+    } else if (abs > SEEK_DRIFT_MS) {
+      if (now - M.lastSeekAt > 3000) { issueSeek(v, posMs, playing); action = 'seek'; }
+      else action = 'wait';
+    } else if (playing && abs > STABLE_MS) {
+      // Direction follows the current sign of the drift on every sync: never an obsolete correction.
+      var k = abs > 600 ? 0.06 : 0.03;
+      want = rate * (drift > 0 ? 1 - k : 1 + k);
       action = 'nudge';
     }
     if (v.playbackRate !== want) v.playbackRate = want;
-    return String(Math.round(drift * 1000)) + '|' + action + '|' + (v.videoHeight || 0);
+    return out(drift, action, v, seekInfo);
   };
 
   /** Hidden: stop decoding and keep YouTube from restarting playback. */
   M.stop = function () {
     M.stopped = true;
+    M.phase = 'align'; M.seek = null;
+    setAligning(true);
     var v = vid();
     ourActAt = Date.now();
     auth = null;
@@ -338,6 +437,14 @@
     'ytm-mobile-topbar-renderer a[href*="intent://"],ytm-mobile-topbar-renderer a[aria-label="Open App"],' +
     'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}' +
     'ytm-inline-playback-renderer,.inline-player-container,#inline-preview-player{display:none!important}';
+  CSS += 'html.aaym-aligning video{opacity:0!important}' +
+    // Mini-player / PiP: never the page chrome, also while YouTube swaps the watch page.
+    'html.aaym-video-only ytm-mobile-topbar-renderer,html.aaym-video-only #header-bar,' +
+    'html.aaym-video-only header,html.aaym-video-only #masthead-container,html.aaym-video-only #masthead,' +
+    'html.aaym-video-only ytm-pivot-bar-renderer,html.aaym-video-only .mobile-topbar-header,' +
+    'html.aaym-video-only ytm-single-column-watch-next-results-renderer,html.aaym-video-only #below,' +
+    'html.aaym-video-only ytm-engagement-panel,html.aaym-video-only .watch-below-the-player,' +
+    'html.aaym-video-only ytm-slim-video-metadata-section-renderer{display:none!important}';
   function installCss() {
     if (document.getElementById('aaym-css')) return;
     var root = document.head || document.documentElement;
@@ -349,6 +456,11 @@
   }
   installCss();
   document.addEventListener('DOMContentLoaded', installCss);
+  // A new document (next video, autoplay) starts in the current layout, before YouTube paints.
+  try {
+    var b1 = window.AAYMirror;
+    if (b1 && b1.videoOnly && b1.videoOnly()) { M.videoOnly = true; document.documentElement.classList.toggle('aaym-video-only', true); }
+  } catch (e) {}
 
   var LIFT_PROPS = ['transform', 'contain', 'filter', 'will-change'];
   function lift(on) {
@@ -382,6 +494,9 @@
   // Quality follows the real on-screen size (and drops under load); the choice is verified
   // against what the player reports instead of trusting the request.
   var TIERS = ['small', 'medium', 'large', 'hd720'];
+  // Same table as PhoneMirrorPolicy.QUALITY_HEIGHT.
+  var QUALITY_HEIGHT = { small: 240, medium: 360, large: 480, hd720: 720 };
+  M.qualityHeight = QUALITY_HEIGHT;
   function wantedQuality() {
     var v = vid();
     var px = v && v.clientHeight ? v.clientHeight * (window.devicePixelRatio || 1) : 0;
@@ -399,9 +514,11 @@
       var want = wantedQuality();
       var cur = p.getPlaybackQuality ? p.getPlaybackQuality() : M.quality;
       var media = vid(), height = media && media.videoHeight || 0;
-      var limit = { small: 360, medium: 480, large: 720, hd720: 1080 }[want] || 1080;
+      var limit = QUALITY_HEIGHT[want] || 720;
       if (cur === want && M.quality === want && (!height || height <= limit)) return;
       if (M.quality === want && Date.now() - M.qualityAt < 15000) return; // no churn
+      // Recovering sync: only ever lower quality; raising it would rebuffer and undo the alignment.
+      if (M.quality && M.phase !== 'stable' && TIERS.indexOf(want) > TIERS.indexOf(M.quality)) return;
       p.setPlaybackQualityRange(want, want);
       M.quality = want;
       M.qualityAt = Date.now();
