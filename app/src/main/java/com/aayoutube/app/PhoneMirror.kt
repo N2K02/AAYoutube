@@ -1,8 +1,10 @@
 package com.aayoutube.app
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.MutableContextWrapper
 import android.graphics.Color
 import android.net.Uri
@@ -10,10 +12,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -31,6 +36,9 @@ import org.json.JSONObject
  * audible engine (WebHost). A muted YouTube watch page that follows the engine's
  * real media clock; taps on its own controls go to the engine. It decodes only
  * while it is visible, and is released when projection ends.
+ *
+ * Every asynchronous step is tied to a generation (one per loaded page / renderer)
+ * and the engine's video id, so a late callback can never touch a newer video.
  */
 internal object PhoneMirror {
     private lateinit var app: Application
@@ -41,13 +49,32 @@ internal object PhoneMirror {
     private var token = ""
     private var source: String? = null
     private var loadedId = ""
+    private var pageId: String? = null
+    /** What the UI wants; survives a renderer crash so the new renderer resumes syncing. */
+    private var wantVisible = false
     private var visible = false
     private var videoOnly = false
-    private var lastTouchAt = 0L
+    private var layoutSentTo: WebView? = null
+    private var tapDownAt = 0L
+    private var tapDownX = 0f
+    private var tapDownY = 0f
+    private var tapAt = 0L
     private var lastLoadAt = 0L
+    private var lastPokeAt = 0L
+    private var lastStatsAt = 0L
     private var lastDriftMs: Long? = null
+    private var generation = 0
+    private var syncInFlight = false
+    private var syncStartedAt = 0L
+    private var customView: View? = null
+    private var customCallback: WebChromeClient.CustomViewCallback? = null
+    private val crashGuard = RateGuard(PhoneMirrorPolicy.MAX_CRASHES, PhoneMirrorPolicy.CRASH_WINDOW_MS)
+    private val reloadGuard = RateGuard(PhoneMirrorPolicy.MAX_RELOADS, PhoneMirrorPolicy.RELOAD_WINDOW_MS)
+    val stats = MirrorSyncStats()
     @Volatile private var pageHost: String? = "youtube.com"
     val revision = MutableStateFlow(0)
+    /** Too many renderer crashes: the phone shows its browse page instead of looping. */
+    val failed = MutableStateFlow(false)
 
     fun init(application: Application) { app = application }
 
@@ -69,18 +96,28 @@ internal object PhoneMirror {
         if (mine) wrapper?.setBaseContext(app)
     }
 
-    /** Shown (full, mini or PiP) or not. Hidden: no decoding, no sync. */
+    /** Shown (full, mini or PiP) or not. Hidden: no decoding, no sync, nothing restarts. */
     fun setVisible(on: Boolean) {
+        wantVisible = on
+        applyVisible()
+    }
+
+    private fun applyVisible() {
+        val w = web ?: return
+        val on = wantVisible
         if (visible == on) return
         visible = on
-        val w = web ?: return
+        main.removeCallbacks(syncTick)
         if (on) {
+            stats.resumes++
             w.onResume()
             w.resumeTimers()
-            main.removeCallbacks(syncTick)
             main.post(syncTick)
         } else {
-            main.removeCallbacks(syncTick)
+            stats.pauses++
+            generation++            // late callbacks of the visible period are now stale
+            syncInFlight = false
+            hideCustomView()
             w.evaluateJavascript("window.__aayMirror&&window.__aayMirror.stop()", null)
             w.onPause()
         }
@@ -88,24 +125,84 @@ internal object PhoneMirror {
 
     /** Mini-player and PiP show only the video; full shows YouTube's watch page. */
     fun setVideoOnly(on: Boolean) {
+        val w = web
+        if (videoOnly == on && layoutSentTo === w) return
         videoOnly = on
-        web?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout($on)", null)
+        layoutSentTo = w
+        w?.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout($on)", null)
     }
 
+    /** The engine's state changed (play/pause/seek/new video): follow now, not at the next interval. */
+    fun onEngineState(previous: Snap, next: Snap) {
+        if (!PhoneMirrorPolicy.pokeNeeded(previous, next)) return
+        main.post {
+            val now = SystemClock.elapsedRealtime()
+            if (web == null || !visible || now - lastPokeAt < PhoneMirrorPolicy.MIN_POKE_MS) return@post
+            lastPokeAt = now
+            main.removeCallbacks(syncTick)
+            main.post(syncTick)
+        }
+    }
+
+    fun noteDuplicateSelection() { stats.duplicates++ }
+
+    /** Sign-out: the mirror's page and cache belong to the old account. */
+    fun onSessionCleared() {
+        val w = web ?: return
+        generation++
+        syncInFlight = false
+        loadedId = ""
+        pageId = null
+        w.stopLoading()
+        w.clearCache(true)
+        w.clearHistory()
+        w.loadUrl("about:blank")
+        if (visible) { main.removeCallbacks(syncTick); main.post(syncTick) }
+    }
+
+    /** Feature settings that also apply to the phone player. */
+    fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
+        val w = web ?: return
+        w.settings.textZoom = f.pageZoom
+        if (desktopChanged) {
+            w.settings.userAgentString = WebHost.userAgent(f.desktopSite)
+            loadedId = ""        // the next sync reloads the video with the new page type
+            generation++
+            if (visible) { main.removeCallbacks(syncTick); main.post(syncTick) }
+        }
+    }
+
+    /** Full teardown (projection ended or Quit): no WebView, no timers, no crash history. */
     fun release() {
+        teardown()
+        crashGuard.reset()
+        reloadGuard.reset()
+        wantVisible = false
+        failed.value = false
+        main.removeCallbacksAndMessages(null)
+        logStats(force = true)
+        stats.reset()
+        revision.value++
+    }
+
+    private fun teardown() {
         main.removeCallbacks(syncTick)
+        hideCustomView()
         val w = web
         web = null
+        generation++
+        syncInFlight = false
         runCatching { handler?.remove() }
         handler = null
         (w?.parent as? ViewGroup)?.removeView(w)
         w?.stopLoading()
         w?.destroy()
         wrapper = null
+        layoutSentTo = null
         loadedId = ""
+        pageId = null
         lastDriftMs = null
         visible = false
-        revision.value++
     }
 
     /** Load the engine's video, then keep the clock in step. */
@@ -113,34 +210,80 @@ internal object PhoneMirror {
         override fun run() {
             val w = web ?: return
             if (!visible) return
+            main.removeCallbacks(this)
             val s = WebHost.snapshot.value
             val now = SystemClock.elapsedRealtime()
+            logStats(force = false)
             if (s.id.isBlank()) {
                 main.postDelayed(this, PhoneMirrorPolicy.IDLE_SYNC_MS)
                 return
             }
-            if (s.id != loadedId) {
-                if (now - lastLoadAt >= PhoneMirrorPolicy.MIN_RELOAD_MS) {
-                    loadedId = s.id
-                    lastLoadAt = now
-                    val url = PhoneMirrorPolicy.watchUrl(WebHost.home(), s.id, WebHost.currentPlaylist(), s.posMs)
-                    if (url != null && WebHost.isSafePageUrl(url)) {
-                        AppLog.add("MIRROR", "Phone player follows id=${s.id}")
-                        w.loadUrl(url)
-                    }
-                }
+            if (PhoneMirrorPolicy.needsLoad(loadedId, pageId, s.id, now - lastLoadAt)) {
+                if (now - lastLoadAt >= PhoneMirrorPolicy.MIN_RELOAD_MS) load(w, s, now)
                 main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
                 return
             }
+            // An advertisement on the engine has its own clock: never copy it onto the video.
+            if (s.ad) {
+                stats.ads++
+                main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
+                return
+            }
+            if (syncInFlight && now - syncStartedAt < PhoneMirrorPolicy.SYNC_TIMEOUT_MS) {
+                stats.overlapSkipped++
+                main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
+                return
+            }
+            syncInFlight = true
+            syncStartedAt = now
+            val gen = generation
+            val id = s.id
             WebHost.mediaClock { posMs, playing, rate ->
-                if (web !== w || !visible) return@mediaClock
+                if (!PhoneMirrorPolicy.current(gen, generation, id, WebHost.snapshot.value.id) ||
+                    web !== w || !visible) {
+                    stats.stale++
+                    if (gen == generation) syncInFlight = false
+                    return@mediaClock
+                }
                 w.evaluateJavascript(
-                    "window.__aayMirror&&window.__aayMirror.sync($posMs,$playing,$rate)") { result ->
-                    lastDriftMs = result?.trim('"')?.toLongOrNull()
+                    "window.__aayMirror&&window.__aayMirror.sync($posMs,$playing,$rate,${JSONObject.quote(id)})") { raw ->
+                    if (gen != generation || web !== w) { stats.stale++; return@evaluateJavascript }
+                    syncInFlight = false
+                    val result = SyncResult.parse(raw)
+                    stats.record(result)
+                    if (result.driftMs != null) lastDriftMs = result.driftMs
                 }
             }
             main.postDelayed(this, PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
         }
+    }
+
+    private fun load(w: WebView, s: Snap, now: Long) {
+        if (!reloadGuard.record(now)) {
+            AppLog.add("MIRROR", "Phone player reloads paused: too many in ${PhoneMirrorPolicy.RELOAD_WINDOW_MS / 1000}s")
+            lastLoadAt = now
+            return
+        }
+        val url = PhoneMirrorPolicy.watchUrl(WebHost.home(), s.id, WebHost.currentPlaylist(), s.posMs)
+        if (url == null || !WebHost.isSafePageUrl(url)) return
+        stats.reloads++
+        generation++               // sync state of the previous page is void
+        syncInFlight = false
+        lastDriftMs = null
+        loadedId = s.id
+        pageId = s.id
+        lastLoadAt = now
+        AppLog.add("MIRROR", "Phone player follows id=${s.id}")
+        w.loadUrl(url)
+    }
+
+    private fun logStats(force: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastStatsAt < PhoneMirrorPolicy.STATS_MS) return
+        lastStatsAt = now
+        if (stats.isEmpty()) return
+        val rt = Runtime.getRuntime()
+        AppLog.add("MIRROR", stats.summary() + " visible=$visible heapMb=${(rt.totalMemory() - rt.freeMemory()) shr 20}")
     }
 
     /** From the mirror's own YouTube controls (trusted touches only). */
@@ -155,19 +298,54 @@ internal object PhoneMirror {
         }
     }
 
-    /** A different video on the phone page: a selection only if the user just tapped. */
+    /**
+     * The mirror page moved. Returns true to block a navigation that has not happened yet.
+     * Only a real tap counts as the user's choice; YouTube's own autoplay never does.
+     */
     private fun onNavigatedTo(uri: Uri, alreadyShown: Boolean): Boolean {
-        val id = uri.getQueryParameter("v") ?: return false
-        if (id == loadedId || id == WebHost.snapshot.value.id) return false
-        if (!PhoneMirrorPolicy.userSelection(lastTouchAt, SystemClock.elapsedRealtime())) {
-            // YouTube's own autoplay on the muted page: go back to the engine's video.
-            if (alreadyShown) loadedId = ""
-            return false
+        val tapped = PhoneMirrorPolicy.userSelection(tapAt, SystemClock.elapsedRealtime())
+        return when (PhoneMirrorPolicy.classify(uri.path)) {
+            PhoneMirrorPolicy.Page.WATCH -> {
+                val id = uri.getQueryParameter("v") ?: return false
+                pageId = id
+                if (id == loadedId || id == WebHost.snapshot.value.id) return false
+                if (!tapped) {
+                    // YouTube's autoplay on the muted page: go back to the engine's video.
+                    if (alreadyShown) { loadedId = ""; pageId = null }
+                    return false
+                }
+                AppLog.add("MIRROR", "Phone player selected a video")
+                if (alreadyShown) loadedId = id
+                WebHost.openUrl(uri.toString())
+                !alreadyShown
+            }
+            // YouTube's own Home / Search / channel links: browse on the phone, keep the engine's video.
+            else -> {
+                if (alreadyShown) { loadedId = ""; pageId = null }
+                if (tapped) {
+                    AppLog.add("MIRROR", "Phone player opened ${uri.path} in browse")
+                    BrowseHost.phoneBrowse(uri.toString())
+                }
+                !alreadyShown
+            }
         }
-        AppLog.add("MIRROR", "Phone player selected a video")
-        if (alreadyShown) loadedId = id
-        WebHost.openUrl(uri.toString())
-        return !alreadyShown
+    }
+
+    private fun hideCustomView() {
+        val v = customView ?: return
+        customView = null
+        (v.parent as? ViewGroup)?.removeView(v)
+        customCallback?.onCustomViewHidden()
+        customCallback = null
+    }
+
+    private fun activityOf(c: Context?): Activity? {
+        var x = c
+        while (x is ContextWrapper) {
+            if (x is Activity) return x
+            x = x.baseContext
+        }
+        return null
     }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
@@ -175,13 +353,24 @@ internal object PhoneMirror {
         val c = MutableContextWrapper(context).also { wrapper = it }
         val w = WebView(c)
         token = java.util.UUID.randomUUID().toString()
+        generation++
         w.setBackgroundColor(Color.BLACK)
         w.isFocusable = true
         w.isFocusableInTouchMode = true
+        val slop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
         w.setOnTouchListener { v, e ->
-            if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                lastTouchAt = SystemClock.elapsedRealtime()
-                if (!v.hasFocus()) v.requestFocus()
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    tapDownAt = SystemClock.elapsedRealtime()
+                    tapDownX = e.x
+                    tapDownY = e.y
+                    if (!v.hasFocus()) v.requestFocus()
+                }
+                // A tap (not a scroll or drag) is what may select a video.
+                MotionEvent.ACTION_UP -> {
+                    val now = SystemClock.elapsedRealtime()
+                    if (PhoneMirrorPolicy.isTap(e.x - tapDownX, e.y - tapDownY, now - tapDownAt, slop)) tapAt = now
+                }
             }
             false
         }
@@ -209,6 +398,27 @@ internal object PhoneMirror {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
         }
+        // YouTube's own fullscreen button works inside the phone player.
+        w.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                hideCustomView()
+                val host = activityOf(wrapper?.baseContext)?.window?.decorView as? ViewGroup
+                if (host == null) { callback.onCustomViewHidden(); return }
+                customView = view
+                customCallback = callback
+                host.addView(view, ViewGroup.LayoutParams(-1, -1))
+            }
+
+            override fun onHideCustomView() {
+                val v = customView ?: return
+                customView = null
+                customCallback = null
+                (v.parent as? ViewGroup)?.removeView(v)
+            }
+
+            override fun getDefaultVideoPoster() =
+                android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+        }
         w.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
@@ -218,8 +428,9 @@ internal object PhoneMirror {
 
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
                 val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return
+                if (uri.scheme != "https") return
                 pageHost = uri.host
-                onNavigatedTo(uri, alreadyShown = true)
+                if (web === view) onNavigatedTo(uri, alreadyShown = true)
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -228,7 +439,10 @@ internal object PhoneMirror {
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
-                if (videoOnly) view.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout(true)", null)
+                if (web !== view) return
+                // A new document starts with the default layout: send the current one.
+                view.evaluateJavascript("window.__aayMirror&&window.__aayMirror.layout($videoOnly)", null)
+                layoutSentTo = view
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -239,13 +453,26 @@ internal object PhoneMirror {
 
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 if (web !== view) return true
+                stats.crashes++
                 AppLog.add("CRASH", "Phone player renderer gone: crashed=${detail.didCrash()}")
-                release()
+                teardown()
+                if (crashGuard.record(SystemClock.elapsedRealtime())) {
+                    stats.recoveries++
+                    revision.value++      // the UI attaches a fresh renderer; syncing resumes with it
+                } else {
+                    AppLog.add("CRASH", "Phone player stopped after repeated renderer crashes")
+                    failed.value = true
+                }
                 return true
             }
         }
         web = w
         loadedId = ""
+        pageId = null
+        visible = false
+        layoutSentTo = null
+        // A recreated renderer picks up where the UI wants it (visible) without waiting for a UI change.
+        main.post { applyVisible() }
         return w
     }
 }
@@ -259,6 +486,73 @@ internal class MirrorBridge(private val token: String, private val onControl: (S
     }
 }
 
+/** At most [max] events inside a sliding window. */
+internal class RateGuard(private val max: Int, private val windowMs: Long) {
+    private val times = ArrayDeque<Long>()
+
+    /** Records an event; false once more than [max] fall inside the window. */
+    fun record(nowMs: Long): Boolean {
+        while (times.isNotEmpty() && nowMs - times.first() > windowMs) times.removeFirst()
+        times.addLast(nowMs)
+        return times.size <= max
+    }
+
+    fun reset() = times.clear()
+}
+
+/** The page script's answer to one sync: "<driftMs>|<action>" or a bare reason. */
+internal data class SyncResult(val driftMs: Long?, val action: String) {
+    companion object {
+        fun parse(raw: String?): SyncResult {
+            val text = raw?.trim()?.trim('"').orEmpty()
+            if (text.isEmpty() || text == "null") return SyncResult(null, "none")
+            val parts = text.split('|', limit = 2)
+            val drift = parts[0].toLongOrNull()
+            return if (drift != null && parts.size == 2) SyncResult(drift, parts[1]) else SyncResult(null, text)
+        }
+    }
+}
+
+/** Aggregated phone-mirror diagnostics (one log line per interval, not per sync). */
+internal class MirrorSyncStats {
+    var syncs = 0; var nudges = 0; var seeks = 0; var ads = 0; var userHolds = 0
+    var mismatches = 0; var overlapSkipped = 0; var stale = 0; var duplicates = 0
+    var pauses = 0; var resumes = 0; var crashes = 0; var recoveries = 0; var reloads = 0
+    private var driftSum = 0L
+    var driftMax = 0L
+        private set
+
+    fun record(r: SyncResult) {
+        when (r.action) {
+            "ok" -> {}
+            "nudge" -> nudges++
+            "seek" -> seeks++
+            "ad" -> ads++
+            "user" -> userHolds++
+            "mismatch" -> mismatches++
+        }
+        val d = r.driftMs ?: return
+        syncs++
+        val a = kotlin.math.abs(d)
+        driftSum += a
+        if (a > driftMax) driftMax = a
+    }
+
+    fun isEmpty() = syncs == 0 && reloads == 0 && crashes == 0 && pauses == 0 && resumes == 0 && duplicates == 0
+    fun avgDriftMs(): Long = if (syncs == 0) 0L else driftSum / syncs
+
+    fun summary() = "stats syncs=$syncs driftAvgMs=${avgDriftMs()} driftMaxMs=$driftMax nudges=$nudges seeks=$seeks " +
+        "ads=$ads userHolds=$userHolds mismatches=$mismatches overlapSkipped=$overlapSkipped stale=$stale " +
+        "duplicateNavBlocked=$duplicates pauses=$pauses resumes=$resumes reloads=$reloads " +
+        "crashes=$crashes recoveries=$recoveries"
+
+    fun reset() {
+        syncs = 0; nudges = 0; seeks = 0; ads = 0; userHolds = 0; mismatches = 0; overlapSkipped = 0
+        stale = 0; duplicates = 0; pauses = 0; resumes = 0; crashes = 0; recoveries = 0; reloads = 0
+        driftSum = 0L; driftMax = 0L
+    }
+}
+
 /** Pure decisions for the phone mirror (unit-tested). */
 internal object PhoneMirrorPolicy {
     const val SYNC_MS = 1_500L
@@ -266,8 +560,19 @@ internal object PhoneMirrorPolicy {
     const val IN_STEP_MS = 300L
     const val IDLE_SYNC_MS = 3_000L
     const val MIN_RELOAD_MS = 1_500L
+    const val LOAD_SETTLE_MS = 4_000L
     const val USER_SELECTION_MS = 3_000L
+    const val SYNC_TIMEOUT_MS = 3_000L
+    const val MIN_POKE_MS = 250L
+    const val SEEK_POKE_MS = 2_500L
+    const val STATS_MS = 30_000L
+    const val MAX_CRASHES = 3
+    const val CRASH_WINDOW_MS = 60_000L
+    const val MAX_RELOADS = 6
+    const val RELOAD_WINDOW_MS = 60_000L
     val ACTIONS = setOf("play", "pause", "seek", "mini")
+
+    enum class Page { WATCH, HOME, SEARCH, OTHER }
 
     private fun safeToken(value: String?, lengths: IntRange) =
         value?.takeIf { v -> v.length in lengths && v.all { it.isLetterOrDigit() || it == '_' || it == '-' } }
@@ -281,10 +586,39 @@ internal object PhoneMirrorPolicy {
             (if (posMs >= 1_000L) "&t=${posMs / 1000}s" else "")
     }
 
+    fun classify(path: String?): Page {
+        val p = path.orEmpty()
+        return when {
+            p.startsWith("/watch") || p.startsWith("/live/") -> Page.WATCH
+            p.isEmpty() || p == "/" -> Page.HOME
+            p.startsWith("/results") -> Page.SEARCH
+            else -> Page.OTHER
+        }
+    }
+
     /** In step: check rarely (less renderer work); drifting or unknown: check soon. */
     fun nextSyncMs(driftMs: Long?): Long =
         if (driftMs != null && kotlin.math.abs(driftMs) <= IN_STEP_MS) STABLE_SYNC_MS else SYNC_MS
 
-    fun userSelection(lastTouchAt: Long, nowMs: Long): Boolean =
-        lastTouchAt != 0L && nowMs - lastTouchAt in 0..USER_SELECTION_MS
+    fun userSelection(lastTapAt: Long, nowMs: Long): Boolean =
+        lastTapAt != 0L && nowMs - lastTapAt in 0..USER_SELECTION_MS
+
+    /** A touch is a tap (and so may select something) only if it barely moved and was short. */
+    fun isTap(dx: Float, dy: Float, durationMs: Long, slopPx: Float): Boolean =
+        durationMs in 0..500 && dx * dx + dy * dy <= slopPx * slopPx
+
+    /** The page must show the engine's video; a stuck or foreign page is reloaded after it settled. */
+    fun needsLoad(loadedId: String, pageId: String?, engineId: String, sinceLoadMs: Long): Boolean =
+        engineId.isNotBlank() && (loadedId != engineId || (pageId != engineId && sinceLoadMs >= LOAD_SETTLE_MS))
+
+    /** A late callback may only act if its page generation and video are still the current ones. */
+    fun current(ticketGeneration: Int, generation: Int, ticketId: String, engineId: String): Boolean =
+        ticketGeneration == generation && ticketId == engineId
+
+    /** Engine changes the phone should follow immediately instead of at the next interval. */
+    fun pokeNeeded(previous: Snap, next: Snap): Boolean = when {
+        next.id != previous.id -> true
+        next.playing != previous.playing || next.userPaused != previous.userPaused -> true
+        else -> kotlin.math.abs(next.posMs - previous.posMs) > SEEK_POKE_MS
+    }
 }

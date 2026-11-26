@@ -1636,14 +1636,16 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     val phoneMode by BrowseHost.phoneMode.collectAsState()
     val revision by BrowseHost.phone.revision.collectAsState()
     val mirrorRevision by PhoneMirror.revision.collectAsState()
+    val mirrorFailed by PhoneMirror.failed.collectAsState()
     val activity = LocalContext.current.findActivity()
     val pip = activity?.previewPip?.value == true
     val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
     val started = lifecycle?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
     val resumed = lifecycle == androidx.lifecycle.Lifecycle.State.RESUMED
     val hasVideo = snap.id.isNotBlank()
-    val browsing = phoneMode != WebHost.PlayerMode.FULL && !pip
-    val mirrorShown = hasVideo && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
+    // After repeated renderer crashes the phone keeps browsing instead of recreating the player in a loop.
+    val browsing = (phoneMode != WebHost.PlayerMode.FULL || mirrorFailed) && !pip
+    val mirrorShown = hasVideo && !mirrorFailed && (pip || phoneMode != WebHost.PlayerMode.HIDDEN)
     val small = phoneMode == WebHost.PlayerMode.MINI && !pip
     LaunchedEffect(hasVideo) {
         val next = ProjectedPhoneNav.onVideoChanged(BrowseHost.phoneMode.value, hasVideo)
@@ -1655,7 +1657,7 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
         if (browsing && visible && resumed) BrowseHost.phone.resume() else BrowseHost.phone.pause()
     }
     // Decode on the phone only while its video is actually on screen (PiP counts).
-    LaunchedEffect(mirrorShown, visible, started, pip) {
+    LaunchedEffect(mirrorShown, visible, started, pip, mirrorRevision) {
         PhoneMirror.setVisible(mirrorShown && started && (visible || pip))
     }
     LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }

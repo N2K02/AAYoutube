@@ -4,8 +4,12 @@
 (function () {
   if (window.top !== window.self || window.__aayMirror) return;
   var TOKEN = window.__AAYM_TOKEN || '';
-  var M = window.__aayMirror = { videoOnly: false };
-  var ourUntil = 0, gestureAt = 0, lifted = [];
+  var M = window.__aayMirror = { videoOnly: false, stopped: false, lastId: '', lastSeekAt: 0, quality: '' };
+  var ourUntil = 0, gestureAt = 0, lifted = [], layoutTimers = [];
+  var touchStart = null;
+  var PLAYER_SEL = '.html5-video-player,#player-container-id,#player,ytm-player,ytm-watch-player,' +
+    'ytm-player-component,#player-control-container,video';
+  var SEEKBAR_SEL = '.ytp-progress-bar,.ytp-progress-bar-container,ytm-progress-bar,.progress-bar';
 
   function bridge() { return window.AAYMirror || null; }
   function send(action, value) {
@@ -19,25 +23,73 @@
     return !!(p && p.classList && p.classList.contains('ad-showing'));
   }
 
-  // Never audible: the car plays the sound.
+  function closest(t, sel) {
+    try { return !!(t && t.closest && t.closest(sel)); } catch (e) { return false; }
+  }
+  function currentVideoId() {
+    try {
+      var q = new URLSearchParams(location.search).get('v');
+      if (q) return q;
+      var m = /^\/live\/([\w-]{11})/.exec(location.pathname);
+      return m ? m[1] : '';
+    } catch (e) { return ''; }
+  }
+
+  // Never audible, from the first frame: the car plays the sound. The element's own
+  // muted/volume setters are locked, so YouTube cannot unmute it (startup, ads, navigation).
+  function silence(v) {
+    try { if (v && v.tagName === 'VIDEO') { v.muted = true; v.volume = 0; } } catch (e) {}
+  }
+  function lockProp(name, forced) {
+    try {
+      var d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name);
+      if (!d || !d.set || !d.get) return;
+      Object.defineProperty(HTMLMediaElement.prototype, name, {
+        configurable: true, enumerable: d.enumerable,
+        get: function () { return d.get.call(this); },
+        set: function () { d.set.call(this, forced); }
+      });
+    } catch (e) {}
+  }
+  lockProp('muted', true);
+  lockProp('volume', 0);
   try {
     var origPlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
-      this.muted = true;
+      silence(this);
+      // Hidden: YouTube must not restart playback behind the user's back.
+      if (M.stopped) return Promise.resolve();
       return origPlay.apply(this, arguments);
     };
   } catch (e) {}
-  ['volumechange', 'playing', 'loadedmetadata'].forEach(function (t) {
+  ['loadstart', 'loadedmetadata', 'canplay', 'play', 'playing', 'volumechange', 'seeking'].forEach(function (t) {
     document.addEventListener(t, function (e) {
-      var v = e.target;
-      if (v && v.tagName === 'VIDEO' && !v.muted) v.muted = true;
+      silence(e.target);
+      if (M.stopped && e.target && e.target.tagName === 'VIDEO' && !e.target.paused && t !== 'volumechange') {
+        ourUntil = Date.now() + 800;
+        try { e.target.pause(); } catch (err) {}
+      }
     }, true);
   });
+  silence(document.querySelector && document.querySelector('video'));
 
-  // Only trusted touches count as the user's own control actions.
-  ['pointerup', 'click', 'touchend', 'keydown'].forEach(function (t) {
-    document.addEventListener(t, function (e) { if (e.isTrusted) gestureAt = Date.now(); }, true);
-  });
+  // Only a trusted tap (or a drag on the seek bar) INSIDE the player is the user's own control action.
+  // Scrolling, taps elsewhere on the page and YouTube's own events never count.
+  document.addEventListener('touchstart', function (e) {
+    var t = e.touches && e.touches[0];
+    touchStart = t ? { x: t.clientX, y: t.clientY } : null;
+  }, { capture: true, passive: true });
+  function gesture(e, needTap) {
+    if (!e.isTrusted || !closest(e.target, PLAYER_SEL)) return;
+    if (needTap && touchStart && e.changedTouches && e.changedTouches.length &&
+        !closest(e.target, SEEKBAR_SEL)) {
+      var dx = e.changedTouches[0].clientX - touchStart.x, dy = e.changedTouches[0].clientY - touchStart.y;
+      if (dx * dx + dy * dy > 24 * 24) return; // a scroll or swipe, not a control tap
+    }
+    gestureAt = Date.now();
+  }
+  document.addEventListener('click', function (e) { gesture(e, false); }, true);
+  document.addEventListener('touchend', function (e) { gesture(e, true); }, true);
   function userAction(windowMs) {
     var now = Date.now();
     return now - gestureAt < windowMs && now > ourUntil;
@@ -67,8 +119,7 @@
     var t = e.target;
     if (!t || !t.closest) return;
     var full = !!(document.fullscreenElement || document.webkitFullscreenElement);
-    if (!full && !t.closest('.html5-video-player,#player-container-id,#player,ytm-player,' +
-        'ytm-watch-player,ytm-player-component,#player-control-container,video')) return;
+    if (!full && !closest(t, PLAYER_SEL)) return;
     swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() };
   }, { capture: true, passive: true });
   document.addEventListener('touchend', function (e) {
@@ -87,14 +138,22 @@
   }, { capture: true, passive: true });
   document.addEventListener('touchcancel', function () { swipeStart = null; }, true);
 
-  /** Follow the engine. Small drift: nudge the rate; large drift: one seek. */
-  M.sync = function (posMs, playing, rate) {
+  /**
+   * Follow the engine: result is "<driftMs>|<action>" (ok, nudge, seek, wait) or a reason
+   * (novideo, mismatch, ad, user). Small drift: nudge the rate; large drift: one seek.
+   */
+  M.sync = function (posMs, playing, rate, id) {
     var v = vid();
     if (!v) return 'novideo';
+    // Only ever correct towards the same content: a stale or foreign page is left alone.
+    if (id && currentVideoId() !== id) return 'mismatch';
     if (adShowing()) return 'ad';
+    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
+    M.stopped = false;
     if (Date.now() - gestureAt < 1500) return 'user'; // let the user's action reach the engine first
     rate = rate > 0 ? rate : 1;
     var drift = v.currentTime - posMs / 1000;
+    var action = 'ok';
     ourUntil = Date.now() + 800;
     if (playing) {
       if (v.paused) { try { var p = v.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
@@ -104,18 +163,28 @@
     // Hysteresis: only touch the media pipeline when really out of step.
     var want = rate;
     if (Math.abs(drift) > 1.5 && isFinite(v.duration) && v.readyState > 0) {
-      v.currentTime = posMs / 1000;
+      // Never stack seeks while the page is still seeking or buffering from the last one.
+      if (!v.seeking && Date.now() - M.lastSeekAt > 3000) {
+        M.lastSeekAt = Date.now();
+        v.currentTime = posMs / 1000;
+        action = 'seek';
+      } else {
+        action = 'wait';
+      }
     } else if (playing && Math.abs(drift) > 0.5) {
       want = rate * (drift > 0 ? 0.95 : 1.05);
+      action = 'nudge';
     } else if (playing && v.playbackRate !== rate && Math.abs(drift) > 0.15) {
       want = v.playbackRate; // keep nudging until close, then settle
+      action = 'nudge';
     }
     if (v.playbackRate !== want) v.playbackRate = want;
-    return String(Math.round(drift * 1000));
+    return String(Math.round(drift * 1000)) + '|' + action;
   };
 
-  /** Hidden: stop decoding. */
+  /** Hidden: stop decoding and keep YouTube from restarting playback. */
   M.stop = function () {
+    M.stopped = true;
     var v = vid();
     ourUntil = Date.now() + 800;
     if (v && !v.paused) v.pause();
@@ -164,10 +233,15 @@
   installCss();
   document.addEventListener('DOMContentLoaded', installCss);
 
+  var LIFT_PROPS = ['transform', 'contain', 'filter', 'will-change'];
   function lift(on) {
-    lifted.forEach(function (el) {
-      el.style.removeProperty('transform'); el.style.removeProperty('contain');
-      el.style.removeProperty('filter'); el.style.removeProperty('will-change');
+    // Put back exactly what the page had inline (value and priority), not just clear it.
+    lifted.forEach(function (rec) {
+      LIFT_PROPS.forEach(function (name) {
+        var o = rec.saved[name];
+        if (o && o.value) rec.el.style.setProperty(name, o.value, o.priority);
+        else rec.el.style.removeProperty(name);
+      });
     });
     lifted = [];
     var v = vid();
@@ -176,28 +250,50 @@
       var cs = getComputedStyle(el);
       if (cs.transform !== 'none' || (cs.contain && cs.contain !== 'none') || cs.filter !== 'none' ||
           cs.willChange.indexOf('transform') >= 0) {
+        var saved = {};
+        LIFT_PROPS.forEach(function (name) {
+          saved[name] = { value: el.style.getPropertyValue(name), priority: el.style.getPropertyPriority(name) };
+        });
         el.style.setProperty('transform', 'none', 'important');
         el.style.setProperty('contain', 'none', 'important');
         el.style.setProperty('filter', 'none', 'important');
         el.style.setProperty('will-change', 'auto', 'important');
-        lifted.push(el);
+        lifted.push({ el: el, saved: saved });
       }
     }
   }
+  // Decode only what the screen can show: a small tile needs far fewer pixels than the full page.
+  function applyQuality() {
+    var want = M.videoOnly ? 'medium' : 'large';
+    if (M.quality === want) return;
+    try {
+      var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      if (p && p.setPlaybackQualityRange) { p.setPlaybackQualityRange(want, want); M.quality = want; }
+    } catch (e) {}
+  }
+  function clearLayoutTimers() {
+    layoutTimers.forEach(clearTimeout);
+    layoutTimers = [];
+  }
   M.layout = function (videoOnly) {
+    var changed = M.videoOnly !== !!videoOnly;
     M.videoOnly = !!videoOnly;
     installCss();
     document.documentElement.classList.toggle('aaym-video-only', M.videoOnly);
     lift(M.videoOnly);
-    [0, 200, 600].forEach(function (ms) {
-      setTimeout(function () {
+    applyQuality();
+    // A newer mode change supersedes the delayed passes of the previous one.
+    clearLayoutTimers();
+    (changed || M.videoOnly ? [0, 200, 600] : [0]).forEach(function (ms) {
+      layoutTimers.push(setTimeout(function () {
         try {
           var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
           if (p && p.setInternalSize) p.setInternalSize();
         } catch (e) {}
         window.dispatchEvent(new Event('resize'));
         if (M.videoOnly) lift(true);
-      }, ms);
+        applyQuality();
+      }, ms));
     });
   };
   // A new watch document keeps the requested layout.

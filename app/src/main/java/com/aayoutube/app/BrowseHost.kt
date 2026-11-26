@@ -319,10 +319,12 @@ object BrowseHost : BrowseSession() {
     override fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
         super.applyFeatures(f, desktopChanged)
         phone.applyFeatures(f, desktopChanged)
+        PhoneMirror.applyFeatures(f, desktopChanged)
     }
     override fun onSessionCleared() {
         super.onSessionCleared()
         phone.onSessionCleared()
+        PhoneMirror.onSessionCleared()
     }
 
     /** Phone Home during projection: browse Home with the floating mini-player above it. */
@@ -330,6 +332,12 @@ object BrowseHost : BrowseSession() {
         phoneMode.value = ProjectedPhoneNav.home(WebHost.snapshot.value.id.isNotBlank())
         phone.navigate(WebHost.home())
     }
+    /** The mirror's own YouTube Home/Search: browse it on the phone with the mini-player above. */
+    fun phoneBrowse(url: String) {
+        phoneMode.value = WebHost.PlayerMode.MINI
+        phone.showFrom(url)
+    }
+
     fun phoneMini() {
         phoneMode.value = WebHost.PlayerMode.MINI
         phone.showFrom(WebHost.home())

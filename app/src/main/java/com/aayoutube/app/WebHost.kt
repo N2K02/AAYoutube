@@ -176,6 +176,12 @@ object WebHost {
             "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
     }
 
+    /** Confirmed (not estimated) audio: the system reports an active playback stream. */
+    private fun audioOutputActive(): Boolean = runCatching {
+        (app.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager)
+            .activePlaybackConfigurations.isNotEmpty()
+    }.getOrDefault(false)
+
     private fun reportModeHandoff(state: Snap) {
         if (!modeMeter.running) return
         when (val e = modeMeter.onState(state.id, state.playing, state.buffering, state.userPaused,
@@ -185,7 +191,9 @@ object WebHost {
             is ModeTransitionMeter.Event.Completed -> {
                 modeHandoffStartedAt = 0L
                 AppLog.add("CAR", "Mode handoff complete direction=${e.direction} elapsedMs=${e.elapsedMs} " +
-                    "interruptionMs=${e.interruptionMs} bufferingMs=${e.bufferingMs} " +
+                    "interruptionMs=${e.interruptionMs}(estimated from the playback clock) " +
+                    "audioActiveAtCompletion=${audioOutputActive()}(confirmed by AudioManager) " +
+                    "bufferingMs=${e.bufferingMs} " +
                     "rendererRecreated=${e.rendererRecreated} positionMs=${state.posMs}")
             }
             is ModeTransitionMeter.Event.Cancelled -> {
@@ -945,6 +953,7 @@ object WebHost {
         val target = positionMs.coerceIn(0L, s.durMs)
         cmd("seek", (target / 1000.0).toString())
         snapshot.value = s.copy(posMs = target)
+        PhoneMirror.onEngineState(s, snapshot.value)
     }
 
     fun showOnCar(on: Boolean, owner: String = "legacy-projection") {
@@ -1064,6 +1073,7 @@ object WebHost {
         val startMs = TimestampParam.parseMs(target.getQueryParameter("t") ?: target.getQueryParameter("start"))
         val key = SelectionDeduper.key(target.path.orEmpty(), selectedId, selectedList, startMs)
         if (!openDeduper.accept(key, SystemClock.elapsedRealtime())) {
+            PhoneMirror.noteDuplicateSelection()
             AppLog.add("NAV", "Duplicate video selection ignored")
             return
         }
@@ -1435,6 +1445,8 @@ object WebHost {
     /** Frees the WebView completely (nothing is playing and no screen is open). */
     fun release(preserveCarOwners: Boolean = false) {
         AppLog.add("POWER", "WebView released")
+        // The phone's secondary player never outlives the engine it follows (Quit, idle shutdown).
+        if (!preserveCarOwners) PhoneMirror.release()
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
@@ -2038,6 +2050,7 @@ object WebHost {
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
         snapshot.value = s
+        PhoneMirror.onEngineState(previous, s)
         updateBackgroundPlaybackProbe()
         if (s.playing) unexpectedPauseRecoveryUntil = 0L
         send(Msg.STATE, s.toBundle())
