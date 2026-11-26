@@ -118,6 +118,7 @@
             android:name=".LegacyProjectionService"
             android:enabled="true"
             android:exported="true"
+            android:icon="@mipmap/ic_launcher_car_video"
             android:label="AAYT Video">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -136,6 +137,7 @@
             android:name=".CarMediaTemplateService"
             android:enabled="true"
             android:exported="true"
+            android:icon="@mipmap/ic_launcher_car_music"
             android:label="AAYT Media">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
@@ -156,6 +158,7 @@
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback"
+            android:icon="@mipmap/ic_launcher_car_video"
             android:label="AAYT Fullscreen">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
@@ -168,6 +171,7 @@
              renders the host-owned playback template; it never creates or moves
              the video WebView owned by the legacy car projection. -->
         <service android:name=".PlaybackService" android:exported="true"
+            android:icon="@mipmap/ic_launcher_car_music"
             android:label="AAYT Music"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
