@@ -11,6 +11,7 @@ import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -312,7 +313,7 @@ fun AppRoot(activity: MainActivity) {
         }
         onDispose { if (landFill) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
-    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill, projectedToCar)
+    val headerAllowed = showAAYoutubeHeader(watchTab, onCar, inPip, fullscreen != null || landFill, false)
     // Battery/GPU: a <=60 fps video does not need a 120 Hz screen. While it plays in the
     // full player (or PiP), ask Android for 60 Hz, as the YouTube app does. Browsing,
     // the mini player and Settings keep the normal rate so scrolling stays smooth.
@@ -416,7 +417,9 @@ fun AppRoot(activity: MainActivity) {
     val homeHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     val goYouTubeHome: () -> Unit = {
         tab = Tab.Watch.ordinal
-        when (PlayerNavigationPolicy.home(
+        if (projectedToCar && !onCar) {
+            BrowseHost.phoneHome()
+        } else when (PlayerNavigationPolicy.home(
             fullPlayer = WebHost.mode.value == WebHost.PlayerMode.FULL,
             miniPlayer = WebHost.mode.value == WebHost.PlayerMode.MINI,
             onWatchPage = WebHost.isOnWatchPage(),
@@ -436,7 +439,10 @@ fun AppRoot(activity: MainActivity) {
         }
     }
     val goBack: () -> Unit = {
-        when (PlayerNavigationPolicy.back(
+        if (projectedToCar && !onCar && tab == Tab.Watch.ordinal) {
+            if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()
+            else if (!BrowseHost.phone.goBack()) BrowseHost.phoneHome()
+        } else when (PlayerNavigationPolicy.back(
             fullscreen = fullscreen != null,
             landscapeFill = WebHost.landscapeFill.value,
             onSettingsTab = tab == Tab.Settings.ordinal,
@@ -695,6 +701,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
     val browseRevision by BrowseHost.revision.collectAsState()
     val onCar by WebHost.carScreen.collectAsState()
     val projectedToCar by WebHost.carProjectionActive.collectAsState()
+    if (projectedToCar && !onCar) {
+        ProjectedPhonePane(snap, previewVisible, modifier)
+        return
+    }
     // Picture in picture always shows the video full size, whatever the mode.
     val small = mode == WebHost.PlayerMode.MINI && !inPip
     val hidden = mode == WebHost.PlayerMode.HIDDEN && !inPip
@@ -1558,12 +1568,73 @@ fun InfoPage() {
     }
 }
 
+/** The phone's navigation is independent of the projected player's layout. */
+@Composable
+private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier) {
+    val phoneMode by BrowseHost.phoneMode.collectAsState()
+    val revision by BrowseHost.phone.revision.collectAsState()
+    val activity = LocalContext.current.findActivity()
+    val pip = activity?.previewPip?.value == true
+    val lifecycle = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
+    val browsing = phoneMode != WebHost.PlayerMode.FULL && !pip
+    LaunchedEffect(snap.id) {
+        if (snap.id.isBlank() && phoneMode == WebHost.PlayerMode.FULL) BrowseHost.phoneHome()
+        else if (snap.id.isNotBlank() && phoneMode == WebHost.PlayerMode.HIDDEN)
+            BrowseHost.phoneMini()
+    }
+    LaunchedEffect(browsing, visible, lifecycle) {
+        if (browsing && visible && lifecycle == androidx.lifecycle.Lifecycle.State.RESUMED)
+            BrowseHost.phone.resume()
+        else BrowseHost.phone.pause()
+    }
+    DisposableEffect(Unit) { onDispose { BrowseHost.phone.pause() } }
+    Box(modifier.background(MaterialTheme.colorScheme.background)) {
+        if (browsing) {
+            key(revision) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize().padding(bottom = if (phoneMode == WebHost.PlayerMode.MINI) 100.dp else 0.dp),
+                    factory = { ctx ->
+                        FrameLayout(ctx).also { frame ->
+                            frame.addView(BrowseHost.phone.attach(ctx), FrameLayout.LayoutParams(-1, -1))
+                        }
+                    },
+                    onRelease = { BrowseHost.phone.detach(it) },
+                )
+            }
+            if (phoneMode == WebHost.PlayerMode.MINI && snap.id.isNotBlank()) {
+                Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(100.dp),
+                    tonalElevation = 3.dp) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CarSyncedWatchScreen(snap, visible, Modifier.width(142.dp).fillMaxHeight(),
+                            compact = true, onExpand = { BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL })
+                        Text(snap.title, modifier = Modifier.weight(1f).clickable {
+                            BrowseHost.phoneMode.value = WebHost.PlayerMode.FULL
+                        }.padding(8.dp), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = { WebHost.cmd(if (snap.playing) "pause" else "play") }) {
+                            Icon(if (snap.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                contentDescription = if (snap.playing) "Pause" else "Play")
+                        }
+                        IconButton(onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close phone mini player")
+                        }
+                    }
+                }
+            }
+        } else {
+            CarSyncedWatchScreen(snap, visible, Modifier.fillMaxSize(), pip = pip)
+        }
+    }
+}
+
 /** Phone watch screen uses the car's single player; never attaches a second decoder. */
 @Composable
-private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifier = Modifier) {
+private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifier = Modifier,
+    compact: Boolean = false, pip: Boolean = false, onExpand: () -> Unit = {},
+    onHome: () -> Unit = { BrowseHost.phoneHome() }) {
     val activity = LocalContext.current.findActivity()
     val lifecycleState = activity?.lifecycle?.currentStateFlow?.collectAsState()?.value
-    val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED
+    val resumed = lifecycleState == androidx.lifecycle.Lifecycle.State.RESUMED ||
+        (pip && lifecycleState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true)
     var frame by remember(snap.id) { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(snap.id, snap.playing, visible, resumed) {
         if (!CarPhonePreview.allowed(true, snap.playing, resumed, visible)) return@LaunchedEffect
@@ -1593,7 +1664,8 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
     }
     Column(modifier.background(MaterialTheme.colorScheme.background),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black),
+        Box(Modifier.fillMaxWidth().weight(1f).background(Color.Black)
+            .then(if (compact) Modifier.clickable(onClick = onExpand) else Modifier),
             contentAlignment = Alignment.Center) {
             if (displayed != null) {
                 androidx.compose.foundation.Image(
@@ -1607,7 +1679,7 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
                     modifier = Modifier.padding(16.dp))
             }
         }
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        if (!pip && !compact) Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(snap.title.ifBlank { "Android Auto" }, style = MaterialTheme.typography.titleMedium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (snap.artist.isNotBlank()) Text(snap.artist, maxLines = 1,
@@ -1629,7 +1701,7 @@ private fun CarSyncedWatchScreen(snap: Snap, visible: Boolean, modifier: Modifie
                 IconButton(onClick = { WebHost.cmd("next") }, enabled = snap.id.isNotBlank()) {
                     Icon(Icons.Filled.SkipNext, contentDescription = "Next video")
                 }
-                IconButton(onClick = { WebHost.openUrl(WebHost.home()) }) {
+                IconButton(onClick = onHome) {
                     Icon(Icons.Filled.Home, contentDescription = "YouTube home")
                 }
             }
