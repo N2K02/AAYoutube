@@ -820,3 +820,42 @@ test('resume within 1 s of the car is shown at once (no long hidden catch-up)', 
   assert.equal(html.contains('aaym-aligning'), false);
   assert.equal(r.action, 'nudge', 'the rest is closed by the visible steady correction');
 });
+
+
+test('an unrelated video cannot acknowledge a pending mirror seek', () => {
+  const p = page();
+  aligned(p, 0);
+  p.advance(4000);
+  p.M.sync(60000, true, 1, 'AAAAAAAAAAA');
+  const target = p.M.seek.target;
+  p.fire('seeked', { tagName: 'VIDEO', currentTime: target / 1000 });
+  assert.equal(p.M.seek.done, false);
+  p.fire('seeked', p.video);
+  assert.equal(p.M.seek.done, true);
+});
+
+test('a seek event while still seeking is not a completed correction', () => {
+  const p = page();
+  aligned(p, 0);
+  p.advance(4000);
+  p.M.sync(60000, true, 1, 'AAAAAAAAAAA');
+  p.video.seeking = true;
+  p.fire('seeked', p.video);
+  assert.equal(p.M.seek.done, false);
+  p.video.seeking = false;
+  p.fire('seeked', p.video);
+  assert.equal(p.M.seek.done, true);
+});
+
+test('advertisement invalidates content seek verification', () => {
+  const p = page();
+  aligned(p, 0);
+  p.advance(4000);
+  p.M.sync(60000, true, 1, 'AAAAAAAAAAA');
+  p.setAd(true);
+  p.M.sync(61000, true, 1, 'AAAAAAAAAAA');
+  assert.equal(p.M.seek, null);
+  p.setAd(false);
+  p.setTime(0);
+  assert.equal(parts(p.M.sync(62000, true, 1, 'AAAAAAAAAAA')).action, 'seek');
+});

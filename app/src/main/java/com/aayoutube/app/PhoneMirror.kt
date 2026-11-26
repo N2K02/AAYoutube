@@ -442,13 +442,18 @@ internal object PhoneMirror {
                     val result = SyncResult.parse(raw)
                     stats.record(result)
                     lastPhase = result.phase
+                    scheduleSync(PhoneMirrorPolicy.nextSyncMs(result.driftMs, result.phase))
                     if (result.seekReported || result.action == "seek") logSeek(clock.posMs, result)
                     if (result.action == "seekfail") {
                         // Controlled recovery: reload the page at the engine's position (bounded by reloadGuard).
                         AppLog.add("MIRROR", "Phone seeks keep failing; reloading at primaryMs=${clock.posMs}")
-                        loadedId = ""
-                        pageId = null
-                        scheduleSync(PhoneMirrorPolicy.MIN_RELOAD_MS)
+                        if (++recoveryAttempts > PhoneMirrorPolicy.MAX_MEDIA_RECOVERIES) {
+                            recoverLater("seek-failure", received)
+                        } else {
+                            loadedId = ""
+                            pageId = null
+                            scheduleSync(PhoneMirrorPolicy.MIN_RELOAD_MS)
+                        }
                         return@evaluateJavascript
                     }
                     // Only the pressure ceiling is enforced; the normal ceiling is a hint YouTube may round.
@@ -472,9 +477,11 @@ internal object PhoneMirror {
                         }
                     } else if (result.driftMs != null) {
                         missingMediaCount = 0
-                        recoveryAttempts = 0
                         lastDriftMs = result.driftMs
-                        health.success()
+                        if (result.phase == "stable" && result.action == "ok" && kotlin.math.abs(result.driftMs) <= PhoneMirrorPolicy.IN_STEP_MS) {
+                            recoveryAttempts = 0
+                            health.success()
+                        }
                     }
                 }
             }

@@ -308,18 +308,18 @@
   setTimeout(function () { if (M.phase === 'align' && !M.stopped && !M.alignSince) setAligning(false); }, 10000);
   document.addEventListener('seeked', function (e) {
     var v = e.target;
-    if (!v || v.tagName !== 'VIDEO' || !M.seek || M.seek.done) return;
+    if (!v || v.tagName !== 'VIDEO' || !M.seek || M.seek.done || M.seek.video !== v || v.seeking || adShowing()) return;
     M.seek.done = true;
     M.seek.landedMs = Math.round(v.currentTime * 1000);
   }, true);
   function issueSeek(v, targetMs, playing) {
     // Playing: aim a little ahead, the seek itself takes time.
     var sec = clampTarget(v, targetMs / 1000 + (playing ? 0.25 : 0));
-    M.seek = { target: Math.round(sec * 1000), at: Date.now(), done: false, landedMs: -1 };
+    M.seek = { video: v, target: Math.round(sec * 1000), at: Date.now(), done: false, landedMs: -1 };
     M.lastSeekAt = Date.now();
     if (M.phase === 'stable') M.phase = 'seeking';
     expectOwn('seek');
-    v.currentTime = sec;
+    try { v.currentTime = sec; } catch (e) { M.seek.done = true; M.seek.landedMs = -1; }
   }
   function out(drift, action, v, seekInfo) {
     return [Math.round(drift), action, v.videoHeight || 0, M.phase, Math.round(v.currentTime * 1000),
@@ -339,12 +339,13 @@
     if ((cap || '') !== M.cap) { M.cap = cap || ''; }
     applyQuality();
     if (adShowing()) {
+      if (M.seek || M.phase !== 'align') beginAlign();
       if (!playing || busy) { if (!v.paused) { expectOwn('pause'); v.pause(); } return 'ad'; }
       if (M.stopped) { M.stopped = false; broadcast(); }
       if (v.paused) { expectOwn('play'); try { var adPlay = v.play(); if (adPlay && adPlay.catch) adPlay.catch(function () {}); } catch (e) {} }
       return 'ad';
     }
-    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; if (v.playbackRate !== 1) v.playbackRate = 1; beginAlign(); }
+    if (M.lastId !== id || M.lastVideo !== v) { M.lastId = id; M.lastVideo = v; M.lastSeekAt = 0; auth = null; if (v.playbackRate !== 1) v.playbackRate = 1; beginAlign(); }
     if (M.stopped) { M.stopped = false; broadcast(); beginAlign(); }
     // Pause and primary buffering outrank pending phone gestures. Only protect a pending seek.
     if ((!playing || busy) && !v.paused) { expectOwn('pause'); v.pause(); auth = null; }
@@ -362,6 +363,7 @@
     }
     // A correction in flight is verified before anything else is corrected.
     var seekInfo = null;
+    if (M.seek && M.seek.video !== v) beginAlign();
     if (M.seek) {
       if (!M.seek.done && now - M.seek.at < SEEK_VERIFY_MS) {
         if (v.playbackRate !== rate) v.playbackRate = rate;

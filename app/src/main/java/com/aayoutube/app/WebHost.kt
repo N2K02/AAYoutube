@@ -171,7 +171,6 @@ object WebHost {
     private fun beginModeHandoff(toVideo: Boolean) {
         val state = snapshot.value
         val now = SystemClock.elapsedRealtime()
-        modeHandoffStartedAt = now
         val direction = if (toVideo) "Music->Video" else "Video->Music"
         val previous = modeMeter.currentDirection
         val previousElapsed = modeMeter.elapsed(now)
@@ -184,6 +183,7 @@ object WebHost {
                 AppLog.add("CAR", "Mode handoff superseded direction=$previous elapsedMs=$previousElapsed by=$direction")
             ModeTransitionMeter.Start.STARTED -> Unit
         }
+        modeHandoffStartedAt = now
         AppLog.add("CAR", "Mode handoff start direction=$direction positionMs=${state.posMs} " +
             "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
     }
