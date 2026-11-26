@@ -42,6 +42,7 @@ object BrowseHost {
     private var lastRendererCrashAt = 0L
     private var rendererCrashCount = 0
     private var browseToken = ""
+    private var browseDisplayId: Int? = null
 
     private fun browseScript(): String =
         "if(window.top===window.self)window.__AAY_BROWSE_TOKEN=" +
@@ -55,7 +56,19 @@ object BrowseHost {
     }
 
     fun attach(context: Context): WebView {
-        val w = web ?: create()
+        val displayId = runCatching { context.display?.displayId }.getOrNull() ?: android.view.Display.DEFAULT_DISPLAY
+        if (web != null && browseDisplayId != displayId) {
+            val previous = web!!
+            val address = previous.url?.takeIf(WebHost::isSafePageUrl)
+            runCatching { handler?.remove() }
+            handler = null
+            (previous.parent as? ViewGroup)?.removeView(previous)
+            previous.destroy()
+            web = null
+            wrapper = null
+            pendingUrl = address ?: pendingUrl
+        }
+        val w = web ?: create(context, displayId)
         wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
         return w
@@ -103,7 +116,7 @@ object BrowseHost {
     /** Changes on Features also affect the browse page behind the mini player. */
     fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
         val w = web ?: return
-        w.settings.textZoom = f.pageZoom
+        w.settings.textZoom = if (browseDisplayId != android.view.Display.DEFAULT_DISPLAY) 100 else f.pageZoom
         if (desktopChanged) {
             w.settings.userAgentString = WebHost.userAgent(f.desktopSite)
             runCatching { handler?.remove() }
@@ -143,10 +156,13 @@ object BrowseHost {
     private var pendingUrl: String? = null
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun create(): WebView {
-        val c = MutableContextWrapper(app)
-        wrapper = c
+    private fun create(context: Context, displayId: Int): WebView {
+        browseDisplayId = displayId
+        val c = if (displayId == android.view.Display.DEFAULT_DISPLAY)
+            MutableContextWrapper(context).also { wrapper = it } else context.also { wrapper = null }
         val w = WebView(c)
+        w.isFocusable = true
+        w.isFocusableInTouchMode = true
         browseToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         val s = w.settings
@@ -158,7 +174,12 @@ object BrowseHost {
         s.allowFileAccess = false
         s.allowContentAccess = false
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        s.textZoom = Features.current.pageZoom
+        s.textZoom = if (displayId != android.view.Display.DEFAULT_DISPLAY) 100 else Features.current.pageZoom
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
+        s.setSupportZoom(true)
+        s.builtInZoomControls = true
+        s.displayZoomControls = false
         s.userAgentString = WebHost.userAgent(Features.current.desktopSite)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
