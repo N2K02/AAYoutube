@@ -1673,7 +1673,10 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
         PhoneMirror.setVisible(hasVideo && !mirrorCrashed && mirrorSupported &&
             (pip || phoneMode != WebHost.PlayerMode.HIDDEN) && mirrorWanted)
     }
-    LaunchedEffect(small, pip, mirrorRevision) { PhoneMirror.setVideoOnly(small || pip) }
+    LaunchedEffect(small, pip, mirrorRevision) {
+        PhoneMirror.setPip(pip)
+        PhoneMirror.setVideoOnly(small || pip)
+    }
     DisposableEffect(Unit) {
         onDispose {
             BrowseHost.phone.pause()

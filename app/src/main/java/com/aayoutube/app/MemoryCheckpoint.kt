@@ -18,6 +18,12 @@ internal object MemoryCheckpoint {
     private var lastAt = 0L
     private val counts = HashMap<String, Int>()
 
+    /** Reading PSS walks the process memory maps (slow while swapping): never on the UI thread. */
+    private val worker by lazy {
+        android.os.HandlerThread("aay-mem", android.os.Process.THREAD_PRIORITY_BACKGROUND).apply { start() }
+    }
+    private val background by lazy { Handler(worker.looper) }
+
     fun record(point: String, settleMs: Long = SETTLE_MS) {
         main.postDelayed({ log(point) }, settleMs)
     }
@@ -28,10 +34,15 @@ internal object MemoryCheckpoint {
         lastAt = now
         val cycle = (counts[point] ?: 0) + 1
         counts[point] = cycle
-        val rt = Runtime.getRuntime()
-        val pssMb = runCatching { Debug.getPss() / 1024 }.getOrDefault(-1L)
-        AppLog.add("MEM", MemoryPolicy.line(point, cycle, pssMb, (rt.totalMemory() - rt.freeMemory()) shr 20,
-            Debug.getNativeHeapAllocatedSize() shr 20, PhoneMirror.rendererAllocated, WebHost.rendererAllocated))
+        // Renderer state is read on the main thread (where it changes), the rest in the background.
+        val mirror = PhoneMirror.rendererAllocated
+        val engine = WebHost.rendererAllocated
+        background.post {
+            val rt = Runtime.getRuntime()
+            val pssMb = runCatching { Debug.getPss() / 1024 }.getOrDefault(-1L)
+            AppLog.add("MEM", MemoryPolicy.line(point, cycle, pssMb, (rt.totalMemory() - rt.freeMemory()) shr 20,
+                Debug.getNativeHeapAllocatedSize() shr 20, mirror, engine))
+        }
     }
 }
 

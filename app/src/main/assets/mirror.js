@@ -260,7 +260,18 @@
     if (dy < SWIPE_MIN_PX || st.lastDy < SWIPE_MIN_PX * 0.8 || st.maxDy < SWIPE_MIN_PX) return false;
     return Math.abs(dx) <= dy * 0.65 && Math.abs(st.lastDx) <= st.lastDy * 0.65;
   };
-  document.addEventListener('touchcancel', function () { swipeStart = null; }, true);
+  // Chromium cancels the touch when it decides the drag is a page scroll: a drag that was already
+  // a clear swipe down on the player still counts.
+  document.addEventListener('touchcancel', function () {
+    var st = swipeStart;
+    swipeStart = null;
+    if (!st || !M.swipeOk(st, st.lastDx, st.lastDy, Date.now() - st.at)) return;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (err) {}
+      return;
+    }
+    send('mini', 0);
+  }, true);
 
   /**
    * Follow the engine: result is "<driftMs>|<action>" (ok, nudge, seek, wait) or a reason
@@ -268,7 +279,7 @@
    * busy: the engine is seeking or buffering. cap: quality ceiling under load ('' = none).
    */
   // Alignment: a freshly loaded or resumed page is hidden until it shows the engine's position.
-  var ALIGN_SHOW_MS = 300, STABLE_MS = 300, SEEK_DRIFT_MS = 1500, ALIGN_SEEK_MS = 1000;
+  var ALIGN_SHOW_MS = 1000, STABLE_MS = 300, SEEK_DRIFT_MS = 1500, ALIGN_SEEK_MS = 1000;
   var SEEK_VERIFY_MS = 4000, SEEK_TOLERANCE_MS = 1000, MAX_SEEK_FAILS = 3, ALIGN_GIVE_UP_MS = 8000;
   var LIVE_DRIFT_MS = 3000;
   function setAligning(on) {
@@ -388,6 +399,7 @@
         return out(drift, 'seek', v, seekInfo);
       }
       if (v.seeking || v.readyState < 1) return out(drift, 'wait', v, seekInfo);
+      // Within 1 s: show now and let the steady correction close the rest (a long hidden nudge looked black).
       if (abs <= (live ? LIVE_DRIFT_MS : ALIGN_SHOW_MS) || !playing || now - M.alignSince > ALIGN_GIVE_UP_MS) {
         M.phase = 'stable';
         setAligning(false);

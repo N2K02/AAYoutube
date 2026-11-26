@@ -549,15 +549,33 @@ class PhoneMirrorPolicyTest {
             .forEach { assertTrue(it, line.contains(it)) }
     }
 
-    @Test fun lowMemoryLowersAndCriticalMemorySuspendsThePhoneCopy() {
+    @Test fun memoryPressureFollowsAndroidsSignalsNotOrdinaryLowFreeRam() {
         val gb = 1L shl 30
-        assertEquals(MemoryLevel.OK, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, false))
-        assertEquals("8.9% free, as measured", MemoryLevel.LOW, PhoneMirrorPolicy.memoryLevel(1_057_268L shl 10, 11_850_756L shl 10, false, false))
-        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(gb / 2, 12 * gb, false, false))
-        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, true, false))
-        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, true))
+        val low = android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
+        val critical = android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+        assertEquals("8.9% free on 12 GB is normal Android", MemoryLevel.OK,
+            PhoneMirrorPolicy.memoryLevel(1_057_268L shl 10, 11_850_756L shl 10, false, 0))
+        assertEquals(MemoryLevel.LOW, PhoneMirrorPolicy.memoryLevel(gb / 2, 12 * gb, false, 0))
+        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(gb / 4, 12 * gb, false, 0))
+        assertEquals("system low-memory flag lowers quality only", MemoryLevel.LOW,
+            PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, true, 0))
+        assertEquals(MemoryLevel.LOW, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, low))
+        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, critical))
         val g = MirrorLoadGate(stableMs = 10_000, bufferingSuspendMs = 15_000)
         assertEquals(MirrorLoadGate.State.DEGRADED, g.update(0, false, 0, memory = MemoryLevel.LOW))
         assertEquals(MirrorLoadGate.State.SUSPENDED, g.update(0, false, 1_000, memory = MemoryLevel.CRITICAL))
+    }
+
+    @Test fun pipGets360pTheSmallMiniPlayer240p() {
+        assertEquals("medium", PhoneMirrorPolicy.projectedCap(videoOnly = true, degraded = false, pip = true))
+        assertEquals("small", PhoneMirrorPolicy.projectedCap(videoOnly = true, degraded = false, pip = false))
+        assertEquals("small", PhoneMirrorPolicy.projectedCap(videoOnly = true, degraded = true, pip = true))
+    }
+
+    @Test fun ringingAndCallsCountAsAnotherAppSoAHandoffNeverResumesOverThem() {
+        assertTrue("ringtone", OtherMediaHoldPolicy.othersActive(false, android.media.AudioManager.MODE_RINGTONE))
+        assertTrue("call", OtherMediaHoldPolicy.othersActive(false, android.media.AudioManager.MODE_IN_CALL))
+        assertTrue("VoIP", OtherMediaHoldPolicy.othersActive(false, android.media.AudioManager.MODE_IN_COMMUNICATION))
+        assertFalse(OtherMediaHoldPolicy.othersActive(false, android.media.AudioManager.MODE_NORMAL))
     }
 }

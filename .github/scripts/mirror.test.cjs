@@ -797,3 +797,26 @@ test('a drag that goes down then back up, sideways, or on the seek bar is not a 
   p.fire('touchend', bar, { touches: [], changedTouches: [touch(100, 212)] });
   assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 0);
 });
+
+test('a swipe down that Chromium turns into a page scroll still opens the mini-player', () => {
+  const p = page();
+  const t = inPlayer();
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  [130, 170, 210].forEach((y) => p.fire('touchmove', t, { touches: [touch(101, y)] }));
+  p.fire('touchcancel', t);
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 1);
+  p.fire('touchstart', t, { touches: [touch(100, 100)] });
+  p.fire('touchmove', t, { touches: [touch(100, 110)] });
+  p.fire('touchcancel', t);
+  assert.equal(p.bridgeCalls.filter((c) => c.action === 'mini').length, 1, 'a short cancelled touch is not a swipe');
+});
+
+test('resume within 1 s of the car is shown at once (no long hidden catch-up)', () => {
+  const p = page();
+  const html = p.sandbox.document.documentElement.classList;
+  p.setTime(10.7);
+  const r = parts(p.M.sync(10_000, true, 1, 'AAAAAAAAAAA'));
+  assert.equal(r.phase, 'stable');
+  assert.equal(html.contains('aaym-aligning'), false);
+  assert.equal(r.action, 'nudge', 'the rest is closed by the visible steady correction');
+});

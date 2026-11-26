@@ -276,9 +276,8 @@ class ProjectedPlaybackPolicyTest {
     @Test fun phonePlayerSwipeDownOpensThePhoneMiniPlayerOnly() {
         val js = listOf(java.io.File("app/src/main/assets/mirror.js"), java.io.File("../app/src/main/assets/mirror.js"))
             .first { it.isFile }.readText()
-        val swipe = js.substringAfter("document.addEventListener('touchend'").substringBefore("touchcancel")
-        assertTrue("only a tracked drag, never a tap", swipe.contains("if (!M.swipeOk(start, dx, dy, Date.now() - start.at)) return;"))
-        assertTrue(swipe.contains("send('mini', 0)"))
+        // Gesture behaviour (tap, drag, scroll take-over, seek bar) is tested on the real script in mirror.test.cjs.
+        assertTrue(js.contains("send('mini', 0)"))
         val mirror = listOf(java.io.File("app/src/main/java/com/aayoutube/app/PhoneMirror.kt"),
             java.io.File("../app/src/main/java/com/aayoutube/app/PhoneMirror.kt")).first { it.isFile }.readText()
         val control = mirror.substringAfter("private fun onControl(").substringBefore("private fun onNavigatedTo(")

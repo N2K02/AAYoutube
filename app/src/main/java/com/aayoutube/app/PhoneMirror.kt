@@ -53,6 +53,10 @@ internal object PhoneMirror {
     private var wantVisible = false
     private var visible = false
     @Volatile private var videoOnly = false
+    private var pip = false
+
+    /** PiP gets a higher ceiling than the small mini-player. */
+    fun setPip(on: Boolean) { pip = on }
     private var layoutSentTo: WebView? = null
     private var lastLoadAt = 0L
     private var lastPokeAt = 0L
@@ -373,7 +377,7 @@ internal object PhoneMirror {
             }
             // The phone copy shares Chromium's single renderer process and the network with the car's
             // player: it always runs at a small, display-appropriate ceiling, lower still under pressure.
-            val cap = PhoneMirrorPolicy.projectedCap(videoOnly, state == MirrorLoadGate.State.DEGRADED)
+            val cap = PhoneMirrorPolicy.projectedCap(videoOnly, state == MirrorLoadGate.State.DEGRADED, pip)
             startupCap = cap
             if (suspended.value) exitSuspension(now)
             val w = web ?: run { visible = false; refreshHidden(); revision.value++; return }
@@ -542,17 +546,30 @@ internal object PhoneMirror {
     }
 
     @Volatile private var trimmedAt = 0L
+    @Volatile private var trimLevel = 0
+    private var memoryCheckedAt = 0L
+    private var memoryCached = MemoryLevel.OK
 
-    /** The system asked the app to trim: count as critical for a while. */
+    /** Android asked the app to trim while running: its own judgement of memory pressure. */
     fun onTrimMemory(level: Int) {
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) trimmedAt = SystemClock.elapsedRealtime()
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW &&
+            level <= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
+            trimLevel = level
+            trimmedAt = SystemClock.elapsedRealtime()
+            memoryCheckedAt = 0L
+        }
     }
 
+    /** Checked at most every [PhoneMirrorPolicy.MEMORY_CHECK_MS], not on every sync. */
     private fun memoryLevel(): MemoryLevel {
-        val trimmed = SystemClock.elapsedRealtime() - trimmedAt < PhoneMirrorPolicy.TRIM_HOLD_MS && trimmedAt != 0L
+        val now = SystemClock.elapsedRealtime()
+        if (memoryCheckedAt != 0L && now - memoryCheckedAt < PhoneMirrorPolicy.MEMORY_CHECK_MS) return memoryCached
+        memoryCheckedAt = now
+        val recentTrim = if (trimmedAt != 0L && now - trimmedAt < PhoneMirrorPolicy.TRIM_HOLD_MS) trimLevel else 0
         val info = android.app.ActivityManager.MemoryInfo()
         runCatching { (app.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info) }
-        return PhoneMirrorPolicy.memoryLevel(info.availMem, info.totalMem, info.lowMemory, trimmed)
+        memoryCached = PhoneMirrorPolicy.memoryLevel(info.availMem, info.totalMem, info.lowMemory, recentTrim)
+        return memoryCached
     }
 
     private fun thermalStatus(): Int =
@@ -1087,22 +1104,34 @@ internal object PhoneMirrorPolicy {
      * and 240p whenever the primary player or the device is under pressure.
      */
     const val TRIM_HOLD_MS = 60_000L
-    const val LOW_MEMORY_PERCENT = 12
-    const val CRITICAL_MEMORY_PERCENT = 6
+    const val MEMORY_CHECK_MS = 10_000L
+    // Android normally runs with little free RAM (about 9% on a 12 GB phone is ordinary):
+    // only far lower values, or Android's own signals, count as pressure.
+    const val LOW_MEMORY_PERCENT = 5
+    const val CRITICAL_MEMORY_PERCENT = 3
 
-    /** Low: lower the phone copy's quality. Critical (or the system trimming / low-memory flag): suspend it. */
-    fun memoryLevel(availBytes: Long, totalBytes: Long, systemLow: Boolean, trimmed: Boolean): MemoryLevel {
-        if (systemLow || trimmed) return MemoryLevel.CRITICAL
-        if (totalBytes <= 0L) return MemoryLevel.OK
+    /**
+     * Android's own signals first: RUNNING_CRITICAL trim -> critical (suspend the phone copy);
+     * RUNNING_LOW trim or the system low-memory flag -> low (240p). Percentages are a last resort.
+     */
+    fun memoryLevel(availBytes: Long, totalBytes: Long, systemLow: Boolean, recentTrimLevel: Int): MemoryLevel {
+        if (recentTrimLevel >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) return MemoryLevel.CRITICAL
+        val signalled = systemLow || recentTrimLevel >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW
+        if (totalBytes <= 0L) return if (signalled) MemoryLevel.LOW else MemoryLevel.OK
         val pct = availBytes * 100 / totalBytes
         return when {
             pct < CRITICAL_MEMORY_PERCENT -> MemoryLevel.CRITICAL
-            pct < LOW_MEMORY_PERCENT -> MemoryLevel.LOW
+            pct < LOW_MEMORY_PERCENT || signalled -> MemoryLevel.LOW
             else -> MemoryLevel.OK
         }
     }
 
-    fun projectedCap(videoOnly: Boolean, degraded: Boolean): String = if (videoOnly || degraded) "small" else "medium"
+    fun projectedCap(videoOnly: Boolean, degraded: Boolean, pip: Boolean = false): String = when {
+        degraded -> "small"
+        pip -> "medium"          // a PiP window can be large: 240p looks soft there
+        videoOnly -> "small"     // the small floating mini-player
+        else -> "medium"
+    }
 
     /** Same table as mirror.js QUALITY_HEIGHT. */
     val QUALITY_HEIGHT = mapOf("small" to 240, "medium" to 360, "large" to 480, "hd720" to 720)
