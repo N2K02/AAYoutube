@@ -364,7 +364,7 @@ internal object PhoneMirror {
                 clockFailures = 0; missingMediaCount = 0; recoveryAttempts = 0; qualityViolations = 0
             }
             val thermal = thermalStatus()
-            val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure())
+            val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure(), memoryLevel())
             if (state == MirrorLoadGate.State.SUSPENDED || health.waiting(now)) {
                 if (!suspended.value) enterSuspension(thermal, s.buffering, now)
                 if (web != null && now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS) disposeRenderer()
@@ -539,6 +539,20 @@ internal object PhoneMirror {
         stats.suspendedMs += now - suspendedAt
         AppLog.add("MIRROR", "Phone player resumed after ${(now - suspendedAt) / 1000}s suspended")
         suspendedAt = 0L
+    }
+
+    @Volatile private var trimmedAt = 0L
+
+    /** The system asked the app to trim: count as critical for a while. */
+    fun onTrimMemory(level: Int) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) trimmedAt = SystemClock.elapsedRealtime()
+    }
+
+    private fun memoryLevel(): MemoryLevel {
+        val trimmed = SystemClock.elapsedRealtime() - trimmedAt < PhoneMirrorPolicy.TRIM_HOLD_MS && trimmedAt != 0L
+        val info = android.app.ActivityManager.MemoryInfo()
+        runCatching { (app.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(info) }
+        return PhoneMirrorPolicy.memoryLevel(info.availMem, info.totalMem, info.lowMemory, trimmed)
     }
 
     private fun thermalStatus(): Int =
@@ -833,11 +847,13 @@ internal class MirrorLoadGate(
     private var lastSevereAt = never
     private var state = State.NORMAL
 
-    fun update(thermal: Int, primaryBuffering: Boolean, nowMs: Long, cpuPressure: Boolean = false): State {
+    fun update(thermal: Int, primaryBuffering: Boolean, nowMs: Long, cpuPressure: Boolean = false,
+               memory: MemoryLevel = MemoryLevel.OK): State {
         if (primaryBuffering) { if (bufferingSince == 0L) bufferingSince = nowMs } else bufferingSince = 0L
         val sustained = bufferingSince != 0L && nowMs - bufferingSince >= bufferingSuspendMs
-        val severe = PhoneMirrorPolicy.suspendForHeat(thermal) || sustained
-        val pressure = primaryBuffering || cpuPressure || PhoneMirrorPolicy.degradeForHeat(thermal)
+        // Swap stalls are heard on the car: the phone copy gives way to low memory like to heat.
+        val severe = PhoneMirrorPolicy.suspendForHeat(thermal) || sustained || memory == MemoryLevel.CRITICAL
+        val pressure = primaryBuffering || cpuPressure || PhoneMirrorPolicy.degradeForHeat(thermal) || memory == MemoryLevel.LOW
         if (severe) lastSevereAt = nowMs
         if (pressure) lastPressureAt = nowMs
         state = when {
@@ -1070,6 +1086,22 @@ internal object PhoneMirrorPolicy {
      * Quality ceiling of the phone copy while Android Auto plays: mini-player/PiP 240p, full 360p,
      * and 240p whenever the primary player or the device is under pressure.
      */
+    const val TRIM_HOLD_MS = 60_000L
+    const val LOW_MEMORY_PERCENT = 12
+    const val CRITICAL_MEMORY_PERCENT = 6
+
+    /** Low: lower the phone copy's quality. Critical (or the system trimming / low-memory flag): suspend it. */
+    fun memoryLevel(availBytes: Long, totalBytes: Long, systemLow: Boolean, trimmed: Boolean): MemoryLevel {
+        if (systemLow || trimmed) return MemoryLevel.CRITICAL
+        if (totalBytes <= 0L) return MemoryLevel.OK
+        val pct = availBytes * 100 / totalBytes
+        return when {
+            pct < CRITICAL_MEMORY_PERCENT -> MemoryLevel.CRITICAL
+            pct < LOW_MEMORY_PERCENT -> MemoryLevel.LOW
+            else -> MemoryLevel.OK
+        }
+    }
+
     fun projectedCap(videoOnly: Boolean, degraded: Boolean): String = if (videoOnly || degraded) "small" else "medium"
 
     /** Same table as mirror.js QUALITY_HEIGHT. */
@@ -1151,3 +1183,5 @@ internal object PhoneMirrorPolicy {
     /** The page had no (or the wrong) media to follow in this sync. */
     fun mediaMissing(action: String) = action in MISSING_MEDIA_ACTIONS
 }
+
+internal enum class MemoryLevel { OK, LOW, CRITICAL }

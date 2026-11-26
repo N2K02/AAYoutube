@@ -31,6 +31,7 @@ class AAYoutubeApp : Application() {
      */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        PhoneMirror.onTrimMemory(level)
         if (MemoryTrimPolicy.releaseBrowse(level, WebHost.mode.value != WebHost.PlayerMode.FULL))
             BrowseHost.release()
     }

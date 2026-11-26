@@ -548,4 +548,16 @@ class PhoneMirrorPolicyTest {
         listOf("checkpoint=pip-exit", "cycle=3", "appPssMb=401", "phoneRenderer=released", "engineRenderer=allocated")
             .forEach { assertTrue(it, line.contains(it)) }
     }
+
+    @Test fun lowMemoryLowersAndCriticalMemorySuspendsThePhoneCopy() {
+        val gb = 1L shl 30
+        assertEquals(MemoryLevel.OK, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, false))
+        assertEquals("8.9% free, as measured", MemoryLevel.LOW, PhoneMirrorPolicy.memoryLevel(1_057_268L shl 10, 11_850_756L shl 10, false, false))
+        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(gb / 2, 12 * gb, false, false))
+        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, true, false))
+        assertEquals(MemoryLevel.CRITICAL, PhoneMirrorPolicy.memoryLevel(3 * gb, 12 * gb, false, true))
+        val g = MirrorLoadGate(stableMs = 10_000, bufferingSuspendMs = 15_000)
+        assertEquals(MirrorLoadGate.State.DEGRADED, g.update(0, false, 0, memory = MemoryLevel.LOW))
+        assertEquals(MirrorLoadGate.State.SUSPENDED, g.update(0, false, 1_000, memory = MemoryLevel.CRITICAL))
+    }
 }
