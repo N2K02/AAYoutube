@@ -455,4 +455,24 @@ class PhoneMirrorPolicyTest {
         assertTrue(selected.isEmpty())
         assertEquals(listOf(false), outcomes)
     }
+
+    // ------------------------------------------------------------ review follow-up
+
+    @Test fun missingMediaActionsAreExactlyTheOnesThatMeanNothingToFollow() {
+        listOf("novideo", "mismatch", "none").forEach { assertTrue(it, PhoneMirrorPolicy.mediaMissing(it)) }
+        listOf("ok", "nudge", "seek", "wait", "user", "ad").forEach { assertFalse(it, PhoneMirrorPolicy.mediaMissing(it)) }
+    }
+
+    @Test fun runtimeMuteFailureIsRetryableAndClearedByRetryAndProjectionEnd() {
+        fun read(name: String) = listOf(java.io.File("app/src/main/java/com/aayoutube/app/$name"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/$name")).first { it.isFile }.readText()
+        val mirror = read("PhoneMirror.kt")
+        assertTrue(mirror.substringAfter("fun retry()").substringBefore("fun setVideoOnly").contains("muteUnavailable.value = false"))
+        assertTrue(mirror.substringAfter("    fun release()").substringBefore("private fun teardown").contains("muteUnavailable.value = false"))
+        // Screens shows the retryable fallback for it, and "unsupported" only for a WebView without the feature.
+        val screens = read("Screens.kt")
+        assertTrue(screens.contains("val mirrorCrashed = playerFailed || muteUnavailable"))
+        assertTrue(screens.contains("PhoneMirrorPolicy.fallback(mirrorSupported, mirrorCrashed, mirrorSuspended)"))
+        assertTrue(PhoneMirrorPolicy.canRetry(PhoneMirrorPolicy.fallback(true, true, false)))
+    }
 }

@@ -92,8 +92,9 @@ internal object PhoneMirror {
         runCatching { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) &&
             WebViewFeature.isFeatureSupported(WebViewFeature.MUTE_AUDIO) }.getOrDefault(false)
     }
-    /** Too many renderer crashes: the phone shows its browse page instead of looping. */
+    /** Native muting could not be established at runtime: no secondary player until Retry or the next projection. */
     val muteUnavailable = MutableStateFlow(false)
+    /** Too many renderer crashes: the phone shows its fallback instead of looping. */
     val failed = MutableStateFlow(false)
     /** Thermal or sustained-buffering suspension: the phone shows the lightweight fallback meanwhile. */
     val suspended = MutableStateFlow(false)
@@ -183,6 +184,7 @@ internal object PhoneMirror {
         crashGuard.reset()
         reloadGuard.reset()
         failed.value = false
+        muteUnavailable.value = false
         revision.value++
     }
 
@@ -280,6 +282,7 @@ internal object PhoneMirror {
         reloadGuard.reset()
         wantVisible = false
         failed.value = false
+        muteUnavailable.value = false   // a runtime mute failure is not permanent: try again next projection
         signingOut = false
         WebHost.resetSelectionGuards()
         BrowseHost.resetSelectionGuards()
@@ -435,7 +438,7 @@ internal object PhoneMirror {
                             return@evaluateJavascript
                         }
                     } else qualityViolations = 0
-                    if (result.action in setOf("novideo", "mismatch", "none")) {
+                    if (PhoneMirrorPolicy.mediaMissing(result.action)) {
                         if (++missingMediaCount >= PhoneMirrorPolicy.MISSING_MEDIA_LIMIT) {
                             missingMediaCount = 0
                             if (++recoveryAttempts > PhoneMirrorPolicy.MAX_MEDIA_RECOVERIES) {
@@ -1053,4 +1056,9 @@ internal object PhoneMirrorPolicy {
     }
 
     fun canRetry(f: Fallback) = f == Fallback.FAILED
+
+    private val MISSING_MEDIA_ACTIONS = setOf("novideo", "mismatch", "none")
+
+    /** The page had no (or the wrong) media to follow in this sync. */
+    fun mediaMissing(action: String) = action in MISSING_MEDIA_ACTIONS
 }

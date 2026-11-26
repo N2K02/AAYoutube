@@ -1638,11 +1638,13 @@ private fun ProjectedPhonePane(snap: Snap, visible: Boolean, modifier: Modifier)
     val phoneMode by BrowseHost.phoneMode.collectAsState()
     val revision by BrowseHost.phone.revision.collectAsState()
     val mirrorRevision by PhoneMirror.revision.collectAsState()
-    val mirrorCrashed by PhoneMirror.failed.collectAsState()
+    val playerFailed by PhoneMirror.failed.collectAsState()
     val mirrorSuspended by PhoneMirror.suspended.collectAsState()
     // One fallback for every state in which the phone cannot show the copy (unsupported, crashed, suspended).
     val muteUnavailable by PhoneMirror.muteUnavailable.collectAsState()
-    val mirrorSupported = PhoneMirror.supported && !muteUnavailable
+    // A runtime mute failure may be temporary, so it is a retryable failure, not "unsupported".
+    val mirrorCrashed = playerFailed || muteUnavailable
+    val mirrorSupported = PhoneMirror.supported
     val fallback = PhoneMirrorPolicy.fallback(mirrorSupported, mirrorCrashed, mirrorSuspended)
     val mirrorBlocked = fallback != PhoneMirrorPolicy.Fallback.NONE
     val activity = LocalContext.current.findActivity()
