@@ -58,7 +58,7 @@ class NativeAudioContractTest {
     @Test fun webHostRoutesTransportsAndMergesState() {
         val host = kt("WebHost.kt")
         val cmd = host.substringAfter("    fun cmd(name: String) {").substringBefore("fun scrollBy(")
-        assertTrue(cmd.indexOf("NativePlayback.nativeOwns && NativePlayback.command(name)") < cmd.indexOf("js(\"window.__aay&&window.__aay.cmd('\$name')\")"))
+        assertTrue(cmd.indexOf("NativePlayback.nativeOwns && NativePlayback.command(name)") < cmd.indexOf("window.__aay.cmd('\$name')"))
         val seek = host.substringAfter("fun seekTo(positionMs: Long) {").substringBefore("fun showOnCar(")
         assertTrue(seek.indexOf("NativePlayback.seek(target)") < seek.indexOf("cmd(\"seek\""))
         assertTrue(host.contains("publish(NativePlayback.mergeWebState(s, webNativeMarker))"))
