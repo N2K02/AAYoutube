@@ -62,13 +62,16 @@ data class FeatureFlags(
      */
     val nativeAudio: Boolean = false,
     val nativeAudioProviderUrl: String = "",
+    /** Explicit opt-in for authorized content available in the current WebView session. */
+    val localSabr: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
         .put("hideShorts", hideShorts)
         .put("hidePromos", hidePromos)
         .put("backgroundPlay", backgroundPlay)
-        .put("nativeAudio", nativeAudio) // diagnostic opt-in only; never expose resolver URL
+        .put("nativeAudio", nativeAudio)
+        .put("localSabr", localSabr) // never expose the configured external resolver URL
         .put("lowQuality", lowQualityInBackground)
         .put("preferredQuality", preferredQuality)
         .put("autoContinue", autoContinue)
@@ -144,6 +147,7 @@ object Features {
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
             hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
             nativeAudio = prefs.getBoolean("nativeAudio", d.nativeAudio),
+            localSabr = prefs.getBoolean("localSabr", false),
             nativeAudioProviderUrl = AuthorizedAudioProvider.normalizeEndpoint(prefs.getString("nativeAudioProviderUrl", "").orEmpty()).orEmpty(),
         )
     }
@@ -187,6 +191,7 @@ object Features {
             .putBoolean("hideComments", n.hideComments)
             .putBoolean("hideEndCards", n.hideEndCards)
             .putBoolean("nativeAudio", n.nativeAudio)
+            .putBoolean("localSabr", n.localSabr)
             .putString("nativeAudioProviderUrl", n.nativeAudioProviderUrl)
             .apply()
     }

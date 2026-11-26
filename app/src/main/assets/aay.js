@@ -1515,8 +1515,40 @@
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   }
-  // Feasibility probe only. Never transfer signed URLs, tokens or response bodies to Android.
+  // Feasibility probe only. Never log signed URLs, tokens or response bodies.
   // A stale SPA response must not be attributed to the currently playing video.
+  // Explicit opt-in only. Use only fields already supplied to this active player.
+  // No cookies, client impersonation, challenge computation or signature deciphering.
+  A.localAudioDescriptor = function (id) {
+    if (!CFG.nativeAudio || !CFG.localSabr || BROWSE || !A.backgroundAudioMode ||
+        A.inPip || A.isCar || isAd() || !id || qualityVideoId() !== id) return null;
+    try {
+      var p = ytPlayer(), v = getVideo(), r = p && p.getPlayerResponse ? p.getPlayerResponse() : null;
+      function matches(x) { return x && x.videoDetails && x.videoDetails.videoId === id; }
+      if (!matches(r)) r = window.ytInitialPlayerResponse;
+      if (!matches(r) || !v || v.ended || v.paused || !isFinite(v.duration) || v.duration <= 0 ||
+          r.videoDetails.isLiveContent || !r.playabilityStatus || r.playabilityStatus.status !== 'OK') return null;
+      var data = r.streamingData || {}, config = r.playerConfig || {};
+      var media = config.mediaCommonConfig || {}, us = media.mediaUstreamerRequestConfig || {};
+      var uc = us.videoPlaybackUstreamerConfig || data.videoPlaybackUstreamerConfig || '';
+      var formats = (Array.isArray(data.adaptiveFormats) ? data.adaptiveFormats : []).slice(0, 64);
+      var audio = [];
+      formats.forEach(function (f) {
+        if (!f || typeof f.mimeType !== 'string' || !/^audio\//i.test(f.mimeType) ||
+            f.isDrc || (f.audioTrack && f.audioTrack.audioIsDefault !== true)) return;
+        audio.push({itag: Number(f.itag), mimeType: f.mimeType.slice(0, 128),
+          bitrate: Number(f.bitrate), audioSampleRate: Number(f.audioSampleRate), audioChannels: Number(f.audioChannels),
+          contentLength: String(f.contentLength || '').slice(0, 24), lastModified: String(f.lastModified || '').slice(0, 24),
+          approxDurationMs: String(f.approxDurationMs || '').slice(0, 24), xtags: String(f.xtags || '').slice(0, 256),
+          initRange: f.initRange ? {start: String(f.initRange.start), end: String(f.initRange.end)} : null,
+          indexRange: f.indexRange ? {start: String(f.indexRange.start), end: String(f.indexRange.end)} : null,
+          url: typeof f.url === 'string' ? f.url.slice(0, 8192) : ''});
+      });
+      return {videoId: id, durationMs: Math.round(v.duration * 1000), audio: audio.slice(0, 16),
+        serverAbrStreamingUrl: typeof data.serverAbrStreamingUrl === 'string' ? data.serverAbrStreamingUrl.slice(0, 8192) : '',
+        ustreamerConfig: typeof uc === 'string' ? uc.slice(0, 16384) : ''};
+    } catch (e) { return null; }
+  };
   function audioStreamProbe(p) {
     var out = { audioFormats: -1, audioDirect: -1, audioWrapped: -1, audioAac: -1, audioOpus: -1, audioSabr: -1, audioHls: -1, audioDash: -1 };
     if (!CFG.nativeAudio || BROWSE || isAd()) return out;

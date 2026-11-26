@@ -2636,3 +2636,21 @@ test('background lightweight audio preserves quality saver and restores video on
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720','hd720']);
   assert.equal(p.video.paused, false);
 });
+
+
+test('local audio descriptor requires opt-in, hidden player and matching playable metadata', () => {
+  const p = playerPage({quality:true,cfg:{nativeAudio:true,localSabr:true,backgroundPlay:true}});
+  p.flush();
+  p.player.getPlayerResponse = () => ({videoDetails:{videoId:'86p7SP34qSc'},playabilityStatus:{status:'OK'},
+    streamingData:{serverAbrStreamingUrl:'https://r1.googlevideo.com/x',adaptiveFormats:[
+      {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',bitrate:128000,audioSampleRate:'44100',audioChannels:2},
+      {itag:137,mimeType:'video/mp4'}, {itag:141,mimeType:'audio/mp4',isDrc:true}
+    ]},playerConfig:{mediaCommonConfig:{mediaUstreamerRequestConfig:{videoPlaybackUstreamerConfig:'YWJj'}}}});
+  assert.equal(p.window.__aay.localAudioDescriptor('86p7SP34qSc'),null);
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  const d = p.window.__aay.localAudioDescriptor('86p7SP34qSc');
+  assert.equal(d.audio.length,1); assert.equal(d.audio[0].itag,140); assert.equal(d.ustreamerConfig,'YWJj');
+  assert.equal(p.window.__aay.localAudioDescriptor('wrong'),null);
+  p.window.__aay.config({localSabr:false});
+  assert.equal(p.window.__aay.localAudioDescriptor('86p7SP34qSc'),null);
+});

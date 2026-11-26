@@ -1267,10 +1267,23 @@ private fun NativeAudioPage() {
                 headlineContent = { Text("Stream source") },
                 supportingContent = {
                     Text(
-                        if (flags.nativeAudioProviderUrl.isBlank()) "No source configured. Web playback remains available."
-                        else "Authorized HTTPS resolver configured."
+                        if (flags.nativeAudioProviderUrl.isNotBlank()) "Authorized HTTPS resolver configured."
+                        else if (flags.localSabr) "On-device SABR (experimental)."
+                        else "No source configured. Web playback remains available."
                     )
                 },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+        Card {
+            ListItem(
+                headlineContent = { Text("On-device SABR") },
+                supportingContent = { Text("Attempt native audio from the current player's available stream metadata, with no external resolver. Enable only for content you are authorized to play separately. Falls back automatically; no access checks are bypassed.") },
+                leadingContent = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
+                trailingContent = { Switch(checked = flags.localSabr, onCheckedChange = { enabled ->
+                    Features.update { it.copy(localSabr = enabled) }
+                    NativePlayback.onVisibilityChanged()
+                }) },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         }

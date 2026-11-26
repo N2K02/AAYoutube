@@ -31,7 +31,7 @@ internal object NativePlayback {
     private var capabilities: AudioCapabilities? = null
     private var capabilitiesRoute: AudioRoute? = null
     private var attemptedVideo = ""
-    private var configuredProviderUrl: String? = null
+    private var configuredProvider: Pair<String, Boolean>? = null
     private var resolveSerial = 0
     private var nativePos = 0L
     private var nativePlaying = false
@@ -78,11 +78,13 @@ internal object NativePlayback {
     }
 
     private fun syncProvider() {
-        val url = Features.current.nativeAudioProviderUrl
-        if (configuredProviderUrl == url) return
-        configuredProviderUrl = url
+        val flags = Features.current
+        val config = flags.nativeAudioProviderUrl to flags.localSabr
+        if (configuredProvider == config) return
+        configuredProvider = config
         returnToWeb("provider-changed")
-        val provider = AuthorizedAudioProvider.create(url)
+        val provider = AuthorizedAudioProvider.create(config.first)
+            ?: if (config.second) LocalSabrProvider() else null
         if (provider == null) StreamProviders.reset() else StreamProviders.register(provider)
     }
 

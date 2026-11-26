@@ -2031,6 +2031,24 @@ object WebHost {
         js("window.__aay&&window.__aay.nativeAudio&&window.__aay.nativeAudio($on,$sec,$resume)")
     }
 
+    /** Read a minimal authorized session descriptor directly from the current document.
+     * Never log the returned body or store it on disk.
+     */
+    internal fun requestLocalAudio(videoId: String, done: (String?) -> Unit) {
+        val w = web ?: run { done(null); return }
+        val gen = webGeneration
+        if (sessionClearing || shown || inPip.value || carProjectionActive() ||
+            !Features.current.nativeAudio || !Features.current.localSabr ||
+            !isSafePageUrl(w.url.orEmpty())) { done(null); return }
+        val id = JSONObject.quote(videoId)
+        w.evaluateJavascript("window.__aay&&window.__aay.localAudioDescriptor&&window.__aay.localAudioDescriptor($id)") { value ->
+            done(value?.takeIf { web === w && webGeneration == gen && !sessionClearing &&
+                !shown && !inPip.value && !carProjectionActive() &&
+                Features.current.nativeAudio && Features.current.localSabr &&
+                snapshot.value.id == videoId && it.length in 2..131072 && it != "null" })
+        }
+    }
+
     internal fun confirmNativeSilence(videoId: String, confirmed: (Boolean) -> Unit) {
         val w = web ?: run { confirmed(false); return }
         val gen = webGeneration
