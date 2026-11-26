@@ -25,7 +25,10 @@ class MiniPlayerTransitionContractTest {
         assertFalse(pane.contains("scaleX = 1f + (miniScaleX"))
         assertFalse(pane.contains("scaleY = 1f + (miniScaleY"))
         assertFalse(pane.contains("animateFloatAsState("))
-        assertTrue(pane.contains("if (browseOn && !inPip)"))
+        assertTrue(pane.contains("if (browseOn && !inPip && (!projectedToCar || onCar))"))
+        assertTrue(pane.contains("if (projectedToCar && !onCar) return@LaunchedEffect"))
+        assertTrue(pane.contains("CarSyncedWatchScreen(snap = snap, visible = previewVisible && !inPip"))
+        assertTrue(pane.contains("if (!projectedToCar || onCar) key(version)"))
         assertTrue(pane.contains("if (mode == WebHost.PlayerMode.FULL || inPip) BrowseHost.pause()"))
         // A mini video can move beneath either controls rail; no reserved side strip.
         assertTrue(pane.contains("val minX = edge"))
