@@ -10,6 +10,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeAudioEngineTest {
+    @Test fun backgroundLightweightAudioOnlyWithoutVisibleVideo() {
+        assertTrue(PlaybackHandoffPolicy.backgroundWebAudio(true, false, false, false))
+        assertFalse(PlaybackHandoffPolicy.backgroundWebAudio(false, false, false, false))
+        assertFalse(PlaybackHandoffPolicy.backgroundWebAudio(true, true, false, false))
+        assertFalse(PlaybackHandoffPolicy.backgroundWebAudio(true, false, true, false))
+        assertFalse(PlaybackHandoffPolicy.backgroundWebAudio(true, false, false, true))
+    }
+
     @Test fun sixAudioVariantsPreferActualOffloadThenHardwareAndBitrate() {
         val formats = listOf(
             AudioStream("https://a/1", "audio/mp4", "mp4a.40.2", 48000, 44100),

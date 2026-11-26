@@ -2604,7 +2604,8 @@ test('native silence confirms matching paused element and rejects stale video', 
 
 test('non-transport menu click is never intercepted as mobile center', () => {
   const p = playerPage({ quality: true }); p.flush();
-  const menu = { tagName: 'BUTTON', textContent: '720p', matches: () => false, closest: () => menu };
+  const menu = { tagName: 'BUTTON', textContent: '720p', matches: () => false,
+    getAttribute: () => null, closest: sel => sel.includes('[role="option"]') ? menu : null };
   let stopped = false;
   p.emit('click', { target: menu, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
   assert.equal(stopped, false); assert.equal(p.video.paused, false);
@@ -2620,4 +2621,18 @@ test('native probe distinguishes SABR, HLS, DASH without recording URL values', 
   assert.equal(r.audioFormats, 1); assert.equal(r.audioDirect, 0);
   assert.equal(r.audioSabr, 1); assert.equal(r.audioHls, 0); assert.equal(r.audioDash, 0);
   assert.equal(JSON.stringify(r).includes('private-sabr'), false);
+});
+
+
+test('background lightweight audio preserves quality saver and restores video on return', () => {
+  const p = playerPage({quality: true, cfg: {backgroundPlay: true, lowQuality: true, preferredQuality: 'hd720'}});
+  p.flush(); p.window.__aay.setBg(true); p.window.__aay.audioMode(false, true);
+  assert.equal(p.window.__aay.audioOnly, true); assert.equal(p.window.__aay.backgroundAudioMode, true);
+  assert.equal(p.video.paused, false);
+  p.advance(65000); p.runIntervals(); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny','tiny']);
+  p.window.__aay.setBg(false); p.window.__aay.audioMode(false, false);
+  assert.equal(p.window.__aay.audioOnly, false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720','hd720']);
+  assert.equal(p.video.paused, false);
 });

@@ -40,6 +40,10 @@ internal object PlaybackHandoffPolicy {
     fun audioOnlyAllowed(featureOn: Boolean, backgroundPlay: Boolean, shown: Boolean, pip: Boolean, car: Boolean): Boolean =
         featureOn && backgroundPlay && !shown && !pip && !car
 
+    /** A hidden phone can use the lightweight web audio path without claiming native audio. */
+    fun backgroundWebAudio(backgroundPlay: Boolean, shown: Boolean, pip: Boolean, car: Boolean): Boolean =
+        backgroundPlay && !shown && !pip && !car
+
     /** The clock still reports periodically, but DSP sleep should not be interrupted every second. */
     fun nativeClockIntervalMs(playWhenReady: Boolean, offloadActive: Boolean, sleeping: Boolean): Long? = when {
         !playWhenReady -> null

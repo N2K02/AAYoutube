@@ -85,3 +85,9 @@ Native playback waits for a matching WebView media element to confirm it is paus
 ## Audio-only stream selection
 
 The native engine ranks all supplied separate audio variants by actual per-stream route/codec/sample-rate/channel offload eligibility, then hardware decoder and bitrate. It keeps video mode on WebView. If the server exposes only adaptive metadata, the diagnostic now distinguishes SABR, DASH and HLS by presence only (no URLs, tokens or raw requests are logged). SABR metadata is not a playable URI and no SABR transport is implemented. A source authorized for direct playback is still required. Center transport diagnostics record only matched-control counts and media playing state.
+
+## SABR transport foundation and automatic background mode
+
+The hidden phone automatically enters lightweight WebView audio mode when background playback is enabled; PiP and visible video are excluded. The delayed low-resolution saver remains active if enabled. This mode does **not** disable video decoding by itself; decoded/dropped frames continue to be reported truthfully. Car retention keeps its existing behavior.
+
+A bounded Kotlin UMP framing reader is implemented and unit-tested against synthetic input (1–5 byte integers, truncation, payload/response/part limits). It is a foundation only: no SABR session bootstrap, request protobuf, segment timeline, Media3 source adapter or live transport has been integrated. The HTTPS authorized audio provider remains the only native stream source. References: https://github.com/LuanRT/googlevideo and https://github.com/chadacious/sabr-exoplayer (MIT). No upstream code was copied and no dependencies added.

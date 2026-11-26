@@ -239,7 +239,7 @@ object WebHost {
         if (!carAudioRetained.value && !retainedRendererDetached) return
         carAudioRetained.value = false
         retainedRendererDetached = false
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(false)")
+        syncWebAudioMode()
         AppLog.add("CAR", "Audio retention ended: $reason")
         if (reattachPhone && !carShown) webVersion.update { it + 1 }
         refreshBackgroundQuality()
@@ -348,7 +348,7 @@ object WebHost {
         NativePlayback.onVisibilityChanged()
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
+        syncWebAudioMode()
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
@@ -567,6 +567,7 @@ object WebHost {
         w.settings.textZoom = if (webDisplayId != Display.DEFAULT_DISPLAY) 100 else f.pageZoom
         installScript(w)
         js("window.__aay&&window.__aay.config(${f.toJson()})")
+        syncWebAudioMode()
     }
 
     private fun js(code: String) {
@@ -1140,7 +1141,7 @@ object WebHost {
         }
         carProjectionActive.value = carShown
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
+        syncWebAudioMode()
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (carShown) {
             main.removeCallbacks(freezeSoon)
@@ -1189,6 +1190,7 @@ object WebHost {
     fun pip(on: Boolean) {
         if (on) NativePlayback.returnToWeb("pip-visible")
         js("window.__aay&&window.__aay.pip($on)")
+        syncWebAudioMode(pipEntering = on)
     }
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
@@ -1203,9 +1205,17 @@ object WebHost {
         return StandardPipPolicy.isValidSource(out.width(), out.height(), density)
     }
 
+    private fun backgroundWebAudio(): Boolean = PlaybackHandoffPolicy.backgroundWebAudio(
+        Features.current.backgroundPlay, shown, inPip.value, carProjectionActive() || carDisplay)
+
+    private fun syncWebAudioMode(pipEntering: Boolean = false) {
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value},${!pipEntering && backgroundWebAudio()})")
+    }
+
     fun refreshBackgroundQuality() {
         NativePlayback.onVisibilityChanged()
         js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
+        syncWebAudioMode()
     }
 
     fun openUrl(url: String) {
@@ -1306,7 +1316,7 @@ object WebHost {
             val peak = recentWebCpu.maxOrNull() ?: -1
             val droppedPct = d.optInt("droppedPct", -1).coerceIn(-1, 100)
             // Audio-only windows decode no frames: -1 never counts as dropping.
-            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("audioOnly", false)) -1 else droppedPct)
+            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("nativeAudioOwns", false)) -1 else droppedPct)
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
             AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak previewPressure=${previewPressure.active(now)} " +
@@ -2519,7 +2529,8 @@ object WebHost {
             if (sessionClearing) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
-            view.evaluateJavascript("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})", null)
+            syncWebAudioMode()
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)

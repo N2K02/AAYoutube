@@ -310,13 +310,17 @@
     A.transit(4000);
     console.log('[aay] car mode handoff started');
   };
-  A.audioMode = function (on) {
-    var next = !!on && !BROWSE;
-    if (next === A.audioOnly) return;
+  A.audioMode = function (retained, background) {
+    var bg = !!background && !BROWSE && CFG.backgroundPlay !== false && !A.inPip && !A.isCar;
+    var next = (!!retained && !BROWSE) || bg;
+    if (next === A.audioOnly && bg === !!A.backgroundAudioMode) return;
+    A.backgroundAudioMode = bg;
     A.audioOnly = next;
-    console.log('[aay] audio-only mode=' + next);
+    console.log('[aay] lightweight audio mode=' + next + ' background=' + bg);
     // Leaving audio-only: catch up with the DOM once (car/phone layout, ads, dialogs).
     if (!next) lastNonCriticalDomAt = 0;
+    if (!retained) { qualityApply.key = ''; applyPreferredQuality(); }
+    refreshPageObserver();
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = 0; }
     schedTick();
   };
@@ -1750,7 +1754,7 @@
   };
 
   function backgroundWatchdog() {
-    if (!A.audioOnly) {
+    if (!A.audioOnly || A.backgroundAudioMode) {
       bgSaverCheck();
       try { overloadCheck(getVideo()); } catch (e) {}
       try { logPlayingFormat(getVideo()); } catch (e) {}
@@ -2017,7 +2021,7 @@
       updateCenterTransport(v);
       // Background audio still needs player bindings and quality recovery,
       // but visual DOM work is unnecessary when the phone is hidden.
-      if (v && !BROWSE && !A.audioOnly && A.applyQuality) A.applyQuality();
+      if (v && !BROWSE && (!A.audioOnly || A.backgroundAudioMode) && A.applyQuality) A.applyQuality();
       // Hidden phone, or an audio-only renderer in no window: no visual DOM work.
       if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;
       // Playback and ad handling stay responsive. Heavier noncritical UI
@@ -2141,7 +2145,7 @@
           clockStallMs: clockStallMs,
           dupReports: perf.dupReports, observed: pageObserved, level: perfState.level,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, audioOnly: !!A.audioOnly,
+          codec: codec, tier: tier, audioOnly: !!A.audioOnly, nativeAudioOwns: !!nativeAudio.owned,
           audioFormats: audioProbe.audioFormats, audioDirect: audioProbe.audioDirect,
           audioWrapped: audioProbe.audioWrapped, audioAac: audioProbe.audioAac, audioOpus: audioProbe.audioOpus,
           audioSabr: audioProbe.audioSabr, audioHls: audioProbe.audioHls, audioDash: audioProbe.audioDash,
@@ -2897,7 +2901,7 @@
     catch (e) { return false; }
   }
   function bgSaverActive() {
-    if (A.audioOnly || !A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
+    if ((A.audioOnly && !A.backgroundAudioMode) || !A.isBg || A.isCar || A.inPip || (A.isMini && !A.backgroundAudioMode) || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
     if (bgSaver.broken || !bgSaver.since || (!bgSaver.armed && Date.now() - bgSaver.since < bgSaverDelay())) return false;
     if (isAd()) return false;
     var v = getVideo();
@@ -3143,7 +3147,7 @@
   }
   function applyPreferredQuality() {
     // Preserve the already buffered stream while the renderer is detached.
-    if (A.audioOnly) return;
+    if (A.audioOnly && !A.backgroundAudioMode) return;
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
