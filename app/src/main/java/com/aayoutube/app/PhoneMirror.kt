@@ -72,6 +72,8 @@ internal object PhoneMirror {
     private var adHeld = false
     private var syncDueAt = Long.MAX_VALUE
     private var missingMediaCount = 0
+    private var clockFailures = 0
+    private var intentEpoch = 0L
     private var recoveryAttempts = 0
     @Volatile private var startupCap = ""
     private var lastReloadRejectedAt = Long.MIN_VALUE / 2
@@ -214,8 +216,7 @@ internal object PhoneMirror {
             if (!visible) return@post
             if (next.id != previous.id) { missingMediaCount = 0; recoveryAttempts = 0 }
             // The engine's intent changed: any answer still on its way carries obsolete state.
-            syncSeq++
-            syncInFlight = false
+            intentEpoch++
             val now = SystemClock.elapsedRealtime()
             scheduleSync((PhoneMirrorPolicy.MIN_POKE_MS - (now - lastPokeAt)).coerceAtLeast(0L))
         }
@@ -223,8 +224,7 @@ internal object PhoneMirror {
 
     fun onExplicitTransport() {
         if (!visible) return
-        syncSeq++
-        syncInFlight = false
+        intentEpoch++
         scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS)
     }
 
@@ -316,6 +316,7 @@ internal object PhoneMirror {
         lastPokeAt = 0L
         tapDownAt = 0L
         missingMediaCount = 0
+        clockFailures = 0
         recoveryAttempts = 0
         startupCap = ""
         disposeRenderer()
@@ -385,15 +386,27 @@ internal object PhoneMirror {
                 scheduleSync(PhoneMirrorPolicy.SYNC_MS)
                 return
             }
-            if (syncInFlight) stats.timeouts++
+            if (syncInFlight) {
+                stats.timeouts++
+                syncInFlight = false
+                if (clockFailure()) return
+            }
             syncInFlight = true
             syncStartedAt = now
             val seq = ++syncSeq          // a later request supersedes every earlier answer
             val gen = generation
+            val epoch = intentEpoch
             val id = s.id
             WebHost.mediaClock { clock ->
+                if (seq != syncSeq || web !== w || gen != generation) return@mediaClock
+                if (clock == null) {
+                    syncInFlight = false
+                    clockFailure()
+                    return@mediaClock
+                }
+                clockFailures = 0
                 val received = SystemClock.elapsedRealtime()
-                val stale = seq != syncSeq || web !== w || !visible || suspended.value || signingOut ||
+                val stale = epoch != intentEpoch || seq != syncSeq || web !== w || !visible || suspended.value || signingOut ||
                     !PhoneMirrorPolicy.current(gen, generation, id, clock.id) || WebHost.snapshot.value.id != id
                 // The sample was taken somewhere inside [now, received]: use its midpoint, drop old ones.
                 val busy = clock.seeking || !clock.ready || WebHost.snapshot.value.buffering
@@ -401,7 +414,7 @@ internal object PhoneMirror {
                 val pos = PhoneMirrorPolicy.compensatedPosMs(clock.posMs, advancing, clock.rate, now, received)
                 if (stale || pos == null) {
                     stats.stale++
-                    if (seq == syncSeq) syncInFlight = false
+                    if (seq == syncSeq) { syncInFlight = false; scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS) }
                     return@mediaClock
                 }
                 if (clock.ad || WebHost.snapshot.value.ad) {
@@ -413,6 +426,7 @@ internal object PhoneMirror {
                     "$pos,$advancing,${clock.rate},${JSONObject.quote(id)},$busy,${JSONObject.quote(cap)})") { raw ->
                     if (seq != syncSeq || gen != generation || web !== w || suspended.value) { stats.stale++; return@evaluateJavascript }
                     syncInFlight = false
+                    if (epoch != intentEpoch) { scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS); return@evaluateJavascript }
                     val result = SyncResult.parse(raw)
                     stats.record(result)
                     if (result.action in setOf("novideo", "mismatch", "none")) {
@@ -436,6 +450,14 @@ internal object PhoneMirror {
             }
             scheduleSync(PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
         }
+    }
+
+    private fun clockFailure(): Boolean {
+        if (++clockFailures < PhoneMirrorPolicy.MAX_CLOCK_FAILURES) return false
+        AppLog.add("MIRROR", "Primary clock unavailable; using phone playback controls")
+        failed.value = true
+        teardown()
+        return true
     }
 
     private fun holdForAd(w: WebView) {
@@ -1024,6 +1046,7 @@ internal object PhoneMirrorPolicy {
     const val HIDDEN_RELEASE_MS = 60_000L
     const val SUSPENDED_RELEASE_MS = 12_000L
     const val MISSING_MEDIA_LIMIT = 4
+    const val MAX_CLOCK_FAILURES = 5
     const val MAX_MEDIA_RECOVERIES = 2
     const val TRANSPORT_SUPPRESS_MS = 2_500L
     const val THERMAL_DEGRADE = 2   // PowerManager.THERMAL_STATUS_MODERATE

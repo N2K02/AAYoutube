@@ -394,7 +394,8 @@ object WebHost {
         w.resumeTimers()
         web = w
         installScript(w)
-        var url = (pendingUrl ?: savedUrl())?.takeIf(::isSafePageUrl) ?: home()
+        var url = if (sessionClearing) sessionResetUrl ?: "about:blank"
+            else (pendingUrl ?: savedUrl())?.takeIf(::isSafePageUrl) ?: home()
         // Reopening on the video we left: show it paused. Playing on its own is for Android Auto
         // and for videos you pick (those load with aay=1).
         // Only when the phone screen opens it: Android Auto (car display, media player) plays.
@@ -423,7 +424,7 @@ object WebHost {
         if (!isSafePageUrl(url) || !isYouTubeHost(u.host)) return
         // Without our autoplay flags: opening the app should not start a video on its own.
         val clean = u.buildUpon().clearQuery().apply {
-            u.queryParameterNames.filter { it != "aay" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
+            u.queryParameterNames.filter { it != "aay" && it != "aay_reset" }.forEach { k -> u.getQueryParameters(k).forEach { v -> appendQueryParameter(k, v) } }
         }.build().toString()
         webPrefs.edit().putString("lastUrl", clean).apply()
     }
@@ -932,8 +933,8 @@ object WebHost {
      * The engine's real media clock with its identity and health. The answer is dropped if the
      * engine's renderer was replaced while the request was pending.
      */
-    internal fun mediaClock(result: (EngineClock) -> Unit) {
-        val w = web ?: return
+    internal fun mediaClock(result: (EngineClock?) -> Unit) {
+        val w = web ?: run { result(null); return }
         val gen = webGeneration
         w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
             "document.querySelector('video');if(!v)return null;" +
@@ -943,13 +944,14 @@ object WebHost {
             "var m=/^\\/(?:live|shorts)\\/([\\w-]{11})/.exec(location.pathname);id=m?m[1]:''}}" +
             "return JSON.stringify([Math.round(v.currentTime*1000),!v.paused&&!v.ended,v.playbackRate||1,id," +
             "!!v.seeking,v.readyState>=3,!!(p&&p.classList&&p.classList.contains('ad-showing'))])})()") { raw ->
-            if (gen != webGeneration || web !== w) return@evaluateJavascript
-            runCatching {
-                val json = org.json.JSONTokener(raw).nextValue() as? String ?: return@runCatching
+            if (gen != webGeneration || web !== w) { result(null); return@evaluateJavascript }
+            val clock = runCatching {
+                val json = org.json.JSONTokener(raw).nextValue() as? String ?: return@runCatching null
                 val a = org.json.JSONArray(json)
-                result(EngineClock(a.getString(3), a.getLong(0).coerceAtLeast(0L), a.getBoolean(1),
-                    a.getDouble(2).coerceIn(0.25, 4.0), a.getBoolean(4), a.getBoolean(5), a.getBoolean(6)))
-            }
+                EngineClock(a.getString(3), a.getLong(0).coerceAtLeast(0L), a.getBoolean(1),
+                    a.getDouble(2).coerceIn(0.25, 4.0), a.getBoolean(4), a.getBoolean(5), a.getBoolean(6))
+            }.getOrNull()
+            result(clock)
         }
     }
 
@@ -1346,16 +1348,22 @@ object WebHost {
         private set
     private var sessionSerial = 0L
     private var sessionHomePending = false
+    private var sessionCookiePending = false
+    private var sessionResetUrl: String? = null
     private val sessionResetTimeout = Runnable {
         if (sessionClearing) {
             AppLog.add("ACCOUNT", "Session reset timed out; clearing the playback document")
-            sessionSerial++
             resetSessionPlayback()
             web?.stopLoading()
             web?.loadUrl("about:blank")
             youtubeAccount.value = YouTubeAccountState.CHECKING
-            sessionHomePending = true
-            finishSessionReset()
+            // Cookie removal cannot be cancelled. Keep authentication blocked until its callback.
+            if (sessionCookiePending) {
+                AppLog.add("ACCOUNT", "Cookie removal still pending; authentication remains blocked")
+            } else {
+                sessionHomePending = true
+                finishSessionReset()
+            }
         }
     }
 
@@ -1364,15 +1372,18 @@ object WebHost {
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
         pendingUrl = home()
+        lastUrl = home()
+        saveUrl(home())
         snapshot.value = Snap()
         selectedWatchVideoId.value = ""
         send(Msg.STATE, Snap().toBundle())
     }
 
     private fun finishSessionReset() {
-        if (!sessionClearing || !sessionHomePending) return
+        if (!sessionClearing || !sessionHomePending || sessionCookiePending) return
         main.removeCallbacks(sessionResetTimeout)
         sessionHomePending = false
+        sessionResetUrl = null
         sessionClearing = false
         BrowseHost.onSessionCleared()
     }
@@ -1383,8 +1394,13 @@ object WebHost {
         cmd("pause")
         sessionClearing = true
         sessionHomePending = false
+        sessionCookiePending = true
+        sessionResetUrl = null
         // The phone's secondary player stops and drops pending work before any data is cleared.
         PhoneMirror.beginSignOut()
+        BrowseHost.beginAccountClear()
+        web?.stopLoading()
+        web?.loadUrl("about:blank")
         resetSessionPlayback()
         main.removeCallbacks(sessionResetTimeout)
         main.postDelayed(sessionResetTimeout, 20_000L)
@@ -1392,17 +1408,21 @@ object WebHost {
         CookieManager.getInstance().removeAllCookies {
             main.post {
                 if (serial != sessionSerial || !sessionClearing) return@post
+                sessionCookiePending = false
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
                 resetSessionPlayback()
                 youtubeAccount.value = YouTubeAccountState.SIGNED_OUT
                 sessionHomePending = true
+                sessionResetUrl = Uri.parse(home()).buildUpon().appendQueryParameter("aay_reset", serial.toString()).build().toString()
+                main.removeCallbacks(sessionResetTimeout)
+                main.postDelayed(sessionResetTimeout, 20_000L)
                 val current = web
                 current?.stopLoading()
                 current?.clearCache(true)
                 if (current == null) finishSessionReset() else {
                     pendingUrl = null
-                    current.loadUrl(home())
+                    current.loadUrl(sessionResetUrl!!)
                 }
             }
         }
@@ -1501,10 +1521,13 @@ object WebHost {
         AppLog.add("POWER", "WebView released")
         // The phone's secondary player never outlives the engine it follows (Quit, idle shutdown).
         if (!preserveCarOwners) {
-            main.removeCallbacks(sessionResetTimeout)
-            sessionSerial++
-            sessionClearing = false
-            sessionHomePending = false
+            if (!sessionCookiePending) {
+                main.removeCallbacks(sessionResetTimeout)
+                sessionSerial++
+                sessionClearing = false
+                sessionHomePending = false
+                sessionResetUrl = null
+            }
             PhoneMirror.release()
         }
         main.removeCallbacks(freezeSoon)
@@ -2154,6 +2177,7 @@ object WebHost {
     private val client = object : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val uri = request.url
+            if (sessionClearing && request.isForMainFrame && uri.toString() != sessionResetUrl) return true
             AppLog.add("NAV", "Navigate host=${uri.host.orEmpty()} main=${request.isForMainFrame} gesture=${request.hasGesture()} redirect=${request.isRedirect}")
             val scheme = uri.scheme.orEmpty()
             if (scheme != "https") return true
@@ -2227,7 +2251,8 @@ object WebHost {
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (view !== web) return
-            if (sessionHomePending && runCatching { Uri.parse(url).path.orEmpty() in listOf("", "/") }.getOrDefault(false)) finishSessionReset()
+            if (sessionHomePending && url != null && url == sessionResetUrl && view.url == url) finishSessionReset()
+            if (sessionClearing) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
             view.evaluateJavascript("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})", null)
@@ -2290,7 +2315,7 @@ object WebHost {
             AppLog.add("NET", "Error ${error.errorCode} host=${request.url.host.orEmpty()} main=${request.isForMainFrame}")
             if (request.isForMainFrame) {
                 offline.value = true
-                if (view === web && sessionHomePending) {
+                if (view === web && sessionHomePending && request.url.toString() == sessionResetUrl) {
                     resetSessionPlayback()
                     view.stopLoading()
                     view.loadUrl("about:blank")

@@ -111,6 +111,13 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
         revision.value++
     }
     /** A second YouTube WebView must not keep a stale account UI after sign-out. */
+    open fun beginAccountClear() {
+        resetSelectionGuards()
+        pendingUrl = null
+        web?.stopLoading()
+        web?.loadUrl("about:blank")
+    }
+
     open fun onSessionCleared() {
         web?.clearCache(true)
         web?.loadUrl(WebHost.home())
@@ -120,7 +127,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
     open fun applyFeatures(f: FeatureFlags, desktopChanged: Boolean) {
         val w = web ?: return
         w.settings.textZoom = if (browseDisplayId != android.view.Display.DEFAULT_DISPLAY) 100 else f.pageZoom
-        if (desktopChanged) {
+        if (desktopChanged && !WebHost.sessionClearing) {
             w.settings.userAgentString = WebHost.userAgent(f.desktopSite)
             runCatching { handler?.remove() }
             handler = null
@@ -138,7 +145,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
 
     /** Called when the mini player opens: start where the user came from. */
     fun navigate(url: String) {
-        if (!WebHost.isSafePageUrl(url)) return
+        if (WebHost.sessionClearing || !WebHost.isSafePageUrl(url)) return
         val w = web
         if (w == null) {
             pendingUrl = url
@@ -152,7 +159,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
     }
 
     fun showFrom(url: String) {
-        if (!WebHost.isSafePageUrl(url)) return
+        if (WebHost.sessionClearing || !WebHost.isSafePageUrl(url)) return
         val w = web
         if (w == null) {
             pendingUrl = url
@@ -268,7 +275,7 @@ open class BrowseSession(private val onSelected: () -> Unit = {}) {
             }
         }
         web = w
-        w.loadUrl(pendingUrl?.takeIf(WebHost::isSafePageUrl) ?: WebHost.home())
+        w.loadUrl(if (WebHost.sessionClearing) "about:blank" else pendingUrl?.takeIf(WebHost::isSafePageUrl) ?: WebHost.home())
         pendingUrl = null
         return w
     }
@@ -336,6 +343,11 @@ object BrowseHost : BrowseSession() {
     override fun resetSelectionGuards() {
         super.resetSelectionGuards()
         phone.resetSelectionGuards()
+    }
+
+    override fun beginAccountClear() {
+        super.beginAccountClear()
+        phone.beginAccountClear()
     }
 
     override fun onSessionCleared() {
