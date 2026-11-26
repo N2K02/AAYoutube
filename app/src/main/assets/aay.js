@@ -1431,16 +1431,17 @@
     stateRepairPending = true;
     later(function () { stateRepairPending = false; syncPlayerState(); }, delay);
   }
-  function syncPlayerState() {
-    if (BROWSE) return;
+  function syncPlayerState(transitionRepair) {
+    if (BROWSE || A.audioOnly || nativeAudio.owned) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
-    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held ||
+        Date.now() <= userPauseEligibleUntil || isAd()) return;
     var st;
     try { st = p.getPlayerState(); } catch (e) { return; }
     if (st !== 2) return; // 2 = paused
     var now = Date.now();
-    if (now - stateFixAt < 12000) return; // avoid retrying playVideo every watchdog tick
+    if (!transitionRepair && now - stateFixAt < 12000) return; // normal watchdog cooldown
     stateFixAt = now;
     try {
       p.playVideo();
@@ -2712,9 +2713,10 @@
     var serial = ++miniExpandSerial;
     if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
-    // Back to the full player: YouTube may still draw its centre Play icon from a pause that
-    // happened in the mini player. Reconcile it promptly (no 12 s cooldown carried over).
-    if (leavingMini) { stateFixAt = 0; scheduleStateRepair(700); }
+    // The fullscreen layout can invalidate YouTube's control state more than once.
+    // Reconcile at the existing bounded post-resize checkpoints below, independently
+    // of a previous watchdog repair (which has a 12 s cooldown).
+    var expandId = leavingMini ? qualityVideoId() : '';
     miniSized.since = on ? Date.now() : 0;
     var wasSized = miniSized.active;
     miniSized.active = false;
@@ -2726,12 +2728,20 @@
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
-    if (leavingMini && resume) {
+    if (leavingMini && v) {
       [500, 1400, 2900].forEach(function (ms) { later(function () {
-        if (serial !== miniExpandSerial || A.isMini || A.inPip || PAUSED ||
-            bgWatch.explicitPause || bgWatch.held) return;
+        if (serial !== miniExpandSerial || A.isMini || A.inPip || A.audioOnly || nativeAudio.owned || PAUSED ||
+            bgWatch.explicitPause || bgWatch.held || Date.now() <= userPauseEligibleUntil || isAd()) return;
         var current = getVideo();
-        if (!current || current !== v || current.ended || !current.paused) return;
+        if (!current || current !== v || current.ended || qualityVideoId() !== expandId) return;
+        if (!current.paused) {
+          // The final viewport/quality change can mark YouTube paused again after an earlier
+          // repair. At most three checks per expansion, and only if the media is really playing.
+          syncPlayerState(true);
+          schedReport(0);
+          return;
+        }
+        if (!resume) return; // expanding a paused video never starts it
         // Reset only an involuntary transition pause. No seeking or reloading.
         console.log('[aay] mini expand: restoring interrupted playback');
         bgWatch.wanted = true;

@@ -2455,3 +2455,53 @@ test('leaving the mini player repairs YouTube\'s stale centre Play icon promptly
   p.flush();
   assert.ok(repairs > before, 'icon reconciled on return to full player');
 });
+
+
+test('mini expansion repairs a late stale state despite a recent watchdog repair', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.player;
+  let state = 2, repairs = 0;
+  player.getPlayerState = () => state;
+  player.playVideo = () => { repairs++; state = 1; };
+  p.window.__aay.mini(true);
+  p.flush();
+  p.runIntervals();
+  assert.equal(state, 1);
+  const before = repairs;
+  // Full-size geometry changes can invalidate the player after the first repair.
+  player.setSize = () => { state = 2; };
+  player.getBoundingClientRect = () => ({ width: 320, height: 180 });
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(state, 1, 'the late resize must not leave a Play icon');
+  assert.ok(repairs > before && repairs <= before + 3, 'bounded transition repairs');
+  assert.equal(p.video.paused, false);
+  assert.equal(p.video.currentTime, 20);
+});
+
+test('mini icon reconciliation respects Pause, native ownership and superseded transitions', () => {
+  for (const cancel of [
+    p => p.window.__aay.cmd('pause'),
+    p => p.window.__aay.nativeAudio(true, -1, false),
+    p => p.window.__aay.mediaHold(true),
+    p => p.window.__aay.mini(true),
+    p => { p.location.search = '?v=anotherVideo'; },
+  ]) {
+    const p = playerPage({ quality: true });
+    p.flush();
+    const player = p.player;
+    let state = 2, repairs = 0;
+    player.getPlayerState = () => state;
+    player.playVideo = () => { repairs++; state = 1; };
+    p.window.__aay.mini(true);
+    p.flush();
+    p.runIntervals();
+    p.window.__aay.mini(false);
+    cancel(p);
+    state = 2;
+    const before = repairs;
+    p.flush();
+    assert.equal(repairs, before, 'no delayed repair after cancellation');
+  }
+});
