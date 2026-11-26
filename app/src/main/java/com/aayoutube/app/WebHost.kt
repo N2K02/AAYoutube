@@ -1435,7 +1435,7 @@ object WebHost {
     fun reportAccountStatus(value: String, generation: Int = webGeneration) {
         if (generation != webGeneration) return
         val state = YouTubeAccountState.fromScript(value) ?: return
-        main.post { if (generation == webGeneration) youtubeAccount.value = state }
+        main.post { if (generation == webGeneration && !sessionClearing) youtubeAccount.value = state }
     }
 
     fun exitFullscreen() {

@@ -73,7 +73,7 @@ internal object PhoneMirror {
     private var syncDueAt = Long.MAX_VALUE
     private var missingMediaCount = 0
     private var recoveryAttempts = 0
-    private var startupCap = ""
+    @Volatile private var startupCap = ""
     private var lastReloadRejectedAt = Long.MIN_VALUE / 2
     private var signingOut = false
     private var suspendedAt = 0L
@@ -83,6 +83,7 @@ internal object PhoneMirror {
     private val transport = TransportGuard()
     private var syncStartedAt = 0L
     private var customView: View? = null
+    private var fullscreenOwner: Activity? = null
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private val crashGuard = RateGuard(PhoneMirrorPolicy.MAX_CRASHES, PhoneMirrorPolicy.CRASH_WINDOW_MS)
     private val reloadGuard = RateGuard(PhoneMirrorPolicy.MAX_RELOADS, PhoneMirrorPolicy.RELOAD_WINDOW_MS)
@@ -109,6 +110,7 @@ internal object PhoneMirror {
 
     fun attach(context: Context): WebView {
         val w = web ?: create(context)
+        if (fullscreenOwner != null && fullscreenOwner !== activityOf(context)) hideCustomView()
         wrapper?.setBaseContext(context)
         (w.parent as? ViewGroup)?.removeView(w)
         return w
@@ -117,7 +119,10 @@ internal object PhoneMirror {
     fun detach(container: ViewGroup) {
         val mine = web?.parent === container
         container.removeAllViews()
-        if (mine) wrapper?.setBaseContext(app)
+        if (mine) {
+            hideCustomView()
+            wrapper?.setBaseContext(app)
+        }
     }
 
     /** Shown (full, mini or PiP) or not. Hidden: no decoding, no sync, nothing restarts. */
@@ -569,12 +574,20 @@ internal object PhoneMirror {
     private fun current(w: WebView, t: String) =
         web === w && token == t && visible && !suspended.value && !signingOut && !adHeld && !WebHost.sessionClearing
 
+    fun exitFullscreen(owner: Activity): Boolean {
+        if (fullscreenOwner !== owner || customView == null) return false
+        hideCustomView()
+        return true
+    }
+
     private fun hideCustomView() {
         val v = customView ?: return
+        val callback = customCallback
         customView = null
-        (v.parent as? ViewGroup)?.removeView(v)
-        customCallback?.onCustomViewHidden()
         customCallback = null
+        fullscreenOwner = null
+        (v.parent as? ViewGroup)?.removeView(v)
+        callback?.onCustomViewHidden()
     }
 
     private fun activityOf(c: Context?): Activity? {
@@ -649,11 +662,14 @@ internal object PhoneMirror {
             },
             onIntent = { url ->
                 if (current(w, t) && WebHost.isSafePageUrl(url)) {
+                    // An explicit new link selection is distinct from a preceding Next/Previous command.
+                    transportAt = 0L
                     nav.onIntent(PhoneMirrorPolicy.navigationKey(url), SystemClock.elapsedRealtime())
                     onNavigatedTo(Uri.parse(url), alreadyShown = false)
                 }
             },
             dispatch = { task -> val epoch = generation; main.post { if (generation == epoch) task() } },
+            initialQuality = { startupCap },
         ), "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
@@ -661,10 +677,11 @@ internal object PhoneMirror {
         // YouTube's own fullscreen button works inside the phone player.
         w.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-                if (!current(w, t)) { callback.onCustomViewHidden(); return }
-                hideCustomView()
-                val host = activityOf(wrapper?.baseContext)?.window?.decorView as? ViewGroup
-                if (host == null) { callback.onCustomViewHidden(); return }
+                if (!current(w, t) || customView != null) { callback.onCustomViewHidden(); return }
+                val owner = activityOf(wrapper?.baseContext)
+                val host = owner?.window?.decorView as? ViewGroup
+                if (owner == null || host == null || owner.isFinishing || owner.isDestroyed) { callback.onCustomViewHidden(); return }
+                fullscreenOwner = owner
                 customView = view
                 customCallback = callback
                 host.addView(view, ViewGroup.LayoutParams(-1, -1))
@@ -675,6 +692,7 @@ internal object PhoneMirror {
                 val v = customView ?: return
                 customView = null
                 customCallback = null
+                fullscreenOwner = null
                 (v.parent as? ViewGroup)?.removeView(v)
             }
 
@@ -763,6 +781,7 @@ internal class MirrorBridge(
     private val onControl: (action: String, value: Long, videoId: String) -> Unit,
     private val onIntent: (url: String) -> Unit = {},
     private val dispatch: (() -> Unit) -> Unit = { it() },
+    private val initialQuality: () -> String = { "" },
 ) {
     private var currentDoc = 0
     private var lastSeq = 0L
@@ -770,6 +789,9 @@ internal class MirrorBridge(
     /** A new document asks first: while hidden or suspended it starts stopped and cannot autoplay. */
     @JavascriptInterface
     fun hidden(): Boolean = isHidden()
+
+    @JavascriptInterface
+    fun initialCap(): String = initialQuality()
 
     /** A new document registers itself; commands from any earlier document are rejected from now on. */
     @JavascriptInterface

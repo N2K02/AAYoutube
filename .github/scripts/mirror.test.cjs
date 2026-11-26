@@ -111,6 +111,7 @@ function page(options = {}) {
     AAYMirror: {
       control(action, value, token, doc, seq, vid) { bridgeCalls.push({ action, value, token, doc, seq, vid }); },
       hidden: () => !!options.hidden,
+      initialCap: () => options.initialCap || '',
       open: () => 7,
       intent(url, token, doc) { intents.push({ url, token, doc }); },
     },
@@ -545,4 +546,10 @@ test('native accepted navigation consumes the click before YouTube navigates aga
   p.fire('click', link, { preventDefault: () => { prevented = true; }, stopImmediatePropagation: () => { stopped = true; } });
   assert.equal(prevented, true);
   assert.equal(stopped, true);
+});
+
+test('startup quality cap is enforced before the first play', async () => {
+  const p = page({ initialCap: 'small' });
+  await p.video.play();
+  assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
 });

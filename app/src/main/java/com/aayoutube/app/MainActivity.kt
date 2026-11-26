@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        PhoneMirror.exitFullscreen(this)
         super.onDestroy()
         started -= this
         resumed -= this
@@ -280,6 +281,7 @@ class MainActivity : ComponentActivity() {
         // Car projection or audio retention: the phone PiP shows only a preview/artwork.
         // It must never switch the detached shared page into PiP layout.
         if (WebHost.phonePreviewOnly || previewPip.value) {
+            PhoneMirror.exitFullscreen(this)
             previewPip.value = isInPictureInPictureMode
             AppLog.add("VIEW", "Phone-only projected preview PiP=$isInPictureInPictureMode")
             return

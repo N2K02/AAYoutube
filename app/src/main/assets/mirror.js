@@ -34,6 +34,7 @@
     var origPlay = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
       silence(this);
+      if (isTop && window.__aayMirror && window.__aayMirror.setCap) window.__aayMirror.setCap(window.__aayMirror.cap);
       // Hidden: YouTube must not restart playback behind the user's back.
       if (S.stopped) return Promise.resolve();
       return origPlay.apply(this, arguments);
@@ -63,6 +64,7 @@
 
   var M = window.__aayMirror = S;
   M.videoOnly = false; M.lastId = ''; M.lastSeekAt = 0; M.quality = ''; M.qualityAt = 0; M.cap = '';
+  try { if (b0 && b0.initialCap) M.cap = b0.initialCap() || ''; } catch (e) {}
   M.doc = 0; M.seq = 0;
   // Every command names this document: a newer document invalidates the commands of older ones.
   try { var bb = window.AAYMirror; if (bb && bb.open) M.doc = bb.open(TOKEN) || 0; } catch (e) {}
@@ -392,6 +394,7 @@
     if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
     applyQuality();
   };
+  document.addEventListener('loadedmetadata', function () { applyQuality(); }, true);
   function clearLayoutTimers() {
     layoutTimers.forEach(clearTimeout);
     layoutTimers = [];

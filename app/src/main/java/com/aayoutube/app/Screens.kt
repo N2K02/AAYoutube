@@ -446,7 +446,7 @@ fun AppRoot(activity: MainActivity) {
     }
     val goBack: () -> Unit = {
         if ((projectedToCar || audioRetained) && !onCar && tab == Tab.Watch.ordinal) {
-            when (ProjectedPhoneNav.back(BrowseHost.phoneMode.value, BrowseHost.phone.canGoBack())) {
+            if (!PhoneMirror.exitFullscreen(activity)) when (ProjectedPhoneNav.back(BrowseHost.phoneMode.value, BrowseHost.phone.canGoBack())) {
                 ProjectedPhoneNav.Back.Minimize ->
                     if (snap.id.isNotBlank()) BrowseHost.phoneMini() else BrowseHost.phoneHome()
                 ProjectedPhoneNav.Back.BrowseHistory -> BrowseHost.phone.goBack()
