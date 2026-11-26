@@ -439,4 +439,20 @@ class PhoneMirrorPolicyTest {
         assertTrue(source.contains("url == sessionResetUrl && view.url == url"))
         assertTrue(source.contains("if (!sessionCookiePending)"))
     }
+
+    @Test fun queuedNavigationReportsRejectionWhenAvailabilityChanges() {
+        var available = true
+        val queued = mutableListOf<() -> Unit>()
+        val selected = mutableListOf<String>()
+        val outcomes = mutableListOf<Boolean>()
+        val bridge = MirrorBridge("secret", { !available }, { _, _, _ -> },
+            { selected += it }, canAcceptNavigation = { available },
+            onLinkResult = { _, _, ok -> outcomes += ok }, dispatchLink = { queued += it })
+        val doc = bridge.open("secret")
+        assertTrue(bridge.intentRequest("https://m.youtube.com/watch?v=AAAAAAAAAAA", "secret", doc, "1"))
+        available = false
+        queued.removeAt(0)()
+        assertTrue(selected.isEmpty())
+        assertEquals(listOf(false), outcomes)
+    }
 }

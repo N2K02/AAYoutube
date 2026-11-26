@@ -68,7 +68,7 @@
   M.doc = 0; M.seq = 0;
   // Every command names this document: a newer document invalidates the commands of older ones.
   try { var bb = window.AAYMirror; if (bb && bb.open) M.doc = bb.open(TOKEN) || 0; } catch (e) {}
-  var gestureAt = 0, auth = null, ourActAt = 0, lifted = [], layoutTimers = [], touchStart = null;
+  var auth = null, ourActAt = 0, lifted = [], layoutTimers = [], touchStart = null;
   var lastTouchAuthAt = 0, lastVideoTapAt = 0, expectUntil = { play: 0, pause: 0, seek: 0 };
   var PLAYER_SEL = '.html5-video-player,#player-container-id,#player,ytm-player,ytm-watch-player,' +
     'ytm-player-component,#player-control-container,video';
@@ -139,7 +139,6 @@
       var dx = e.changedTouches[0].clientX - touchStart.x, dy = e.changedTouches[0].clientY - touchStart.y;
       if (dx * dx + dy * dy > 24 * 24) return; // a scroll or swipe, not a control tap
     }
-    gestureAt = now;
     if (isTouch) lastTouchAuthAt = now;
     var kind = null;
     if (bar) kind = 'seek';
@@ -158,15 +157,28 @@
     if (closest(e.target, NEXT_SEL)) { auth = null; send('next', 0); return; }
     if (closest(e.target, PREV_SEL)) { auth = null; send('prev', 0); return; }
   }
-  // A clicked link (anywhere on the page) names what the user chose, so only that destination is accepted.
+  var linkSequence = 0, pendingLink = null;
+  M.navigationResult = function(doc, request, accepted) {
+    if (doc !== M.doc || !pendingLink || pendingLink.request !== request) return;
+    pendingLink = null;
+    if (!accepted && !M.stopped && typeof window.alert === 'function') window.alert('Selection changed before it could be opened. Please tap the link again.');
+  };
+  // A clicked link names the destination. The native side acknowledges queued ownership and execution.
   document.addEventListener('click', function (e) {
     if (!e.isTrusted) return;
     try {
       var a = anchorOf(e.target), b = bridge();
-      if (a && a.href && b && b.intent && !closest(e.target, NEXT_SEL) && !closest(e.target, PREV_SEL) &&
-          b.intent(String(a.href), TOKEN, M.doc)) {
-        if (e.preventDefault) e.preventDefault();
-        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      if (a && a.href && b && !closest(e.target, NEXT_SEL) && !closest(e.target, PREV_SEL)) {
+        var req = String(++linkSequence), accepted = false;
+        if (b.intentRequest) {
+          pendingLink = { request: req };
+          accepted = b.intentRequest(String(a.href), TOKEN, M.doc, req);
+          if (!accepted) pendingLink = null;
+        } else if (b.intent) accepted = b.intent(String(a.href), TOKEN, M.doc);
+        if (accepted) {
+          if (e.preventDefault) e.preventDefault();
+          if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        }
       }
     } catch (err) {}
   }, true);
@@ -242,7 +254,7 @@
       if (v.paused) { expectOwn('play'); try { var adPlay = v.play(); if (adPlay && adPlay.catch) adPlay.catch(function () {}); } catch (e) {} }
       return 'ad';
     }
-    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; gestureAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
+    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; if (v.playbackRate !== 1) v.playbackRate = 1; }
     if (M.stopped) { M.stopped = false; broadcast(); }
     // Pause and primary buffering outrank pending phone gestures. Only protect a pending seek.
     if ((!playing || busy) && !v.paused) { expectOwn('pause'); v.pause(); auth = null; }

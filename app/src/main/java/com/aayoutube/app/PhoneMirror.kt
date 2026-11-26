@@ -13,9 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
@@ -57,9 +55,6 @@ internal object PhoneMirror {
     private var visible = false
     private var videoOnly = false
     private var layoutSentTo: WebView? = null
-    private var tapDownAt = 0L
-    private var tapDownX = 0f
-    private var tapDownY = 0f
     private var lastLoadAt = 0L
     private var lastPokeAt = 0L
     private var lastStatsAt = 0L
@@ -316,7 +311,6 @@ internal object PhoneMirror {
         transportAt = 0L
         lastLoadAt = 0L
         lastPokeAt = 0L
-        tapDownAt = 0L
         missingMediaCount = 0
         clockFailures = 0
         recoveryAttempts = 0
@@ -655,23 +649,6 @@ internal object PhoneMirror {
         w.setBackgroundColor(Color.BLACK)
         w.isFocusable = true
         w.isFocusableInTouchMode = true
-        val slop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
-        w.setOnTouchListener { v, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    tapDownAt = SystemClock.elapsedRealtime()
-                    tapDownX = e.x
-                    tapDownY = e.y
-                    if (!v.hasFocus()) v.requestFocus()
-                }
-                // A tap (not a scroll or drag) is what may select a video.
-                MotionEvent.ACTION_UP -> {
-                    val now = SystemClock.elapsedRealtime()
-                    if (PhoneMirrorPolicy.isTap(e.x - tapDownX, e.y - tapDownY, now - tapDownAt, slop)) nav.onTap(now)
-                }
-            }
-            false
-        }
         val s = w.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
@@ -709,6 +686,11 @@ internal object PhoneMirror {
             dispatch = { task -> val epoch = generation; main.post { if (generation == epoch) task() } },
             initialQuality = { startupCap },
             canAcceptNavigation = { !hiddenFlag && !WebHost.sessionClearing },
+            dispatchLink = { task -> main.post { task() } },
+            onLinkResult = { doc, request, accepted ->
+                if (web === w && token == t) w.evaluateJavascript(
+                    "window.__aayMirror&&window.__aayMirror.navigationResult($doc,${JSONObject.quote(request)},$accepted)", null)
+            },
         ), "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
@@ -825,6 +807,8 @@ internal class MirrorBridge(
     private val dispatch: (() -> Unit) -> Unit = { it() },
     private val initialQuality: () -> String = { "" },
     private val canAcceptNavigation: () -> Boolean = { true },
+    private val onLinkResult: (doc: Int, request: String, accepted: Boolean) -> Unit = { _, _, _ -> },
+    private val dispatchLink: (() -> Unit) -> Unit = dispatch,
 ) {
     private var currentDoc = 0
     private var lastSeq = 0L
@@ -864,7 +848,27 @@ internal class MirrorBridge(
     fun intent(url: String?, providedToken: String?, doc: Int): Boolean {
         if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
         if (!canAcceptNavigation() || !PhoneMirrorPolicy.supportedLink(url)) return false
-        dispatch { synchronized(this) { if (doc == currentDoc) onIntent(url) } }
+        return queueIntent(url, doc, "")
+    }
+
+    @JavascriptInterface
+    @Synchronized
+    fun intentRequest(url: String?, providedToken: String?, doc: Int, request: String?): Boolean {
+        if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
+        if (request.isNullOrBlank() || request.length > 64 || !canAcceptNavigation() || !PhoneMirrorPolicy.supportedLink(url)) return false
+        return queueIntent(url, doc, request)
+    }
+
+    private fun queueIntent(url: String, doc: Int, request: String): Boolean {
+        dispatchLink {
+            val accepted = synchronized(this) {
+                if (doc != currentDoc || !canAcceptNavigation()) false else {
+                    onIntent(url)
+                    true
+                }
+            }
+            if (request.isNotEmpty()) onLinkResult(doc, request, accepted)
+        }
         return true
     }
 }
@@ -1131,7 +1135,7 @@ internal object PhoneMirrorPolicy {
     fun navigationKey(url: String): String? = runCatching {
         val u = java.net.URI(url)
         val host = u.host?.lowercase() ?: return@runCatching null
-        if (u.scheme != "https" || !allowFrameHost(host)) return@runCatching null
+        if (u.scheme != "https" || u.rawUserInfo != null || u.port != -1 || !allowFrameHost(host)) return@runCatching null
         val query = u.rawQuery.orEmpty().split('&').filter { it.isNotBlank() }.sorted().joinToString("&")
         val path = u.rawPath.orEmpty().ifBlank { "/" }
         "$host$path?$query"
@@ -1143,8 +1147,8 @@ internal object PhoneMirrorPolicy {
         if (navigationKey(url) == null) return@runCatching false
         val u = java.net.URI(url)
         val p = u.path.orEmpty().ifBlank { "/" }
-        p == "/" || p == "/watch" || p == "/results" || p == "/playlist" ||
-            p.startsWith("/live/") || p.startsWith("/shorts/") || p.startsWith("/@") ||
+        if (classify(p) == Page.WATCH) return@runCatching videoIdFromUrl(url) != null
+        p == "/" || p == "/results" || p == "/playlist" || p.startsWith("/@") ||
             p.startsWith("/channel/") || p.startsWith("/c/") || p.startsWith("/user/") || p == "/feed/subscriptions"
     }.getOrDefault(false)
 
