@@ -224,6 +224,8 @@ internal object NativePlayback {
     private object WebEngine : PlaybackEngine {
         override val id = EngineId.WEB
         override fun silence() = WebHost.nativeAudioOwner(true, -1L, false)
+        override fun silenceConfirmed(videoId: String, confirmed: (Boolean) -> Unit) =
+            WebHost.confirmNativeSilence(videoId, confirmed)
         override fun start(videoId: String, positionMs: Long, resume: Boolean) =
             WebHost.nativeAudioOwner(false, positionMs, resume)
         override fun pause() = WebHost.cmd("pause")

@@ -2590,3 +2590,12 @@ test('mobile centre icon tracks actual media even when YouTube reports playing',
   p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() {} });
   assert.equal(p.video.paused, false); assert.ok(p.classNames.has('aay-center-playing'));
 });
+
+
+test('native silence confirms matching paused element and rejects stale video', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  assert.equal(p.window.__aay.confirmNativeSilence('wrong'), false);
+  assert.equal(p.video.paused, false);
+  assert.equal(p.window.__aay.confirmNativeSilence('86p7SP34qSc'), true);
+  assert.equal(p.video.paused, true); assert.equal(p.window.__aay.nativeOwned(), true);
+});

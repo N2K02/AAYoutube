@@ -2301,7 +2301,7 @@
     var v = getVideo();
     if (on) {
       nativeAudio.owned = true;
-      nativeAudio.id = urlId();
+      nativeAudio.id = qualityVideoId();
       AUTO = false; PAUSED = true; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial;
       if (v) enforceExplicitPause(v);
       console.log('[aay] native audio owns playback; web paused');
@@ -2315,6 +2315,13 @@
     qualityApply.key = '';
     applyPreferredQuality();
     schedReport(0);
+  };
+  A.confirmNativeSilence = function (id) {
+    var v = getVideo();
+    if (BROWSE || !v || v.ended || isAd() || !id || qualityVideoId() !== id) return false;
+    A.nativeAudio(true, -1, false);
+    updateCenterTransport(v);
+    return nativeAudio.owned && v.paused && qualityVideoId() === id;
   };
   A.nativeOwned = function () { return nativeAudio.owned; };
 

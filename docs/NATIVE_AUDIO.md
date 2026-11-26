@@ -77,3 +77,7 @@ The resolver must use HTTPS without redirects; audio URLs must be HTTPS. No cust
 ## First-party WebView resolver feasibility probe
 
 With Native audio enabled, existing playback diagnostics report aggregate audio format counts from matching current-player metadata: `probe=metadata-only audioFormats=… direct=… wrapped=… aac=… opus=…`. -1 means unavailable or not attributable to the active video. The probe never exports stream URLs, signatures, credentials or raw responses and never starts native playback. A positive direct count establishes only that a URL is present, not that it is transferable, licensed, valid for the native client or offload-capable. No signature or challenge handling is implemented.
+
+## Confirmed handoff
+
+Native playback waits for a matching WebView media element to confirm it is paused. Late acknowledgements cannot start native playback after cancellation. Actual duplicate-audio behavior still needs device verification; a matching authorized audio stream is required.

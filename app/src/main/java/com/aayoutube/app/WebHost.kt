@@ -1038,7 +1038,7 @@ object WebHost {
         if (sessionClearing && name != "pause") return
         // Experimental native audio owns playback: play/pause go to it; next/prev hand the
         // queue back to the page (the coordinator silences native first, never two engines).
-        if (NativePlayback.nativeOwns && NativePlayback.command(name)) {
+        if (NativePlayback.command(name)) {
             if (name in setOf("play", "pause")) PhoneMirror.onExplicitTransport()
             return
         }
@@ -1102,7 +1102,7 @@ object WebHost {
         val s = snapshot.value
         if (s.id.isBlank() || s.live || s.durMs <= 0L) return
         val target = positionMs.coerceIn(0L, s.durMs)
-        if (NativePlayback.nativeOwns && NativePlayback.seek(target)) {
+        if (NativePlayback.seek(target)) {
             snapshot.value = s.copy(posMs = target)
             return
         }
@@ -2017,6 +2017,15 @@ object WebHost {
     internal fun nativeAudioOwner(on: Boolean, positionMs: Long, resume: Boolean) {
         val sec = if (positionMs < 0L) -1.0 else positionMs / 1000.0
         js("window.__aay&&window.__aay.nativeAudio&&window.__aay.nativeAudio($on,$sec,$resume)")
+    }
+
+    internal fun confirmNativeSilence(videoId: String, confirmed: (Boolean) -> Unit) {
+        val w = web ?: run { confirmed(false); return }
+        val gen = webGeneration
+        val id = JSONObject.quote(videoId)
+        w.evaluateJavascript("!!(window.__aay&&window.__aay.confirmNativeSilence&&window.__aay.confirmNativeSilence($id))") { value ->
+            confirmed(web === w && webGeneration == gen && !sessionClearing && value == "true")
+        }
     }
 
     internal fun carProjectionActive(): Boolean = carShown || carAudioRetained.value

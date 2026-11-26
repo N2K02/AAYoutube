@@ -312,6 +312,31 @@ class NativeAudioEngineTest {
         assertTrue(web.audible)
     }
 
+    @Test fun nativeWaitsForActualWebPauseAndIgnoresLateAcknowledgements() {
+        val ev = Events()
+        var ack: ((Boolean) -> Unit)? = null
+        val web = object : FakeEngine(EngineId.WEB, ev) {
+            override fun silenceConfirmed(videoId: String, confirmed: (Boolean) -> Unit) { ack = confirmed }
+        }.apply { audible = true }
+        val native = FakeEngine(EngineId.NATIVE, ev)
+        val c = PlaybackEngineCoordinator(web, native, { now })
+        c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+        c.onNativeReady(HandoffState.from(playing, now))
+        assertTrue(web.audible); assertFalse(native.audible)
+        assertEquals(EngineId.WEB, c.owner)
+        web.silence(); ack!!(true)
+        assertEquals(EngineId.NATIVE, c.owner)
+        assertNeverTwoAudible(web, native)
+        c.returnToWeb("test")
+        c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)
+        c.onNativeReady(HandoffState.from(playing, now))
+        val late = ack!!
+        c.command("pause")
+        late(true)
+        assertFalse(native.audible)
+        assertEquals(EngineId.WEB, c.owner)
+    }
+
     @Test fun explicitPauseDuringPreparationIsKeptByNative() {
         val (c, web, native) = setup()
         c.prepareNative(HandoffState.from(playing, now), aac(), offloadOn)

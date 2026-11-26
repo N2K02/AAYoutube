@@ -7,6 +7,8 @@ internal interface PlaybackEngine {
     val id: EngineId
     /** Stop audible output and media decoding/downloading; metadata may stay. */
     fun silence()
+    /** Confirm actual source silence before starting the target. */
+    fun silenceConfirmed(videoId: String, confirmed: (Boolean) -> Unit) { silence(); confirmed(true) }
     /** Start (or continue) at [positionMs] (-1 = keep position); play only when [resume]. */
     fun start(videoId: String, positionMs: Long, resume: Boolean)
     fun pause()
@@ -51,6 +53,8 @@ internal class PlaybackEngineCoordinator(
     var nativeVideoId = ""
         private set
     private var pending: HandoffState? = null
+    private var silencePending = false
+    private var handoffSerial = 0L
     private var preparingSince = 0L
     var lastTransitionMs = -1L
         private set
@@ -63,6 +67,8 @@ internal class PlaybackEngineCoordinator(
     fun prepareNative(state: HandoffState, stream: AudioStream, offload: OffloadDecision): Boolean {
         if (phase != Phase.WEB) return false
         phase = Phase.PREPARING
+        handoffSerial++
+        silencePending = false
         pending = state
         nativeVideoId = state.videoId
         preparingSince = clock()
@@ -77,31 +83,45 @@ internal class PlaybackEngineCoordinator(
      * silence web first, then start native at the compensated position with the user's intent.
      */
     fun onNativeReady(current: HandoffState?) {
-        if (phase != Phase.PREPARING) return
+        if (phase != Phase.PREPARING || silencePending) return
         // A stale readiness callback must not silence a newly selected web video.
         val state = current ?: run { abortPreparation("missing-web-state"); return }
         if (state.videoId != nativeVideoId) { abortPreparation("web-video-changed"); return }
         val now = clock()
         if (now - preparingSince > PlaybackHandoffPolicy.PREPARE_TIMEOUT_MS) { abortPreparation("timeout"); return }
-        web.silence()
-        audibleSet.remove(EngineId.WEB)
-        val resume = PlaybackHandoffPolicy.shouldResume(state)
+        silencePending = true
+        pending = state
+        val serial = handoffSerial
         val pos = PlaybackHandoffPolicy.positionAt(state, now)
-        native.start(state.videoId, pos, resume)
-        audibleSet.add(EngineId.NATIVE)
-        userPaused = state.userPaused || !resume
-        phase = Phase.NATIVE
-        pending = null
-        lastTransitionMs = now - handoffStartedAt
-        log("handoff=native video=${state.videoId} posMs=$pos resume=$resume latencyMs=$lastTransitionMs")
+        web.silenceConfirmed(state.videoId) { confirmed ->
+            if (phase != Phase.PREPARING || serial != handoffSerial || !silencePending) return@silenceConfirmed
+            if (!confirmed || clock() - preparingSince > PlaybackHandoffPolicy.PREPARE_TIMEOUT_MS) {
+                abortPreparation("web-silence-unconfirmed"); return@silenceConfirmed
+            }
+            silencePending = false
+            audibleSet.remove(EngineId.WEB)
+            val resume = PlaybackHandoffPolicy.shouldResume(state)
+            userPaused = state.userPaused || !resume
+            phase = Phase.NATIVE
+            pending = null
+            audibleSet.add(EngineId.NATIVE)
+            native.start(state.videoId, pos, resume)
+            lastTransitionMs = clock() - handoffStartedAt
+            log("handoff=native video=${state.videoId} posMs=$pos resume=$resume latencyMs=$lastTransitionMs webSilence=confirmed")
+        }
     }
 
     /** Preparation failed or took too long: nothing audible changed. */
     fun abortPreparation(reason: String) {
         if (phase != Phase.PREPARING) return
+        val restore = if (silencePending) pending else null
+        silencePending = false
+        handoffSerial++
         native.release()
         phase = Phase.WEB
         pending = null
+        if (restore != null) web.start(restore.videoId, -1L,
+            reason != "web-video-changed" && reason != "transport:pause" && PlaybackHandoffPolicy.shouldResume(restore))
         log("handoff=aborted reason=$reason video=$nativeVideoId engine=web")
         nativeVideoId = ""
     }
@@ -139,6 +159,7 @@ internal class PlaybackEngineCoordinator(
 
     /** Media-session/car/headset transports while native owns playback. False = not handled here. */
     fun command(name: String, positionMs: Long = 0L): Boolean {
+        if (phase == Phase.PREPARING && silencePending) { abortPreparation("transport:$name"); return false }
         if (phase != Phase.NATIVE) return false
         when (name) {
             "play" -> { userPaused = false; native.play() }
@@ -189,6 +210,8 @@ internal class PlaybackEngineCoordinator(
             log("handoff=released phase=$phase video=$nativeVideoId")
         }
         phase = Phase.WEB
+        handoffSerial++
+        silencePending = false
         pending = null
         nativeVideoId = ""
         userPaused = false
