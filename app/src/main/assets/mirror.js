@@ -101,14 +101,16 @@
     } else if (!v.paused) {
       v.pause();
     }
+    // Hysteresis: only touch the media pipeline when really out of step.
+    var want = rate;
     if (Math.abs(drift) > 1.5 && isFinite(v.duration) && v.readyState > 0) {
       v.currentTime = posMs / 1000;
-      v.playbackRate = rate;
-    } else if (playing && Math.abs(drift) > 0.25) {
-      v.playbackRate = rate * (drift > 0 ? 0.95 : 1.05);
-    } else if (v.playbackRate !== rate) {
-      v.playbackRate = rate;
+    } else if (playing && Math.abs(drift) > 0.5) {
+      want = rate * (drift > 0 ? 0.95 : 1.05);
+    } else if (playing && v.playbackRate !== rate && Math.abs(drift) > 0.15) {
+      want = v.playbackRate; // keep nudging until close, then settle
     }
+    if (v.playbackRate !== want) v.playbackRate = want;
     return String(Math.round(drift * 1000));
   };
 
@@ -148,7 +150,8 @@
     '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
     '[class*="tap-to-unmute" i],[class*="unmute-overlay" i]{display:none!important}' +
     'ytm-mobile-topbar-renderer a[href*="intent://"],ytm-mobile-topbar-renderer a[aria-label="Open App"],' +
-    'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}';
+    'ytm-mobile-topbar-renderer button[aria-label="Open App"]{display:none!important}' +
+    'ytm-inline-playback-renderer,.inline-player-container,#inline-preview-player{display:none!important}';
   function installCss() {
     if (document.getElementById('aaym-css')) return;
     var root = document.head || document.documentElement;

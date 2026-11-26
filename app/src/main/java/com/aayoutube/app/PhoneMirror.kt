@@ -45,6 +45,7 @@ internal object PhoneMirror {
     private var videoOnly = false
     private var lastTouchAt = 0L
     private var lastLoadAt = 0L
+    private var lastDriftMs: Long? = null
     @Volatile private var pageHost: String? = "youtube.com"
     val revision = MutableStateFlow(0)
 
@@ -102,6 +103,7 @@ internal object PhoneMirror {
         w?.destroy()
         wrapper = null
         loadedId = ""
+        lastDriftMs = null
         visible = false
         revision.value++
     }
@@ -133,9 +135,11 @@ internal object PhoneMirror {
             WebHost.mediaClock { posMs, playing, rate ->
                 if (web !== w || !visible) return@mediaClock
                 w.evaluateJavascript(
-                    "window.__aayMirror&&window.__aayMirror.sync($posMs,$playing,$rate)", null)
+                    "window.__aayMirror&&window.__aayMirror.sync($posMs,$playing,$rate)") { result ->
+                    lastDriftMs = result?.trim('"')?.toLongOrNull()
+                }
             }
-            main.postDelayed(this, PhoneMirrorPolicy.SYNC_MS)
+            main.postDelayed(this, PhoneMirrorPolicy.nextSyncMs(lastDriftMs))
         }
     }
 
@@ -258,6 +262,8 @@ internal class MirrorBridge(private val token: String, private val onControl: (S
 /** Pure decisions for the phone mirror (unit-tested). */
 internal object PhoneMirrorPolicy {
     const val SYNC_MS = 1_500L
+    const val STABLE_SYNC_MS = 4_000L
+    const val IN_STEP_MS = 300L
     const val IDLE_SYNC_MS = 3_000L
     const val MIN_RELOAD_MS = 1_500L
     const val USER_SELECTION_MS = 3_000L
@@ -274,6 +280,10 @@ internal object PhoneMirrorPolicy {
             (if (playlist != null) "&list=$playlist" else "") +
             (if (posMs >= 1_000L) "&t=${posMs / 1000}s" else "")
     }
+
+    /** In step: check rarely (less renderer work); drifting or unknown: check soon. */
+    fun nextSyncMs(driftMs: Long?): Long =
+        if (driftMs != null && kotlin.math.abs(driftMs) <= IN_STEP_MS) STABLE_SYNC_MS else SYNC_MS
 
     fun userSelection(lastTouchAt: Long, nowMs: Long): Boolean =
         lastTouchAt != 0L && nowMs - lastTouchAt in 0..USER_SELECTION_MS

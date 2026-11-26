@@ -518,21 +518,7 @@ fun AppRoot(activity: MainActivity) {
                             animationSpec = tween(160),
                             modifier = Modifier.weight(1f),
                             label = "Settings navigation",
-                        ) { page ->
-                            when (page) {
-                                Tab.Watch -> Unit
-                                Tab.Features -> FeaturesPage()
-                                Tab.ExperimentalVideo -> ExperimentalVideoPage()
-                                Tab.InstallationHelp -> AndroidAutoInstallationPage()
-                                Tab.SleepTimer -> SleepTimerPage()
-                                Tab.Lyrics -> LyricsSettingsPage()
-                                Tab.Update -> UpdatePage()
-                                Tab.Info -> InfoPage()
-                                Tab.Settings -> AAYoutubeSettingsMenu(
-                                    onSelect = { tab = it.ordinal },
-                                )
-                            }
-                        }
+                        ) { page -> SettingsPageContent(page) { tab = it.ordinal } }
                     }
                 }
             }
@@ -970,6 +956,60 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
 }
 
 // ---------------------------------------------------------------------------- settings navigation
+
+/** One Settings page, shared by the phone overlay and the Android Auto panel. */
+@Composable
+private fun SettingsPageContent(page: Tab, onSelect: (Tab) -> Unit) {
+    when (page) {
+        Tab.Watch -> Unit
+        Tab.Features -> FeaturesPage()
+        Tab.ExperimentalVideo -> ExperimentalVideoPage()
+        Tab.InstallationHelp -> AndroidAutoInstallationPage()
+        Tab.SleepTimer -> SleepTimerPage()
+        Tab.Lyrics -> LyricsSettingsPage()
+        Tab.Update -> UpdatePage()
+        Tab.Info -> InfoPage()
+        Tab.Settings -> AAYoutubeSettingsMenu(onSelect = onSelect)
+    }
+}
+
+/** Settings on the Android Auto screen; Back walks subpage -> menu -> closed. */
+internal class SettingsPanelState {
+    var open by mutableStateOf(false)
+        private set
+    internal var page by mutableIntStateOf(Tab.Settings.ordinal)
+    fun openMenu() { page = Tab.Settings.ordinal; open = true }
+    fun close() { open = false; page = Tab.Settings.ordinal }
+    /** True when Back was consumed by the panel. */
+    fun back(): Boolean {
+        if (!open) return false
+        if (page != Tab.Settings.ordinal) page = Tab.Settings.ordinal else open = false
+        return true
+    }
+}
+
+/** The phone's Settings menu and pages, on the car screen (same layout, no second header). */
+@Composable
+internal fun CarSettingsPanel(state: SettingsPanelState, modifier: Modifier = Modifier) {
+    val page = Tab.entries.getOrElse(state.page) { Tab.Settings }
+    Surface(modifier.fillMaxSize().pointerInput(Unit) { }, color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { state.back() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = if (page == Tab.Settings) "Close settings" else "Back to settings")
+                }
+                Box(Modifier.weight(1f)) {
+                    AAYoutubePageHeader(page, lyricsAvailable = false, lyricsShown = false, onLyrics = {})
+                }
+            }
+            Crossfade(targetState = page, animationSpec = tween(160), modifier = Modifier.weight(1f),
+                label = "Car settings navigation") { current ->
+                SettingsPageContent(current) { state.page = it.ordinal }
+            }
+        }
+    }
+}
 
 /** Secondary pages live under Settings, like mRadio; the WebView keeps running underneath. */
 @Composable

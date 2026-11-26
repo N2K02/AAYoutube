@@ -289,6 +289,7 @@
   // YouTube's own code (or the browser) may call pause() when the screen changes. While the app is
   // in the background or in a small window, such a pause is ignored; real ones (A.cmd 'pause') go through.
   var allowPause = false, ignored = 0, userPauseEligibleUntil = 0;
+  var pauseStorm = { since: 0, count: 0, logged: false };
   var userResumeEligibleUntil = 0;
   // Layout transitions (YouTube fullscreen, landscape fill, mini/expand) re-parent or
   // resize the WebView; YouTube pauses during them and the ~1 s gap is audible.
@@ -429,6 +430,14 @@
         if (ignored <= 2 || ignored % 250 === 0) {
           console.log('[aay] pause() ignored x' + ignored +
             ' (bg=' + A.isBg + ' pip=' + A.inPip + ' hold=' + A.hold + ')');
+        }
+        // A sustained storm (YouTube fighting the hold) is worth one precise line per 10 s.
+        var nowMs = Date.now();
+        if (nowMs - pauseStorm.since > 10000) { pauseStorm.since = nowMs; pauseStorm.count = 0; pauseStorm.logged = false; }
+        if (++pauseStorm.count >= 50 && !pauseStorm.logged) {
+          pauseStorm.logged = true;
+          console.log('[aay] pause storm: ' + pauseStorm.count + ' ignored in <10s (mini=' + !!A.isMini +
+            ' car=' + !!A.isCar + ' audioOnly=' + !!A.audioOnly + ' transit=' + inTransit() + ')');
         }
         return;
       }
@@ -583,6 +592,15 @@
 
   /* ---------- 1f. Browse page: no video plays here (feed previews would fight the mini player) ---------- */
   if (BROWSE) {
+    // Feed previews cannot play here; hiding them stops their retry/spinner animation,
+    // which otherwise redraws the whole browse page continuously (CPU/GPU on car and phone).
+    try {
+      var noPreview = document.createElement('style');
+      noPreview.textContent = 'ytm-inline-playback-renderer,.inline-player-container,' +
+        '#inline-preview-player,ytm-inline-player-controls,[class*="inline-playback"] video' +
+        '{display:none!important}';
+      (document.head || document.documentElement).appendChild(noPreview);
+    } catch (e) {}
     try {
       HTMLMediaElement.prototype.play = function () {
         try { this.pause(); } catch (e) {}

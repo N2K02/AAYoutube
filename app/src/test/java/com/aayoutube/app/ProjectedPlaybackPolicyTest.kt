@@ -269,4 +269,31 @@ class ProjectedPlaybackPolicyTest {
         assertTrue(control.contains("\"mini\" -> if (BrowseHost.phoneMode.value == WebHost.PlayerMode.FULL) BrowseHost.phoneMini()"))
         assertFalse("never shrinks the car player", control.contains("WebHost.enterMini()"))
     }
+
+    @Test fun mirrorChecksRarelyWhenInStep() {
+        assertEquals(PhoneMirrorPolicy.STABLE_SYNC_MS, PhoneMirrorPolicy.nextSyncMs(120))
+        assertEquals(PhoneMirrorPolicy.STABLE_SYNC_MS, PhoneMirrorPolicy.nextSyncMs(-300))
+        assertEquals(PhoneMirrorPolicy.SYNC_MS, PhoneMirrorPolicy.nextSyncMs(900))
+        assertEquals("unknown state (no video, ad, user acting)", PhoneMirrorPolicy.SYNC_MS, PhoneMirrorPolicy.nextSyncMs(null))
+    }
+
+    @Test fun carRailHasSettingsSizedForLandscape() {
+        val car = listOf(java.io.File("app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/LegacyProjectionActivity.kt")).first { it.isFile }.readText()
+        val rail = car.substringAfter("FloatingVideoBar(").substringBefore("private fun carVideoToMini(")
+        assertTrue(rail.contains("BarIcon(Icons.Filled.Settings, \"Settings\", size,"))
+        assertTrue(rail.contains("availableWidth = if (carLandscape) maxWidth else null"))
+        assertTrue(rail.contains("extraCount = if (fitShown) 3 else 2"))
+        assertTrue(car.contains("if (carSettings.back()) return true"))
+    }
+
+    @Test fun carSettingsBackWalksSubpageThenMenuThenCloses() {
+        val st = SettingsPanelState()
+        assertFalse(st.back())
+        st.openMenu()
+        assertTrue(st.open)
+        st.page = st.page + 1 // any subpage
+        assertTrue(st.back()); assertTrue("back to the menu", st.open)
+        assertTrue(st.back()); assertFalse("closed", st.open)
+    }
 }

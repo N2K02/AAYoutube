@@ -25,6 +25,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -38,6 +39,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import dev.n2k02.updater.hasPendingUpdate
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -105,6 +107,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     /** One retry budget per CarActivity instance, never reset by onResume/rebind. */
     private var experimentalRecoveryStarted = false
     private var carInput: LegacyCarInput? = null
+    /** Settings opened from the car rail (same menu and pages as the phone). */
+    private val carSettings = SettingsPanelState()
     private var lastWidth = 0
     private var lastHeight = 0
     private val refit = Runnable { WebHost.refitCarViewport() }
@@ -668,8 +672,9 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     )
                 }
             }
+            if (carSettings.open) CarSettingsPanel(carSettings, Modifier.zIndex(30f))
             AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && !carSettings.open,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.align(railAlign)
@@ -678,6 +683,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                         vertical = if (carLandscape) 12.dp else 0.dp,
                     ).then(railDrag).zIndex(20f),
             ) {
+                val fitShown = VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing)
+                val updateStatus by LiveUpdater.controller.status.collectAsState()
                 FloatingVideoBar(
                     playing = playing.playing,
                     playbackId = playing.id,
@@ -694,16 +701,25 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     },
                     onPrevious = { WebHost.cmd("prev"); controlsVersion++ },
                     onNext = { WebHost.cmd("next"); controlsVersion++ },
-                ) {
-                    if (VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing))
-                        BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), BarSize.Car,
+                    // Landscape pill: size the icons so every button, Settings included, fits.
+                    availableWidth = if (carLandscape) maxWidth else null,
+                    extraCount = if (fitShown) 3 else 2,
+                ) { size ->
+                    if (fitShown)
+                        BarIcon(Icons.Filled.AspectRatio, VideoFitPolicy.label(flags.videoFit), size,
                             onClick = {
                                 Features.update { it.copy(videoFit = VideoFitPolicy.next(it.videoFit)) }
                                 controlsVersion++
                             })
+                    Box(Modifier.size(size.button), contentAlignment = Alignment.Center) {
+                        BarIcon(Icons.Filled.Settings, "Settings", size,
+                            onClick = { carSettings.openMenu(); controlsVersion++ })
+                        if (updateStatus.hasPendingUpdate())
+                            androidx.compose.material3.Badge(Modifier.align(Alignment.TopEnd).padding(2.dp))
+                    }
                     BarIcon(
                         Icons.Rounded.PowerSettingsNew,
-                        "Quit AAYoutube", BarSize.Car,
+                        "Quit AAYoutube", size,
                         onClick = { quitFromCar() },
                     )
                 }
@@ -756,6 +772,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
     }
 
     private fun carBackToMini(): Boolean {
+        // Settings open on the car: Back walks its pages first.
+        if (carSettings.back()) return true
         if (!WebHost.isActiveCarHost(carToken)) return false
         if (WebHost.mode.value == WebHost.PlayerMode.MINI) {
             if (!BrowseHost.goBack()) AppLog.add("CAR", "Back: already on browse Home")
