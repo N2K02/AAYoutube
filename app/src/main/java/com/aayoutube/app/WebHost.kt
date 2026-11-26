@@ -1315,8 +1315,9 @@ object WebHost {
             val avg = if (recentWebCpu.isEmpty()) -1 else recentWebCpu.sum() / recentWebCpu.size
             val peak = recentWebCpu.maxOrNull() ?: -1
             val droppedPct = d.optInt("droppedPct", -1).coerceIn(-1, 100)
-            // Audio-only windows decode no frames: -1 never counts as dropping.
-            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("nativeAudioOwns", false)) -1 else droppedPct)
+            // Raw browser counters remain diagnostic; only a validated visible window drives throttling.
+            val dropPolicyPct = d.optInt("dropPolicyPct", -1).coerceIn(-1, 100)
+            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("audioOnly", false) || d.optBoolean("nativeAudioOwns", false)) -1 else dropPolicyPct)
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
             AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak previewPressure=${previewPressure.active(now)} " +
@@ -1324,7 +1325,7 @@ object WebHost {
                 "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
                 "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
-                "frames=${metric("frames")} droppedPct=$droppedPct " +
+                "frames=${metric("frames")} droppedPct=$droppedPct dropPolicyPct=$dropPolicyPct " +
                 "decodedFrames=${metric("decoded")} presentedEstFrames=${metric("presentedEst")} " +
                 "displayedFrames=${d.optInt("displayed", -1).coerceIn(-1, 1_000_000)} " +
                 "bufferEvents=${metric("bufferEvents", 1_000)} bufferMs=${metric("bufferMs", 600_000)} " +

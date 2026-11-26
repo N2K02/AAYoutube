@@ -105,3 +105,6 @@ Native handoff is limited to unbuffered 1× playback until speed synchronization
 
 ### Server rejection handling
 A device test reached native SABR initialization but returned HTTP 403 before audio decoding. HTTP 401/403/410 now fail without Media3 retries, record a status-only reason, keep the WebView engine, and suppress repeated attempts for that video for up to 30 minutes or until the provider is changed/session released. No authorization bypass is attempted. Successful native playback still requires a server-accepted session.
+
+### Playback performance review
+Raw frame-drop estimates remain logged as `droppedPct`; `dropPolicyPct` is the corroborated policy signal. Compositor samples are matched to their preceding windows, and hidden/audio-only windows never lower video quality because of intentional rendering skips. Background quality reloads defer other-media judgement for a bounded period while preserving explicit pauses and real focus holds.

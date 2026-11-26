@@ -2671,3 +2671,30 @@ test('background quality source reload defers other-media judgement, but a real 
   p.advance(15000); p.window.__aay.checkBackgroundPlayback(); p.flush();
   assert.equal(p.video.paused, true);
 });
+
+
+test('contradictory frame estimates and hidden samples never drive drop throttling', () => {
+  const p = playerPage({quality:true});
+  let frames = 0, dropped = 0, displayed = 0;
+  p.video.getVideoPlaybackQuality = () => ({totalVideoFrames:frames,droppedVideoFrames:dropped});
+  p.video.requestVideoFrameCallback = cb => { cb(0,{presentedFrames:displayed}); return 1; };
+  p.flush();
+  function windowSample(d, shown) {
+    frames += 1800; dropped += d; displayed += shown; p.video.currentTime += 30;
+    p.advance(30000); p.runIntervals();
+    return p.perfReports.at(-1);
+  }
+  windowSample(0,1800); // baseline
+  windowSample(800,1800); // raw 44%, compositor contradicts
+  const conflict = windowSample(800,1800);
+  assert.equal(conflict.droppedPct,44);
+  assert.equal(conflict.dropPolicyPct,-1);
+  windowSample(900,900);
+  assert.equal(windowSample(900,900).dropPolicyPct,50);
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  assert.equal(windowSample(900,900).dropPolicyPct,-1);
+  const fresh = p.replaceVideo();
+  fresh.getVideoPlaybackQuality = () => ({totalVideoFrames:99999,droppedVideoFrames:9999});
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).dropPolicyPct,-1);
+});

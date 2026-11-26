@@ -226,7 +226,8 @@
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
     lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0,
     lastClock: -1, lastClockSrc: null, rvfcTotal: -1, rvfcPrev: -1,
-    rvfcSrc: null, rvfcHandle: 0, rvfcPending: false };
+    rvfcSrc: null, rvfcHandle: 0, rvfcPending: false, rvfcAt: 0, rvfcPrevAt: 0,
+    frameWindow: null, confirmedDropPct: -1, confirmedDropAt: 0, confirmedDropSrc: null, confirmedDropId: '' };
   /* Adaptive performance level from the app (0 normal, 1 elevated, 2 high, 3 severe):
    * scales nonessential DOM work, sets a primary quality ceiling (high 1080p, severe 720p;
    * Auto stays adaptive under it) and the diagnostics window. Playback events stay immediate. */
@@ -2153,9 +2154,12 @@
       } catch (e) {}
       var frames = q && isFinite(q.totalVideoFrames) ? q.totalVideoFrames : -1;
       var dropped = q && isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : -1;
-      var df = frames >= 0 && perf.lastFrames >= 0 ? Math.max(0, frames - perf.lastFrames) : 0;
-      var dd = dropped >= 0 && perf.lastDropped >= 0 ? Math.max(0, dropped - perf.lastDropped) : 0;
-      var droppedPct = df ? Math.round(Math.min(100, dd / df * 100)) : -1;
+      var frameId = qualityVideoId();
+      var same = v && perf.lastClockSrc === v && perf.frameWindow && perf.frameWindow.id === frameId;
+      var countersValid = same && perf.lastFrames >= 0 && perf.lastDropped >= 0 && frames >= perf.lastFrames && dropped >= perf.lastDropped;
+      var df = countersValid ? frames - perf.lastFrames : 0;
+      var dd = countersValid ? dropped - perf.lastDropped : 0;
+      var droppedPct = df && dd <= df ? Math.round(dd / df * 100) : -1;
       var playing = !!(v && !v.paused && !v.ended);
       // Media clock: a player claiming enough data (readyState >= 3, no 'waiting') whose clock
       // still did not move is a silent clock stall, not buffering.
@@ -2171,17 +2175,36 @@
       if (perf.rvfcSrc !== (v || null)) {
         if (perf.rvfcHandle && perf.rvfcSrc && typeof perf.rvfcSrc.cancelVideoFrameCallback === 'function')
           try { perf.rvfcSrc.cancelVideoFrameCallback(perf.rvfcHandle); } catch (e) {}
-        perf.rvfcHandle = 0; perf.rvfcTotal = -1; perf.rvfcPrev = -1; perf.rvfcSrc = v || null;
+        perf.rvfcHandle = 0; perf.rvfcTotal = -1; perf.rvfcPrev = -1; perf.rvfcAt = 0; perf.rvfcPrevAt = 0; perf.rvfcSrc = v || null;
       }
       var displayed = perf.rvfcTotal >= 0 && perf.rvfcPrev >= 0 && perf.rvfcTotal >= perf.rvfcPrev ?
         perf.rvfcTotal - perf.rvfcPrev : -1;
+      // The RVFC delta belongs to the PREVIOUS diagnostics window, not df/dd from this one.
+      // Only compare samples with matching timestamps, source and identity. Hidden rendering
+      // may intentionally skip frames, so it must never drive visible-video quality pressure.
+      var visible = !A.audioOnly && (!A.isBg || A.inPip || A.isCar);
+      var prior = perf.frameWindow, policyDrop = -1;
+      if (playing && visible && same && prior.visible && !v.seeking && !nativeAudio.owned) {
+        if (typeof v.requestVideoFrameCallback !== 'function') {
+          policyDrop = droppedPct; // legacy browsers without compositor samples
+        } else if (prior.pct >= 0 && displayed >= 0 &&
+            Math.abs(perf.rvfcPrevAt - prior.start) <= 2000 &&
+            Math.abs(perf.rvfcAt - prior.end) <= 2000 &&
+            Math.abs(displayed - (prior.frames - prior.dropped)) <= Math.max(10, prior.frames * 0.10)) {
+          policyDrop = prior.pct;
+        }
+      }
+      perf.confirmedDropPct = policyDrop; perf.confirmedDropAt = now;
+      perf.confirmedDropSrc = v; perf.confirmedDropId = frameId;
+      perf.frameWindow = { id: frameId, start: perf.lastAt, end: now, frames: df, dropped: dd,
+        pct: droppedPct, visible: visible && playing && !v.seeking };
       if (playing && N && typeof N.perf === 'function') try {
         var audioProbe = audioStreamProbe(p);
         N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
           tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
           sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
           refits: perf.refits, recoveries: perf.paintRecoveries,
-          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
+          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct, dropPolicyPct: policyDrop,
           // Decoded; presentedEst = decoded minus dropped (an estimate); displayed = compositor count.
           decoded: df, presentedEst: Math.max(0, df - dd), displayed: displayed,
           // Buffering ('waiting' -> 'playing') and silent clock stalls are reported separately.
@@ -2200,7 +2223,7 @@
       perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
       perf.dupReports = 0; perf.stalls = 0; perf.stallMs = 0; if (perf.stallAt) perf.stallAt = now;
       perf.lastClock = ct; perf.lastClockSrc = v || null;
-      perf.rvfcPrev = perf.rvfcTotal;
+      perf.rvfcPrev = perf.rvfcTotal; perf.rvfcPrevAt = perf.rvfcAt;
       // At most one outstanding request: a hidden or paused video never fires it, and requests
       // must not pile up window after window.
       if (playing && !perf.rvfcHandle && typeof v.requestVideoFrameCallback === 'function') try {
@@ -2209,7 +2232,7 @@
         var handle = v.requestVideoFrameCallback(function (t, md) {
           if (src !== perf.rvfcSrc) return; // obsolete element
           perf.rvfcHandle = 0; perf.rvfcPending = false;
-          if (md && isFinite(md.presentedFrames)) perf.rvfcTotal = md.presentedFrames;
+          if (md && isFinite(md.presentedFrames)) { perf.rvfcTotal = md.presentedFrames; perf.rvfcAt = Date.now(); }
         });
         // A synchronous callback already cleared the request; otherwise keep its handle.
         if (perf.rvfcPending) perf.rvfcHandle = handle || -1;
@@ -3089,7 +3112,10 @@
     try { if (v.buffered && v.buffered.length) ahead = v.buffered.end(v.buffered.length - 1) - v.currentTime; } catch (e) {}
     var moved = v.currentTime - overload.t, df = frames - overload.frames, dd = dropped - overload.dropped;
     var stalled = ahead > 3 && moved < (now - overload.at) / 1000 * 0.25;
-    var dropping = df > 60 && dd / df > 0.5;
+    var visible = !A.audioOnly && (!A.isBg || A.inPip || A.isCar);
+    var corroborated = typeof v.requestVideoFrameCallback !== 'function' ||
+        (perf.confirmedDropSrc === v && perf.confirmedDropId === id && now - perf.confirmedDropAt <= perfState.diagMs * 2 && perf.confirmedDropPct > 50);
+    var dropping = visible && corroborated && df > 60 && dd <= df && dd / df > 0.5;
     overloadSample(v, now, frames, dropped);
     if (!stalled && !dropping) {
       overload.bad = 0;
