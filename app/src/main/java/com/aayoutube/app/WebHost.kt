@@ -351,7 +351,7 @@ object WebHost {
 
     private fun configure(w: WebView) {
         val s = w.settings
-        s.textZoom = Features.current.pageZoom
+        s.textZoom = if (webDisplayId != Display.DEFAULT_DISPLAY) 100 else Features.current.pageZoom
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
         s.mediaPlaybackRequiresUserGesture = false
@@ -433,7 +433,7 @@ object WebHost {
             w.loadUrl(home())
             return
         }
-        w.settings.textZoom = f.pageZoom
+        w.settings.textZoom = if (webDisplayId != Display.DEFAULT_DISPLAY) 100 else f.pageZoom
         installScript(w)
         js("window.__aay&&window.__aay.config(${f.toJson()})")
     }
