@@ -20,6 +20,7 @@ function playerPage(options = {}) {
   const qualityCalls = [];
   const qualityStorage = new Map();
   const perfReports = [];
+  const observers = [];
   const localStorage = {
     getItem(key) { return qualityStorage.get(key) || null; },
     setItem(key, value) { qualityStorage.set(key, String(value)); },
@@ -154,7 +155,11 @@ function playerPage(options = {}) {
     navigator, localStorage,
     history: { pushState() {}, replaceState() {} },
     Document: Doc, HTMLMediaElement: Media, MediaSession: class {},
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class {
+      constructor() { this.active = false; observers.push(this); }
+      observe(target) { this.active = true; this.target = target; }
+      disconnect() { this.active = false; }
+    },
     URL, console, Promise, Error, DOMException, TextEncoder,
     crypto: { subtle: { digest() { return Promise.resolve(new Uint8Array(32).buffer); } } },
     fetch(url) {
@@ -174,6 +179,7 @@ function playerPage(options = {}) {
   return {
     domNodes: dom ? dom.nodes : null,
     MediaSource: FakeMediaSource,
+    observers,
     window, navigator, video, seekBar, document, location, classNames, styleElements, stateReports, accountReports, lyricReports, requests, qualityCalls, selectedQualities, qualityStorage, perfReports,
     runIntervals() { for (const fn of intervals) if (fn) fn(); },
     advance(ms) { clock.t += ms; },
@@ -2070,4 +2076,92 @@ test('document restore does not force a second seek when YouTube restores the ti
   p.video.currentTime = 146;
   p.advance(1100); p.flush();
   assert.equal(p.video.currentTime, 146);
+});
+
+test('adaptive performance level sets primary quality ceilings and keeps Auto adaptive', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'auto' } });
+  p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+  const calls = p.qualityCalls.length;
+  p.window.__aay.perfLevel(1);
+  assert.equal(p.qualityCalls.length, calls, 'elevated changes no quality');
+  p.window.__aay.perfLevel(2);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.perfLevel(3);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd720']);
+  const severe = p.qualityCalls.length;
+  p.window.__aay.perfLevel(3);
+  assert.equal(p.qualityCalls.length, severe, 'repeated level never switches quality again');
+  p.window.__aay.perfLevel(2);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'hd1080']);
+  p.window.__aay.perfLevel(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'highres']);
+});
+
+test('adaptive ceiling never raises a lower saved quality', () => {
+  const p = playerPage({ quality: true, cfg: { preferredQuality: 'large' } });
+  p.flush();
+  const before = p.qualityCalls.at(-1);
+  p.window.__aay.perfLevel(3);
+  assert.deepEqual(p.qualityCalls.at(-1), before);
+});
+
+test('page mutation observer is suspended while hidden and restored when visible', () => {
+  const p = playerPage();
+  p.flush();
+  const page = p.observers.find((o) => o.target === p.document.documentElement);
+  assert.ok(page, 'document observer exists');
+  assert.equal(page.active, true);
+  p.window.__aay.setBg(true);
+  assert.equal(page.active, false, 'hidden page builds no mutation records');
+  assert.equal(p.window.__aay.pageObserved(), false);
+  p.window.__aay.setBg(false);
+  assert.equal(page.active, true);
+  assert.equal(p.window.__aay.pageObserved(), true);
+});
+
+test('unchanged state is not sent across the bridge again within 15 s', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.paused = true;
+  p.video.trigger('pause');
+  p.flush();
+  const sent = p.stateReports.length;
+  p.video.trigger('pause');
+  p.flush();
+  assert.equal(p.stateReports.length, sent, 'duplicate state suppressed');
+  p.advance(16000);
+  p.video.trigger('pause');
+  p.flush();
+  assert.equal(p.stateReports.length, sent + 1, 'heartbeat after the repeat window');
+  p.video.paused = false;
+  p.video.trigger('play');
+  p.flush();
+  assert.equal(p.stateReports.at(-1).playing, true, 'a change is sent at once');
+});
+
+test('diagnostics report decoded, presented frames and stall estimates', () => {
+  const p = playerPage();
+  p.flush();
+  p.advance(31000);
+  p.runIntervals();
+  const r = p.perfReports.at(-1);
+  assert.ok(r, 'a playing page reports a diagnostics window');
+  for (const key of ['decoded', 'presented', 'stalls', 'stallMs', 'dupReports', 'observed', 'level'])
+    assert.ok(key in r, key);
+  assert.ok(r.presented <= r.decoded);
+});
+
+test('a stalled lyrics clock is sampled once, not every 250 ms', () => {
+  const p = playerPage();
+  p.window.__aay.lyricsSync(true);
+  p.video.readyState = 2;
+  p.runIntervals();
+  const n = p.lyricReports.length;
+  p.runIntervals();
+  p.runIntervals();
+  assert.equal(p.lyricReports.length, n, 'unchanged buffering sample is not resent');
+  p.video.readyState = 4;
+  p.runIntervals();
+  assert.equal(p.lyricReports.length, n + 1, 'moving clock reports again');
 });

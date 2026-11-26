@@ -224,7 +224,14 @@
   // Bounded, aggregated counters only: no page content, URLs or video identifiers.
   var perf = { ticks: 0, tickMs: 0, mutations: 0, sourceLoads: 0,
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
-    lastFrames: -1, lastDropped: -1 };
+    lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0 };
+  /* Adaptive performance level from the app (0 normal, 1 elevated, 2 high, 3 severe):
+   * scales nonessential DOM work, sets a primary quality ceiling (high 1080p, severe 720p;
+   * Auto stays adaptive under it) and the diagnostics window. Playback events stay immediate. */
+  var PERF_CAP_H = [0, 0, 1080, 720], PERF_WORK_SCALE = [1, 2, 2, 3];
+  var perfState = { level: Math.max(0, Math.min(3, parseInt(CFG.perfLevel, 10) || 0)),
+    diagMs: Math.max(30000, Math.min(120000, parseInt(CFG.diagMs, 10) || 30000)) };
+  function workScale() { return PERF_WORK_SCALE[perfState.level] || 1; }
   A.perf = function () { return perf; };
   var H = A.H; // media session action handlers YouTube registers (nexttrack, previoustrack, ...)
   // YouTube provides a real login flag in its page configuration. Generic Google
@@ -903,6 +910,15 @@
   var CSS_END_CARDS =
     '.ytp-ce-element,.ytp-endscreen-content,.ytp-cards-teaser,.ytp-cards-button,' +
     '.ytp-suggested-action,.ytp-paid-content-overlay,.iv-branding{display:none!important}';
+  /* GPU: ambient-mode glow, animated/blurred backdrops and shimmer placeholders cost
+   * offscreen compositing on every frame while adding nothing to playback. Hardware
+   * acceleration itself is untouched. */
+  var CSS_EFFECTS =
+    '#cinematics,#cinematics-container,#cinematic-container,.ytp-cinematic-container,' +
+    'ytm-cinematic-container-renderer,ytd-cinematic-container-renderer,canvas.ytp-ambient-canvas{' +
+    'display:none!important}' +
+    '*,*::before,*::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}' +
+    '.shimmer,.ytm-shimmer,ytm-shimmer,.ytp-spinner-container .ytp-spinner-rotator{animation-duration:2s!important}';
   // Suppress only the muted-autoplay prompt, not normal player volume controls.
   var CSS_UNMUTE =
     '.ytp-unmute,ytm-unmute-button,.ytmUnmuteButton,.ytp-unmute-button,' +
@@ -1012,7 +1028,7 @@
     root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
   }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS;
     applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
@@ -1158,6 +1174,7 @@
     return q.slice(Math.max(0, i - 10), i + 25);
   }
   var lastSent = null;
+  var lastStateJson = '', lastStateAt = 0, STATE_REPEAT_MS = 15000;
   // Nothing on screen shows the position while hidden (Android extrapolates the
   // media-session position): send progress less often; state changes stay instant.
   var BG_PROGRESS_MS = 10000;
@@ -1190,7 +1207,7 @@
       if (pv.author) mi.a = pv.author;
     }
     var d = v.duration;
-    N.state(JSON.stringify(lastSent = {
+    var state = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
       // Persist explicit user Pause across IPC disconnect/reconnect.
@@ -1204,7 +1221,14 @@
       rate: v.playbackRate || 1,
       next: !!H.nexttrack,
       prev: !!H.previoustrack
-    }), BRIDGE_TOKEN);
+    };
+    var json = JSON.stringify(state), sentAt = Date.now();
+    lastSent = state;
+    // An unchanged state (paused, buffering, ended) is not sent again across the bridge
+    // within STATE_REPEAT_MS; any change, including the position, goes out at once.
+    if (json === lastStateJson && sentAt - lastStateAt < STATE_REPEAT_MS) { perf.dupReports++; return; }
+    lastStateJson = json; lastStateAt = sentAt;
+    N.state(json, BRIDGE_TOKEN);
   }
 
   /* ---------- 6. SponsorBlock ---------- */
@@ -1745,6 +1769,11 @@
           }
         }
         if (ev === 'playing') scheduleStateRepair(100);
+        // Audio interruption estimate: time from 'waiting' (wanted playback starved) to 'playing'.
+        if (ev === 'waiting' && !v.paused && !perf.stallAt) { perf.stalls++; perf.stallAt = Date.now(); }
+        if ((ev === 'playing' || ev === 'pause' || ev === 'ended') && perf.stallAt) {
+          perf.stallMs += Math.max(0, Date.now() - perf.stallAt); perf.stallAt = 0;
+        }
         if (ev === 'pause') {
           bgWatch.pausedAt = Date.now(); bgWatch.playingSince = 0;
           if (Date.now() < modeTransitUntil && !PAUSED && !bgWatch.held && !modeRecoveryTimer) {
@@ -1835,7 +1864,7 @@
       skipAd();
       syncPlayerState();
       carLayout();
-      if (Date.now() - lastNonCriticalDomAt >= 8000) {
+      if (Date.now() - lastNonCriticalDomAt >= 8000 * workScale()) {
         lastNonCriticalDomAt = Date.now();
         dialogs();
         rydApply();
@@ -1847,6 +1876,7 @@
     finally {
       perf.ticks++;
       perf.tickMs += Math.max(0, Date.now() - started);
+      refreshPageObserver();
     }
   }
   // YouTube mutates the page continuously, even when the player is unchanged.
@@ -1856,14 +1886,36 @@
     if (tickTimer) return;
     // Huawei/EMUI WebView pages can mutate constantly even while idle.
     // Coalesce expensive full-page traversals without changing immediate media events.
-    tickTimer = setTimeout(tick, ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) ? 12000 : 1800);
+    // The car layout stays responsive; phone-side nonessential work slows down under pressure.
+    tickTimer = setTimeout(tick, ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) ? 12000 : 1800 * (A.isCar ? 1 : workScale()));
   }
 
+  /* While nothing shows the page (hidden phone, audio-only renderer), YouTube's constant
+   * mutations are not observed at all: Chromium stops building mutation records for the
+   * whole subtree. A slow keep-alive tick still binds the player and applies quality. */
+  var pageObserver = null, pageObserved = false, hiddenTickTimer = 0;
+  function pageHidden() { return (A.isBg || A.audioOnly) && !A.inPip && !A.isCar; }
+  function refreshPageObserver() {
+    if (!pageObserver || !document.documentElement) return;
+    var hidden = pageHidden();
+    if (hidden && pageObserved) {
+      pageObserver.disconnect(); pageObserved = false;
+      if (!hiddenTickTimer) hiddenTickTimer = setInterval(schedTick, 12000);
+    } else if (!hidden && !pageObserved) {
+      if (hiddenTickTimer) { clearInterval(hiddenTickTimer); hiddenTickTimer = 0; }
+      pageObserver.observe(document.documentElement, { childList: true, subtree: true });
+      pageObserved = true;
+    }
+  }
+  A.pageObserved = function () { return pageObserved; };
+
   whenRoot(function () {
-    new MutationObserver(function (records) {
+    pageObserver = new MutationObserver(function (records) {
       perf.mutations += records ? records.length : 1;
       schedTick();
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    });
+    pageObserver.observe(document.documentElement, { childList: true, subtree: true });
+    pageObserved = true;
     schedTick();
   });
 
@@ -1879,7 +1931,7 @@
         po.observe({ entryTypes: ['longtask'] });
       }
     } catch (e) {}
-    setInterval(function () {
+    var perfSample = function () {
       var now = Date.now(), span = now - perf.lastAt;
       if (span < 10000) return; // avoid short, misleading samples
       var v = getVideo(), q = null, p = ytPlayer(), codec = '', tier = '';
@@ -1901,13 +1953,20 @@
           sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
           refits: perf.refits, recoveries: perf.paintRecoveries,
           longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
+          // Decoded vs presented (decoded minus dropped) frames in this window.
+          decoded: df, presented: Math.max(0, df - dd),
+          stalls: perf.stalls, stallMs: perf.stallMs + (perf.stallAt ? now - perf.stallAt : 0),
+          dupReports: perf.dupReports, observed: pageObserved, level: perfState.level,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
           codec: codec, tier: tier, audioOnly: !!A.audioOnly }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
       perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
-    }, 30000);
+      perf.dupReports = 0; perf.stalls = 0; perf.stallMs = 0; if (perf.stallAt) perf.stallAt = now;
+    };
+    var perfTimer = setInterval(perfSample, perfState.diagMs);
+    perfState.restart = function () { clearInterval(perfTimer); perfTimer = setInterval(perfSample, perfState.diagMs); };
   }
   // Fresh position now and then while playing, in case an event was missed.
   setInterval(function () {
@@ -1915,7 +1974,8 @@
     // current; a hidden phone does not need periodic UI position reports.
     if (BROWSE || (A.isBg && !A.inPip && !A.isCar)) return;
     var v = getVideo();
-    if (v && !v.paused) schedReport(0);
+    // Buffering or seeking: the clock is not moving, media events report the change.
+    if (v && !v.paused && !v.seeking && v.readyState >= 3) schedReport(0);
   }, 10000);
   // Route changes can replace the video without raising loadedmetadata.
   window.addEventListener('yt-navigate-finish', function () {
@@ -1929,13 +1989,18 @@
   // Media-session snapshots are infrequent. A dedicated clock is necessary for
   // seeking, buffering and playback rate changes while lyrics are actually visible.
   // Never run this polling loop for the mini-browser or a hidden/plain-text panel.
-  var lyricClockTimer = 0;
+  var lyricClockTimer = 0, lastLyricKey = '';
   function sendLyricClock() {
     if (!lyricClockTimer || BROWSE || !N || typeof N.lyricsTime !== 'function') return;
     var v = getVideo();
     var pv = playerVideo();
     var id = (pv && pv.video_id) || urlId();
     if (!v || !id || !isFinite(v.currentTime) || isAd()) return;
+    // A stalled or paused clock does not move: one sample of it is enough (the app holds the line).
+    var still = v.paused || v.ended || v.readyState < 3;
+    var key = id + ':' + v.currentTime + ':' + (v.paused || v.ended) + ':' + (v.readyState < 3);
+    if (still && key === lastLyricKey) return;
+    lastLyricKey = key;
     N.lyricsTime(id, v.currentTime, !v.paused && !v.ended,
       v.readyState < 3, v.playbackRate || 1, BRIDGE_TOKEN);
   }
@@ -2610,8 +2675,25 @@
   function effectiveCap() {
     var cap = deviceCapH;
     if (thermalHot) cap = cap ? Math.min(cap, THERMAL_CAP) : THERMAL_CAP;
+    var perfCap = PERF_CAP_H[perfState.level] || 0;
+    if (perfCap) cap = cap ? Math.min(cap, perfCap) : perfCap;
     return cap;
   }
+  // The app's adaptive performance level (see AdaptivePerformance.kt). Only a change of
+  // the quality ceiling touches quality; repeated equal levels do nothing.
+  A.perfLevel = function (level, diagMs) {
+    var next = Math.max(0, Math.min(3, parseInt(level, 10) || 0));
+    var ms = parseInt(diagMs, 10);
+    if (ms >= 30000 && ms <= 120000 && ms !== perfState.diagMs) {
+      perfState.diagMs = ms;
+      if (perfState.restart) perfState.restart();
+    }
+    if (next === perfState.level) return;
+    var capChanged = (PERF_CAP_H[next] || 0) !== (PERF_CAP_H[perfState.level] || 0);
+    console.log('[aay] performance level ' + perfState.level + ' -> ' + next);
+    perfState.level = next;
+    if (capChanged) { qualityApply.key = ''; applyPreferredQuality(); }
+  };
   function capForDevice(q) {
     var cap = effectiveCap();
     // Auto under a cap stays adaptive: the chosen tier is only a ceiling.
@@ -2933,6 +3015,7 @@
       if (wasBg) qualityApply.key = ''; // visible again: saved quality right away
     }
     applyPreferredQuality();
+    refreshPageObserver();
     // Catch up with the DOM once when returning to the foreground.
     if (wasBg && !A.isBg) schedTick();
   };

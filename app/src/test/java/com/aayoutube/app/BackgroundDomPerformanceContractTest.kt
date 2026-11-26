@@ -23,7 +23,7 @@ class BackgroundDomPerformanceContractTest {
 
     @Test fun backgroundSkipsRedundantUiPositionReports() {
         assertTrue(script.contains("if (BROWSE || (A.isBg && !A.inPip && !A.isCar)) return;"))
-        assertTrue(script.contains("if (v && !v.paused) schedReport(0);"))
+        assertTrue(script.contains("if (v && !v.paused && !v.seeking && v.readyState >= 3) schedReport(0);"))
     }
 
     @Test fun throttledDomTraversalDoesNotDisableImmediatePlaybackRecovery() {

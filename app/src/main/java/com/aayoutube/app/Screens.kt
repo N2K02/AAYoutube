@@ -114,6 +114,8 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -288,7 +290,10 @@ fun AppRoot(activity: MainActivity) {
     // to the car window. A still-composed phone screen must not reparent it
     // (car turns black) or rotate the phone for it.
     val fullscreen = fullscreenView.takeIf { !projectedToCar || onCar }
-    val snap by WebHost.snapshot.collectAsState()
+    // Position reports arrive every ~1.4 s while playing: the app screen recomposes only when
+    // something else changes (play state, video, buffering...). Position readers collect it themselves.
+    val snapFlow = remember { WebHost.snapshot.map { it.withoutPosition() }.distinctUntilChanged() }
+    val snap by snapFlow.collectAsState(WebHost.snapshot.value.withoutPosition())
     val sharedPlayerMode by WebHost.mode.collectAsState()
     val localPhoneMode by BrowseHost.phoneMode.collectAsState()
     val playerMode = if ((projectedToCar || audioRetained) && !onCar) localPhoneMode else sharedPlayerMode
@@ -623,7 +628,7 @@ fun AppRoot(activity: MainActivity) {
             // Reduce overlap while the menu is hidden; no second app header.
             Box(Modifier.align(Alignment.TopCenter).statusBarsPadding()
                 .padding(top = 30.dp)) {
-                key(lyricsRequest) { LyricsOverlay(snap, foundLyrics) {
+                key(lyricsRequest) { LiveLyricsOverlay(foundLyrics) {
                     lyricsOpenedForVideo = false
                     LyricsPrefs.set(context, "show", false)
                 } }
@@ -884,21 +889,10 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
             // Mini player controls (like the YouTube app): play/pause top left, close top right,
             // red progress line at the bottom. Tap to open it again, drag to move it.
             if (layoutSmall) {
-                // Progress: the page reports now and then; move it along in between.
-                var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
+                // Progress: the page reports now and then; LiveProgressLine moves it along in between.
                 // Tick only while the screen is shown: no wake-ups behind a stopped activity.
                 val paneLifecycle = context.findActivity()?.lifecycle?.currentStateFlow?.collectAsState()?.value
                 val paneShown = paneLifecycle?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) == true
-                LaunchedEffect(snap, paneShown) {
-                    if (!snap.playing || !paneShown) return@LaunchedEffect
-                    while (true) {
-                        now = android.os.SystemClock.elapsedRealtime()
-                        delay(500)
-                    }
-                }
-                val seenAt = remember(snap) { android.os.SystemClock.elapsedRealtime() }
-                val pos = if (snap.playing) snap.posMs + ((now - seenAt) * snap.rate).toLong() else snap.posMs
-                val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
 
                 Box(
                     miniMod
@@ -927,10 +921,7 @@ fun WebPane(modifier: Modifier = Modifier, bottomInset: androidx.compose.ui.unit
                         onClick = { WebHost.closePlayer() },
                         modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
                     ) { Icon(Icons.Filled.Close, contentDescription = "Close", modifier = Modifier.size(20.dp)) }
-                    Box(
-                        Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
-                            .background(Color(0xFFFF0033)),
-                    )
+                    LiveProgressLine(snap, paneShown, Modifier.align(Alignment.BottomStart))
                 }
             }
         }
@@ -1772,10 +1763,7 @@ private fun ProjectedMirrorPlayer(snap: Snap, small: Boolean, pip: Boolean, visi
                     onClick = { BrowseHost.phoneMode.value = WebHost.PlayerMode.HIDDEN },
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp).size(36.dp),
                 ) { Icon(Icons.Filled.Close, contentDescription = "Close phone mini player", modifier = Modifier.size(20.dp)) }
-                val pos = rememberLivePosition(snap, visible)
-                val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(3.dp)
-                    .background(Color(0xFFFF0033)))
+                LiveProgressLine(snap, visible, Modifier.align(Alignment.BottomStart))
             }
         }
     }
@@ -1836,12 +1824,31 @@ private fun MirrorFallback(snap: Snap, reason: PhoneMirrorPolicy.Fallback, large
 }
 
 /** Snapshot position advanced locally between reports; ticks only while visible. */
+/**
+ * Red progress line with its own 500 ms clock. The clock's state is read only inside this
+ * small scope, so ticks never recompose the surrounding player or screen.
+ */
+@Composable
+private fun LiveProgressLine(snap: Snap, visible: Boolean, modifier: Modifier) {
+    val pos = rememberLivePosition(snap, visible)
+    val fraction = if (snap.durMs > 0) (pos.toFloat() / snap.durMs).coerceIn(0f, 1f) else 0f
+    Box(modifier.fillMaxWidth(fraction).height(3.dp).background(Color(0xFFFF0033)))
+}
+
+/** The lyrics overlay alone follows position reports; the screen around it does not. */
+@Composable
+private fun LiveLyricsOverlay(content: LyricsContent, onToggle: () -> Unit) {
+    val live by WebHost.snapshot.collectAsState()
+    LyricsOverlay(live, content, onToggle)
+}
+
 @Composable
 private fun rememberLivePosition(snap: Snap, visible: Boolean): Long {
     var now by remember { mutableStateOf(android.os.SystemClock.elapsedRealtime()) }
     val seenAt = remember(snap) { android.os.SystemClock.elapsedRealtime() }
-    LaunchedEffect(snap.playing, snap.id, visible) {
-        if (!snap.playing || !visible) return@LaunchedEffect
+    // No clock while buffering: the position is not moving.
+    LaunchedEffect(snap.playing, snap.buffering, snap.id, visible) {
+        if (!snap.playing || snap.buffering || !visible) return@LaunchedEffect
         while (true) {
             now = android.os.SystemClock.elapsedRealtime()
             delay(500)

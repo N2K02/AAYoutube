@@ -11,7 +11,7 @@ class PlaybackTelemetryContractTest {
 
     @Test fun pageReportsBoundedMetricsOnlyWhilePlaying() {
         val js = read("app/src/main/assets/aay.js")
-        assertTrue(js.contains("setInterval(function () {\n      var now = Date.now(), span = now - perf.lastAt;"))
+        assertTrue(js.contains("var perfSample = function () {\n      var now = Date.now(), span = now - perf.lastAt;"))
         assertTrue(js.contains("if (playing && N && typeof N.perf === 'function')"))
         assertTrue(js.contains("sourceLoads: perf.sourceLoads"))
         assertTrue(js.contains("layout: perf.layoutChanges"))
@@ -47,6 +47,7 @@ class PlaybackTelemetryContractTest {
         assertTrue(service.contains("recentMediaCpu.size > 10"))
         assertTrue(service.contains("avgCpuPct="))
         assertTrue(service.contains("peakCpuPct="))
-        assertTrue(service.contains("handler.postDelayed(this, 60_000L)"))
+        // Health keeps its own timer; screen off lengthens it (adaptive diagnostics sampling).
+        assertTrue(service.contains("handler.postDelayed(this, AdaptivePerformancePolicy.healthIntervalMs(PerformanceMonitor.screenOn()))"))
     }
 }

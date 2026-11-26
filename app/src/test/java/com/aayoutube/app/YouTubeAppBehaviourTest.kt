@@ -88,7 +88,9 @@ class YouTubeAppBehaviourTest {
         assertTrue(mini.contains("detectTapGestures(onTap = { WebHost.expandPlayer() })"))
         assertTrue(mini.contains("WebHost.cmd(if (snap.playing) \"pause\" else \"play\")"))
         assertTrue(mini.contains("onClick = { WebHost.closePlayer() }"))
-        assertTrue(mini.contains("fillMaxWidth(fraction)"))
+        // The progress line keeps its own clock scope (no recomposition of the whole player).
+        assertTrue(mini.contains("LiveProgressLine(snap, paneShown, Modifier.align(Alignment.BottomStart))"))
+        assertTrue(ui.substringAfter("private fun LiveProgressLine(").contains("fillMaxWidth(fraction)"))
         assertTrue("draggable", mini.contains("detectDragGestures("))
     }
 

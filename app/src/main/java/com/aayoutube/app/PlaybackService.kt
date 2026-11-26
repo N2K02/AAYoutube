@@ -63,14 +63,19 @@ class PlaybackService : MediaBrowserServiceCompat() {
         AppLog.add("HEALTH", "phase=${ForegroundDemotePolicy.phase(snapshot, recoveringPlayback)} " +
             "mainCpuPct=$cpuPercent avgCpuPct=$cpuAverage peakCpuPct=$cpuPeak " +
             "musicActive=${audio.isMusicActive} screen=${power.isInteractive} " +
-            "wakeHeld=${playbackWakeLock?.isHeld == true} foreground=$foreground bound=$bound")
+            "wakeHeld=${playbackWakeLock?.isHeld == true} wakeHeldMs=${wakeHeldMs(now)} " +
+            "wakeAcquisitions=$wakeAcquisitions wakeStallReleases=$wakeStallReleases " +
+            "perfLevel=${PerformanceMonitor.level.value} foreground=$foreground bound=$bound")
     }
     private val healthTick = object : Runnable {
         override fun run() {
             if (shuttingDown || !foreground) return
             logHealth()
             scheduleDemoteIfNeeded(snapshot) // re-check even if no new state arrived
-            handler.postDelayed(this, 60_000L)
+            // Bounded wake lock: refresh its timeout or end a stalled recovery's hold.
+            updatePlaybackWakeLock(ForegroundDemotePolicy.wantsWakeLock(snapshot, recoveringPlayback))
+            // Screen off: fewer diagnostic wake-ups (60 s on, 180 s off).
+            handler.postDelayed(this, AdaptivePerformancePolicy.healthIntervalMs(PerformanceMonitor.screenOn()))
         }
     }
     private fun startHealthTicker() {
@@ -132,10 +137,43 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // A WebView is not a native MediaPlayer. Prevent CPU sleep while its
     // stream is playing or recovering, without keeping the display awake.
     private var playbackWakeLock: PowerManager.WakeLock? = null
+    // Wake-lock audit: when the current hold began, total held time, and stalled-recovery bound.
+    private var wakeAcquiredAt = 0L
+    private var wakeRefreshedAt = 0L
+    private var wakeHeldTotalMs = 0L
+    private var wakeAcquisitions = 0
+    private var wakeStallReleases = 0
+    private var wakeStalledSince = 0L
+    private fun wakeHeldMs(now: Long) = wakeHeldTotalMs + currentHoldMs(now)
+    /** A hold whose refreshes stopped ended at its timeout, not now. */
+    private fun currentHoldMs(now: Long): Long = if (wakeAcquiredAt <= 0L) 0L
+        else (minOf(now, wakeRefreshedAt + WakeLockPolicy.TIMEOUT_MS) - wakeAcquiredAt).coerceAtLeast(0L)
+
+    private fun releaseWakeLock(reason: String) {
+        playbackWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+        if (wakeAcquiredAt > 0L) {
+            val held = currentHoldMs(android.os.SystemClock.elapsedRealtime())
+            wakeHeldTotalMs += held
+            AppLog.add("POWER", "Background audio CPU wake lock released reason=$reason heldMs=$held")
+        }
+        wakeAcquiredAt = 0L
+        wakeRefreshedAt = 0L
+    }
 
     private fun updatePlaybackWakeLock(active: Boolean) {
+        val now = android.os.SystemClock.elapsedRealtime()
         if (!active || quitRequested || shuttingDown) {
-            playbackWakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+            wakeStalledSince = 0L
+            releaseWakeLock("not-wanted")
+            return
+        }
+        // Wanted but not playing (recovery of a stalled stream): bounded by WakeLockPolicy.
+        if (snapshot.playing) wakeStalledSince = 0L else if (wakeStalledSince == 0L) wakeStalledSince = now
+        if (!WakeLockPolicy.hold(true, snapshot.playing, wakeStalledSince, now)) {
+            if (playbackWakeLock?.isHeld == true) {
+                wakeStallReleases++
+                releaseWakeLock("stalled-recovery")
+            }
             return
         }
         runCatching {
@@ -144,8 +182,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 .apply { setReferenceCounted(false) }
                 .also { playbackWakeLock = it }
             if (!lock.isHeld) {
-                lock.acquire()
-                AppLog.add("POWER", "Background audio CPU wake lock acquired")
+                // Never unbounded: the timeout ends the hold if refreshes ever stop.
+                lock.acquire(WakeLockPolicy.TIMEOUT_MS)
+                if (wakeAcquiredAt > 0L) wakeHeldTotalMs += currentHoldMs(now) // the previous hold timed out
+                wakeAcquiredAt = now
+                wakeRefreshedAt = now
+                wakeAcquisitions++
+                AppLog.add("POWER", "Background audio CPU wake lock acquired timeoutMs=${WakeLockPolicy.TIMEOUT_MS}")
+            } else if (WakeLockPolicy.needsRefresh(wakeRefreshedAt, now)) {
+                lock.acquire(WakeLockPolicy.TIMEOUT_MS)   // not reference counted: extends the timeout
+                wakeRefreshedAt = now
             }
         }.onFailure { AppLog.add("POWER", "Audio wake lock unavailable: ${it.javaClass.simpleName}") }
     }
@@ -181,6 +227,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var lastNotification: NotificationKey? = null
     private var lastRecentId = ""
     private var lastSavedPosition = -1L
+    private var lastSavedAt = 0L
     private var lastSavedId = ""
     private var idleSince = 0L
     private var shuttingDown = false
@@ -490,10 +537,13 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 lastRecentId = s.id
                 notifyChildrenChanged("recent")
             }
-            if (lastSavedId != s.id || lastSavedPosition < 0 || kotlin.math.abs(lastSavedPosition - s.posMs) >= 5_000L || (!s.playing && lastSavedPosition != s.posMs)) {
+            // Pause, Stop, Quit, end and a new video save at once; playback every 15 s (30 s screen off).
+            val savedNow = android.os.SystemClock.elapsedRealtime()
+            if (PositionPersistPolicy.shouldSave(lastSavedId, lastSavedPosition, lastSavedAt, s, savedNow, PerformanceMonitor::screenOn)) {
                 Library.saveLast(s)
                 lastSavedPosition = s.posMs
                 lastSavedId = s.id
+                lastSavedAt = savedNow
             }
         }
         if (s.playing) recoveringPlayback = false

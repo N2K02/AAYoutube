@@ -22,6 +22,7 @@ class AAYoutubeApp : Application() {
         WebHost.init(this)
         BrowseHost.init(this)
         PhoneMirror.init(this)
+        PerformanceMonitor.init(this)
     }
 
     /**
@@ -32,6 +33,7 @@ class AAYoutubeApp : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         PhoneMirror.onTrimMemory(level)
+        PerformanceMonitor.onTrimMemory()
         if (MemoryTrimPolicy.releaseBrowse(level, WebHost.mode.value != WebHost.PlayerMode.FULL))
             BrowseHost.release()
     }

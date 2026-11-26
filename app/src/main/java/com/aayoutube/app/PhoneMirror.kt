@@ -168,15 +168,18 @@ internal object PhoneMirror {
             transportAt = 0L
             // Pausing a WebView does not promise the hardware decoder is freed: after a bounded
             // hidden period the whole secondary renderer is released.
-            main.postDelayed(idleRelease, PhoneMirrorPolicy.HIDDEN_RELEASE_MS)
+            // Under pressure the unused renderer goes sooner (adaptive performance engine).
+            hiddenReleaseMs = AdaptivePerformancePolicy.hiddenSecondaryReleaseMs(PerformanceMonitor.evaluate())
+            main.postDelayed(idleRelease, hiddenReleaseMs)
         }
     }
 
+    private var hiddenReleaseMs = PhoneMirrorPolicy.HIDDEN_RELEASE_MS
     private val idleRelease = Runnable {
         if (!visible && web != null) {
             // No revision bump: nothing is composed while hidden, so nothing recreates the renderer.
             // The next time the phone player is shown, attach() allocates a fresh one.
-            AppLog.add("MIRROR", "Phone player released after ${PhoneMirrorPolicy.HIDDEN_RELEASE_MS / 1000}s hidden")
+            AppLog.add("MIRROR", "Phone player released after ${hiddenReleaseMs / 1000}s hidden")
             teardown()
         }
     }
@@ -341,6 +344,7 @@ internal object PhoneMirror {
         (w?.parent as? ViewGroup)?.removeView(w)
         w?.stopLoading()
         w?.destroy()
+        if (w != null) PerformanceMonitor.diagnostics.secondaryReleases++
         wrapper = null
         layoutSentTo = null
         loadedId = ""
@@ -368,7 +372,10 @@ internal object PhoneMirror {
                 clockFailures = 0; missingMediaCount = 0; recoveryAttempts = 0; qualityViolations = 0
             }
             val thermal = thermalStatus()
-            val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure(), memoryLevel())
+            // The central engine's level (heat, battery, memory, CPU, dropped frames, buffering)
+            // joins the gate's own signals; the gate keeps its calm period before restoring.
+            val perf = PerformanceMonitor.evaluate()
+            val state = gate.update(thermal, s.buffering, now, WebHost.underProcessPressure(), memoryLevel(), perf)
             if (state == MirrorLoadGate.State.SUSPENDED || health.waiting(now)) {
                 if (!suspended.value) enterSuspension(thermal, s.buffering, now)
                 if (web != null && now - suspendedAt >= PhoneMirrorPolicy.SUSPENDED_RELEASE_MS) disposeRenderer()
@@ -377,7 +384,8 @@ internal object PhoneMirror {
             }
             // The phone copy shares Chromium's single renderer process and the network with the car's
             // player: it always runs at a small, display-appropriate ceiling, lower still under pressure.
-            val cap = PhoneMirrorPolicy.projectedCap(videoOnly, state == MirrorLoadGate.State.DEGRADED, pip)
+            val cap = PhoneMirrorPolicy.viewportCap(videoOnly, state == MirrorLoadGate.State.DEGRADED, pip,
+                web?.width ?: 0, web?.height ?: 0)
             startupCap = cap
             if (suspended.value) exitSuspension(now)
             val w = web ?: run { visible = false; refreshHidden(); revision.value++; return }
@@ -573,6 +581,9 @@ internal object PhoneMirror {
         }
     }
 
+    /** Shared with the adaptive performance engine (same throttled check). */
+    internal fun currentMemoryLevel(): MemoryLevel = if (::app.isInitialized) memoryLevel() else MemoryLevel.OK
+
     /** Checked at most every [PhoneMirrorPolicy.MEMORY_CHECK_MS], not on every sync. */
     private fun memoryLevel(): MemoryLevel {
         val now = SystemClock.elapsedRealtime()
@@ -704,6 +715,7 @@ internal object PhoneMirror {
         if (!supported || muteUnavailable.value) return null
         val c = MutableContextWrapper(context).also { wrapper = it }
         val w = WebView(c)
+        PerformanceMonitor.diagnostics.secondaryAllocations++
         // Native muting covers every frame and audio path before any navigation.
         if (!runCatching {
                 WebViewCompat.setAudioMuted(w, true)
@@ -878,12 +890,15 @@ internal class MirrorLoadGate(
     private var state = State.NORMAL
 
     fun update(thermal: Int, primaryBuffering: Boolean, nowMs: Long, cpuPressure: Boolean = false,
-               memory: MemoryLevel = MemoryLevel.OK): State {
+               memory: MemoryLevel = MemoryLevel.OK, perf: PerfLevel = PerfLevel.NORMAL): State {
         if (primaryBuffering) { if (bufferingSince == 0L) bufferingSince = nowMs } else bufferingSince = 0L
         val sustained = bufferingSince != 0L && nowMs - bufferingSince >= bufferingSuspendMs
         // Swap stalls are heard on the car: the phone copy gives way to low memory like to heat.
-        val severe = PhoneMirrorPolicy.suspendForHeat(thermal) || sustained || memory == MemoryLevel.CRITICAL
-        val pressure = primaryBuffering || cpuPressure || PhoneMirrorPolicy.degradeForHeat(thermal) || memory == MemoryLevel.LOW
+        // Engine HIGH/SEVERE: the secondary video is suspended; ELEVATED: reduced quality.
+        val severe = PhoneMirrorPolicy.suspendForHeat(thermal) || sustained || memory == MemoryLevel.CRITICAL ||
+            AdaptivePerformancePolicy.secondaryCap(perf, "medium") == null
+        val pressure = primaryBuffering || cpuPressure || PhoneMirrorPolicy.degradeForHeat(thermal) || memory == MemoryLevel.LOW ||
+            perf == PerfLevel.ELEVATED
         if (severe) lastSevereAt = nowMs
         if (pressure) lastPressureAt = nowMs
         state = when {
@@ -1145,6 +1160,18 @@ internal object PhoneMirrorPolicy {
         videoOnly -> "small"     // the small floating mini-player
         else -> "medium"
     }
+
+    /**
+     * Ceiling from the phone player's actual size: the visible video is at most the view's
+     * height and a 16:9 frame of its width. Small views decode 240p, larger ones 360p; PiP keeps
+     * its 360p and pressure its 240p. Unknown size (0) falls back to [projectedCap].
+     */
+    fun viewportCap(videoOnly: Boolean, degraded: Boolean, pip: Boolean, widthPx: Int, heightPx: Int): String {
+        if (degraded || pip || widthPx <= 0 || heightPx <= 0) return projectedCap(videoOnly, degraded, pip)
+        val shownPx = minOf(heightPx.toLong(), widthPx.toLong() * 9 / 16)
+        return if (shownPx <= SMALL_VIEW_MAX_PX) "small" else "medium"
+    }
+    const val SMALL_VIEW_MAX_PX = 300L
 
     /** Same table as mirror.js QUALITY_HEIGHT. */
     val QUALITY_HEIGHT = mapOf("small" to 240, "medium" to 360, "large" to 480, "hd720" to 720)

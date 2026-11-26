@@ -409,6 +409,7 @@ object WebHost {
         AppLog.add("VIEW", "WebView created display=" + webDisplayId +
             " directCarContext=" + inCarDisplay)
         webGeneration++
+        PerformanceMonitor.diagnostics.rendererAllocations++
         bridgeToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         // Actual WebView geometry changes are a cheap proxy for potential
@@ -529,6 +530,8 @@ object WebHost {
         registerThermalWatch()
         val cfg = Features.current.toJson().put("decodeCaps", DecoderCapabilities.json())
             .put("thermal", thermalStatus())
+            .put("perfLevel", PerformanceMonitor.level.value.ordinal)
+            .put("diagMs", PerformanceMonitor.diagnosticsIntervalMs())
         return "if(window.top===window.self)window.__AAY_BRIDGE_TOKEN=" +
             JSONObject.quote(bridgeToken) + ";window.__AAY_CFG=" + cfg +
             ";window.__AAY_CAR=" + (carDisplay || carShown) +
@@ -860,6 +863,7 @@ object WebHost {
         (previous.parent as? ViewGroup)?.removeView(previous)
         previous.stopLoading()
         previous.destroy()
+        PerformanceMonitor.diagnostics.rendererReleases++
         wrapper = null
         webDisplayId = null
         frozen = false
@@ -1271,6 +1275,9 @@ object WebHost {
             }
             val avg = if (recentWebCpu.isEmpty()) -1 else recentWebCpu.sum() / recentWebCpu.size
             val peak = recentWebCpu.maxOrNull() ?: -1
+            val droppedPct = d.optInt("droppedPct", -1).coerceIn(-1, 100)
+            // Audio-only windows decode no frames: -1 never counts as dropping.
+            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("audioOnly", false)) -1 else droppedPct)
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
             AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak previewPressure=${previewPressure.active(now)} " +
@@ -1278,13 +1285,24 @@ object WebHost {
                 "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
                 "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
-                "frames=${metric("frames")} droppedPct=${d.optInt("droppedPct", -1).coerceIn(-1,100)} " +
+                "frames=${metric("frames")} droppedPct=$droppedPct " +
+                "decodedFrames=${metric("decoded")} presentedFrames=${metric("presented")} " +
+                "stalls=${metric("stalls", 1_000)} stallMs=${metric("stallMs", 600_000)} " +
+                "dupReports=${metric("dupReports")} domObserved=${d.optBoolean("observed", true)} " +
+                "perfLevel=${PerformanceMonitor.level.value} mirrorRenderer=${PhoneMirror.rendererAllocated} " +
                 "size=${metric("width", 8192)}x${metric("height", 8192)} tier=$tier " +
                 "codec=${codec.ifEmpty { "unknown" }} thermal=${thermalStatus()} " +
                 "audioOnly=${d.optBoolean("audioOnly", false)} car=$carShown mode=${mode.value} " +
                 "javaHeapKb=${(Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }) / 1024} " +
                 "nativeHeapKb=${android.os.Debug.getNativeHeapAllocatedSize() / 1024}")
+            AppLog.add("PERF", "engine ${PerformanceMonitor.summary()} " +
+                "rendererCpuPct=adb-only(${PerformanceMonitor.diagnostics.liveRenderers()} live)")
         }
+    }
+
+    /** Adaptive performance level changed: page-side work, quality ceiling and diagnostics window follow. */
+    internal fun applyPerformanceLevel(level: PerfLevel) {
+        js("window.__aay&&window.__aay.perfLevel&&window.__aay.perfLevel(${level.ordinal},${PerformanceMonitor.diagnosticsIntervalMs()})")
     }
 
     /** Called only for explicit player-quality menu picks, never for adaptive playback changes. */
@@ -1634,6 +1652,7 @@ object WebHost {
                 sessionResetUrl = null
             }
             PhoneMirror.release()
+            PerformanceMonitor.reset()
         }
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
@@ -1678,6 +1697,7 @@ object WebHost {
         // surviving BrowseHost and any subsequent newly created player.
         w?.resumeTimers()
         w?.destroy()
+        if (w != null) PerformanceMonitor.diagnostics.rendererReleases++
         wrapper = null
         webDisplayId = null
         carWindowId = null
@@ -2034,6 +2054,7 @@ object WebHost {
                 if (thermalListener != null && web != null) {
                     AppLog.add("VIDEO", "Thermal status=$status")
                     js("window.__aay&&window.__aay.thermal&&window.__aay.thermal($status)")
+                    PerformanceMonitor.onThermalChanged()
                 }
             }
             pm.addThermalStatusListener(app.mainExecutor, listener)

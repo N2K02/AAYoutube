@@ -44,7 +44,7 @@ class LyricsVideoIdentityContractTest {
         assertTrue(screens.contains("remember(lyricsRequest) { mutableStateOf(LyricsContent()) }"))
         assertTrue(screens.contains("LaunchedEffect(lyricsRequest)"))
         assertTrue(screens.contains("foundLyrics.foundFor(lyricsRequest.videoId)"))
-        assertTrue(screens.contains("key(lyricsRequest) { LyricsOverlay"))
+        assertTrue(screens.contains("key(lyricsRequest) { LiveLyricsOverlay"))
         assertTrue(host.contains("selectedWatchVideoId.value = expectedWatchVideoId.orEmpty()"))
         assertTrue(host.contains("if (request.isForMainFrame) noteSelectedLyricsRoute(uri)"))
         assertTrue(host.contains("noteSelectedLyricsRoute(runCatching { Uri.parse(url) }.getOrNull())"))
