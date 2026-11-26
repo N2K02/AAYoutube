@@ -66,7 +66,8 @@ internal object NativePlayback {
         val c = coordinator
         if (c != null && c.phase == PlaybackEngineCoordinator.Phase.NATIVE) {
             // The page left the native-owned video or became audible: give way / silence it.
-            c.onWebReport(web.id, web.playing && !webNativeMarker)
+            // The marker is ownership intent, not proof of silence. playing is the real HTML media state.
+            c.onWebReport(web.id, web.playing)
             if (c.owner == EngineId.NATIVE)
                 return PlaybackHandoffPolicy.merge(web, nativePos, nativePlaying, nativeBuffering, c.userPaused)
             return web

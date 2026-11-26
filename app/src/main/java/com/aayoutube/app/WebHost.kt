@@ -2039,7 +2039,7 @@ object WebHost {
         val gen = webGeneration
         if (sessionClearing || shown || inPip.value || carProjectionActive() ||
             !Features.current.nativeAudio || !Features.current.localSabr ||
-            !isSafePageUrl(w.url.orEmpty())) { done(null); return }
+            !isYouTubeHost(runCatching { Uri.parse(w.url.orEmpty()).host }.getOrNull())) { done(null); return }
         val id = JSONObject.quote(videoId)
         w.evaluateJavascript("window.__aay&&window.__aay.localAudioDescriptor&&window.__aay.localAudioDescriptor($id)") { value ->
             done(value?.takeIf { web === w && webGeneration == gen && !sessionClearing &&

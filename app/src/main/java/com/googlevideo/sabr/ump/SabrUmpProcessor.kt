@@ -242,13 +242,8 @@ internal class SabrUmpProcessor(
         requestMetadata.error = SabrRequestMetadata.SabrErrorInfo(error)
         val errorType = error?.type ?: "unknown"
         val errorCode = error?.code ?: -1
-        val playbackContextJson = requestMetadata.reloadPlaybackContextJson
-            ?: requestMetadata.streamInfo?.reloadPlaybackContext?.let(::reloadContextToJson)
-        val abrRequestJson = requestMetadata.abrRequestJson
-        com.googlevideo.sabr.logging.QuietLog.e(
-            TAG,
-            "SABR_ERROR type=$errorType code=$errorCode playbackContext=${playbackContextJson ?: "null"} abrRequest=${abrRequestJson ?: "null"}"
-        )
+        // Never serialize reload tokens or request payloads into error diagnostics.
+        com.googlevideo.sabr.logging.QuietLog.e(TAG, "SABR_ERROR type=$errorType code=$errorCode")
         return UmpProcessingResult(done = true)
     }
 

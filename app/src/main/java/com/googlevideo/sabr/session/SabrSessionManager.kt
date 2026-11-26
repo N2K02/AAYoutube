@@ -49,6 +49,7 @@ class SabrSessionManager(
     var serverAbrStreamingUrl: String? = null
     var ustreamerConfig: ByteArray? = null
     var lastPlaybackCookie: PlaybackCookie? = null
+    @Volatile
     var lastPlayerPositionSeconds: Double = 0.0
     var poToken: ByteArray? = null
     var clientInfo: StreamerContextOuterClass.StreamerContext.ClientInfo? = null
