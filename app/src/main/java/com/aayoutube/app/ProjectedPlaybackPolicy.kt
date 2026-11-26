@@ -47,12 +47,17 @@ internal object TimestampParam {
     private val part = Regex("(\\d+)([hms])")
     fun parseMs(value: String?): Long? {
         val v = value?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= 16 } ?: return null
-        v.toLongOrNull()?.let { return if (it >= 0) it * 1000 else null }
+        val maxSeconds = Long.MAX_VALUE / 1000
+        v.toLongOrNull()?.let { return if (it in 0..maxSeconds) it * 1000 else null }
         if (!Regex("(\\d+[hms])+").matches(v)) return null
         var sec = 0L
+        var previousUnit = 4_000L
         for (m in part.findAll(v)) {
-            val n = m.groupValues[1].toLong()
-            sec += when (m.groupValues[2]) { "h" -> n * 3600; "m" -> n * 60; else -> n }
+            val n = m.groupValues[1].toLongOrNull() ?: return null
+            val unit = when (m.groupValues[2]) { "h" -> 3600L; "m" -> 60L; else -> 1L }
+            if (unit >= previousUnit || n > (maxSeconds - sec) / unit) return null
+            previousUnit = unit
+            sec += n * unit
         }
         return sec * 1000
     }
@@ -62,8 +67,16 @@ internal object TimestampParam {
 internal object BrowseNavigation {
     fun sameDestination(current: String?, target: String): Boolean {
         if (current.isNullOrBlank()) return false
-        fun norm(u: String) = u.substringBefore('#').trimEnd('/').lowercase()
-        return norm(current) == norm(target)
+        fun norm(u: String): List<String?>? = runCatching {
+            val uri = java.net.URI(u)
+            val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+            val host = uri.host?.lowercase() ?: return@runCatching null
+            val path = uri.rawPath.orEmpty().ifBlank { "/" }
+            val port = if ((scheme == "https" && uri.port == 443) || (scheme == "http" && uri.port == 80)) -1 else uri.port
+            listOf(scheme, host, port.toString(), uri.rawUserInfo, path, uri.rawQuery)
+        }.getOrNull()
+        val a = norm(current) ?: return false
+        return a == norm(target)
     }
 }
 
@@ -249,11 +262,18 @@ internal class ModeTransitionMeter(private val timeoutMs: Long = 30_000L) {
 
     fun cancel() { active = false }
 
+    fun expire(nowMs: Long): Event.Cancelled? {
+        if (!active || nowMs - startedAt < timeoutMs) return null
+        active = false
+        return Event.Cancelled(direction, nowMs - startedAt, "timeout")
+    }
+
     fun onState(id: String, playing: Boolean, buffering: Boolean, userPaused: Boolean, ended: Boolean,
                 positionMs: Long, generation: Int, nowMs: Long): Event? {
         if (!active) return null
+        expire(nowMs)?.let { return it }
         val elapsed = nowMs - startedAt
-        if (id != videoId || userPaused || ended || elapsed > timeoutMs) {
+        if (id != videoId || userPaused || ended) {
             active = false
             val reason = when {
                 id != videoId -> "video-changed"

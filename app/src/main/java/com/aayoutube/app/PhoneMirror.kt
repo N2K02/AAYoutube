@@ -416,8 +416,13 @@ internal object PhoneMirror {
                     clockFailure()
                     return@mediaClock
                 }
-                clockFailures = 0
                 val received = SystemClock.elapsedRealtime()
+                if (epoch == intentEpoch && WebHost.snapshot.value.id == id && clock.id != id) {
+                    syncInFlight = false
+                    stats.stale++
+                    if (!clockFailure()) scheduleSync(PhoneMirrorPolicy.SYNC_MS)
+                    return@mediaClock
+                }
                 val stale = epoch != intentEpoch || seq != syncSeq || web !== w || !visible || suspended.value || signingOut ||
                     !PhoneMirrorPolicy.current(gen, generation, id, clock.id) || WebHost.snapshot.value.id != id
                 // The sample was taken somewhere inside [now, received]: use its midpoint, drop old ones.
@@ -429,6 +434,7 @@ internal object PhoneMirror {
                     if (seq == syncSeq) { syncInFlight = false; scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS) }
                     return@mediaClock
                 }
+                clockFailures = 0
                 if (clock.ad || WebHost.snapshot.value.ad) {
                     stats.ads++
                     holdForAd(w)

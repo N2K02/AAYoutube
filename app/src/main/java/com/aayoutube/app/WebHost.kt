@@ -163,6 +163,12 @@ object WebHost {
     private var skipTraceStartedAt = 0L
     private var modeHandoffStartedAt = 0L
     private val modeMeter = ModeTransitionMeter()
+    private val modeDeadline = Runnable {
+        modeMeter.expire(SystemClock.elapsedRealtime())?.let { e ->
+            modeHandoffStartedAt = 0L
+            AppLog.add("CAR", "Mode handoff cancelled direction=${e.direction} elapsedMs=${e.elapsedMs} reason=${e.reason}")
+        }
+    }
     /** The main renderer keeps playing (audio) after its last car window closed. */
     val carAudioRetained = MutableStateFlow(false)
     /** The retained renderer is in no window: the next car bind may reuse it. */
@@ -184,6 +190,8 @@ object WebHost {
             ModeTransitionMeter.Start.STARTED -> Unit
         }
         modeHandoffStartedAt = now
+        main.removeCallbacks(modeDeadline)
+        if (modeMeter.running) main.postDelayed(modeDeadline, 30_000L)
         AppLog.add("CAR", "Mode handoff start direction=$direction positionMs=${state.posMs} " +
             "generation=$webGeneration playing=${state.playing} buffering=${state.buffering}")
     }
@@ -209,6 +217,7 @@ object WebHost {
             is ModeTransitionMeter.Event.Buffering ->
                 AppLog.add("CAR", "Mode handoff buffering direction=${e.direction} elapsedMs=${e.elapsedMs}")
             is ModeTransitionMeter.Event.Completed -> {
+                main.removeCallbacks(modeDeadline)
                 modeHandoffStartedAt = 0L
                 confirmHandoffByClock(e.direction, state.posMs)
                 AppLog.add("CAR", "Mode handoff complete direction=${e.direction} elapsedMs=${e.elapsedMs} " +
@@ -217,6 +226,7 @@ object WebHost {
                     "rendererRecreated=${e.rendererRecreated} positionMs=${state.posMs}")
             }
             is ModeTransitionMeter.Event.Cancelled -> {
+                main.removeCallbacks(modeDeadline)
                 modeHandoffStartedAt = 0L
                 AppLog.add("CAR", "Mode handoff cancelled direction=${e.direction} elapsedMs=${e.elapsedMs} reason=${e.reason}")
             }
@@ -1634,6 +1644,7 @@ object WebHost {
         unregisterThermalWatch()
         resetResumeBudget()
         cancelTransportTrace()
+        main.removeCallbacks(modeDeadline)
         modeHandoffStartedAt = 0L
         modeMeter.cancel()
         carAudioRetained.value = false

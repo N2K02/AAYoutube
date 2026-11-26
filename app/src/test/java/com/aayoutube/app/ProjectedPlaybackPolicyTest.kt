@@ -365,4 +365,33 @@ class ProjectedPlaybackPolicyTest {
         assertEquals(MirrorLoadGate.State.DEGRADED, gate.update(0, false, 1500, false))
         assertEquals(MirrorLoadGate.State.NORMAL, gate.update(0, false, 2001, false))
     }
+
+    @Test fun timestampParsingRejectsOverflowAndRepeatedUnits() {
+        assertNull(TimestampParam.parseMs("9999999999999999"))
+        assertNull(TimestampParam.parseMs("999999999999999h"))
+        assertNull(TimestampParam.parseMs("1h2h"))
+        assertNull(TimestampParam.parseMs("1s2m"))
+        assertEquals(3_723_000L, TimestampParam.parseMs("1h2m3s"))
+        assertEquals(0L, TimestampParam.parseMs("0"))
+    }
+
+    @Test fun browseIdentityPreservesCaseSensitiveVideoAndSearchValues() {
+        assertTrue(BrowseNavigation.sameDestination("https://M.YOUTUBE.COM:443/", "https://m.youtube.com"))
+        assertFalse(BrowseNavigation.sameDestination("https://m.youtube.com/watch?v=AbCdEfGhIJK", "https://m.youtube.com/watch?v=abcdefghijk"))
+        assertFalse(BrowseNavigation.sameDestination("https://m.youtube.com/results?search_query=ABC", "https://m.youtube.com/results?search_query=abc"))
+        assertFalse(BrowseNavigation.sameDestination("https://m.youtube.com/@Example", "https://m.youtube.com/@example"))
+    }
+
+    @Test fun handoffExpiresWithoutAnyPlaybackCallbackAndOnlyOnce() {
+        val m = ModeTransitionMeter(timeoutMs = 1000)
+        m.start("Video->Music", "vid", 100, 1, true, 100)
+        assertNull(m.expire(1099))
+        assertEquals(ModeTransitionMeter.Start.DUPLICATE, m.start("Video->Music", "vid", 100, 1, true, 1000))
+        assertEquals("timeout", m.expire(1100)?.reason)
+        assertFalse(m.running)
+        assertNull(m.expire(1200))
+        m.start("Music->Video", "vid", 100, 1, true, 1200)
+        assertTrue(m.running)
+        assertNull(m.expire(2100))
+    }
 }
