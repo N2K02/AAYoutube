@@ -43,7 +43,7 @@ class MiniPlayerTransitionContractTest {
         assertTrue(activity.contains("builder.setSourceRectHint(bounds)"))
         assertTrue(activity.contains("setAspectRatio(Rational(16, 9))"))
         assertTrue(activity.contains("watchTabVisible"))
-        assertTrue(activity.contains("if (!entered) WebHost.pip(false)"))
+        assertTrue(activity.contains("if (!entered && !WebHost.carShown) WebHost.pip(false)"))
         assertTrue(activity.contains("WebHost.pip(false) // Clear an interrupted PiP entry"))
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("w.getGlobalVisibleRect(out)"))
