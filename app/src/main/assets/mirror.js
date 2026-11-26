@@ -234,16 +234,19 @@
     if (!v) return 'novideo';
     // Only ever correct towards the same content: a stale or foreign page is left alone.
     if (id && currentVideoId() !== id) return 'mismatch';
+    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
+    applyQuality();
     if (adShowing()) {
+      if (!playing || busy) { if (!v.paused) { expectOwn('pause'); v.pause(); } return 'ad'; }
       if (M.stopped) { M.stopped = false; broadcast(); }
       if (v.paused) { expectOwn('play'); try { var adPlay = v.play(); if (adPlay && adPlay.catch) adPlay.catch(function () {}); } catch (e) {} }
       return 'ad';
     }
-    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
+    if (M.lastId !== id) { M.lastId = id; M.lastSeekAt = 0; auth = null; gestureAt = 0; if (v.playbackRate !== 1) v.playbackRate = 1; }
     if (M.stopped) { M.stopped = false; broadcast(); }
-    if (Date.now() - gestureAt < 1500) return 'user'; // let the user's action reach the engine first
-    if ((cap || '') !== M.cap) { M.cap = cap || ''; M.quality = ''; }
-    applyQuality();
+    // Pause and primary buffering outrank pending phone gestures. Only protect a pending seek.
+    if ((!playing || busy) && !v.paused) { expectOwn('pause'); v.pause(); auth = null; }
+    if (playing && !busy && auth && auth.kind === 'seek' && Date.now() - auth.at < 1500) return 'user';
     rate = rate > 0 ? rate : 1;
     var drift = v.currentTime - posMs / 1000;
     var action = 'ok';
@@ -259,9 +262,9 @@
     if (busy || v.seeking || v.readyState < 3) {
       return String(Math.round(drift * 1000)) + '|wait|' + (v.videoHeight || 0);
     }
-    if (Math.abs(drift) > 1.5 && isFinite(v.duration) && v.readyState > 0) {
-      // Never seek while either player is seeking or buffering, nor stack seeks.
-      if (!busy && !v.seeking && v.readyState >= 3 && Date.now() - M.lastSeekAt > 3000) {
+    if (Math.abs(drift) > 1.5 && isFinite(v.duration)) {
+      // Earlier readiness guard already excludes buffering and seeking.
+      if (Date.now() - M.lastSeekAt > 3000) {
         M.lastSeekAt = Date.now();
         expectOwn('seek');
         v.currentTime = posMs / 1000;
@@ -270,9 +273,7 @@
         action = 'wait';
       }
     } else if (playing && Math.abs(drift) > 0.5) {
-      // No rate correction while either player is buffering or seeking: the drift is not real yet.
-      if (busy || v.seeking || v.readyState < 3) { action = 'wait'; want = v.playbackRate; }
-      else { want = rate * (drift > 0 ? 0.95 : 1.05); action = 'nudge'; }
+      want = rate * (drift > 0 ? 0.95 : 1.05); action = 'nudge';
     } else if (playing && v.playbackRate !== rate && Math.abs(drift) > 0.15) {
       want = v.playbackRate; // keep nudging until close, then settle
       action = 'nudge';
@@ -383,7 +384,9 @@
       if (p !== M.qualityPlayer) { M.qualityPlayer = p; M.quality = ''; } // a replaced player starts unlimited
       var want = wantedQuality();
       var cur = p.getPlaybackQuality ? p.getPlaybackQuality() : M.quality;
-      if (cur === want && M.quality === want) return;
+      var media = vid(), height = media && media.videoHeight || 0;
+      var limit = { small: 360, medium: 480, large: 720, hd720: 1080 }[want] || 1080;
+      if (cur === want && M.quality === want && (!height || height <= limit)) return;
       if (M.quality === want && Date.now() - M.qualityAt < 15000) return; // no churn
       p.setPlaybackQualityRange(want, want);
       M.quality = want;

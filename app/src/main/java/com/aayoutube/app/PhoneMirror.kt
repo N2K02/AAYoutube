@@ -86,6 +86,8 @@ internal object PhoneMirror {
     private var syncStartedAt = 0L
     private var customView: View? = null
     private var fullscreenOwner: Activity? = null
+    private var fullscreenClosing = false
+    private var qualityViolations = 0
     private var customCallback: WebChromeClient.CustomViewCallback? = null
     private val crashGuard = RateGuard(PhoneMirrorPolicy.MAX_CRASHES, PhoneMirrorPolicy.CRASH_WINDOW_MS)
     private val reloadGuard = RateGuard(PhoneMirrorPolicy.MAX_RELOADS, PhoneMirrorPolicy.RELOAD_WINDOW_MS)
@@ -319,6 +321,7 @@ internal object PhoneMirror {
         clockFailures = 0
         recoveryAttempts = 0
         startupCap = ""
+        qualityViolations = 0
         disposeRenderer()
         visible = false
     }
@@ -328,6 +331,7 @@ internal object PhoneMirror {
         hideCustomView()
         val w = web
         web = null
+        fullscreenClosing = false
         generation++
         syncInFlight = false
         runCatching { handler?.remove() }
@@ -429,6 +433,14 @@ internal object PhoneMirror {
                     if (epoch != intentEpoch) { scheduleSync(PhoneMirrorPolicy.MIN_POKE_MS); return@evaluateJavascript }
                     val result = SyncResult.parse(raw)
                     stats.record(result)
+                    if (PhoneMirrorPolicy.exceedsQualityCap(cap, result.heightPx)) {
+                        if (++qualityViolations >= PhoneMirrorPolicy.MAX_QUALITY_VIOLATIONS) {
+                            AppLog.add("MIRROR", "Secondary decoder exceeds degraded quality ceiling; using controls")
+                            failed.value = true
+                            teardown()
+                            return@evaluateJavascript
+                        }
+                    } else qualityViolations = 0
                     if (result.action in setOf("novideo", "mismatch", "none")) {
                         if (++missingMediaCount >= PhoneMirrorPolicy.MISSING_MEDIA_LIMIT) {
                             missingMediaCount = 0
@@ -569,7 +581,7 @@ internal object PhoneMirror {
         return when (PhoneMirrorPolicy.classify(uri.path)) {
             PhoneMirrorPolicy.Page.WATCH -> {
                 val id = PhoneMirrorPolicy.videoId(uri.path, uri.getQueryParameter("v")) ?: return false
-                pageId = id
+                if (alreadyShown) pageId = id
                 val chosen = now - transportAt > PhoneMirrorPolicy.TRANSPORT_SUPPRESS_MS && nav.authorize(PhoneMirrorPolicy.navigationKey(uri.toString()), now)
                 if (!chosen) {
                     if (id == loadedId || id == WebHost.snapshot.value.id) return false
@@ -608,6 +620,7 @@ internal object PhoneMirror {
         customView = null
         customCallback = null
         fullscreenOwner = null
+        fullscreenClosing = callback != null
         (v.parent as? ViewGroup)?.removeView(v)
         callback?.onCustomViewHidden()
     }
@@ -688,10 +701,14 @@ internal object PhoneMirror {
                     transportAt = 0L
                     nav.onIntent(PhoneMirrorPolicy.navigationKey(url), SystemClock.elapsedRealtime())
                     onNavigatedTo(Uri.parse(url), alreadyShown = false)
+                    AppLog.add("MIRROR", "Phone link dispatched")
+                } else {
+                    AppLog.add("MIRROR", "Ignored link from obsolete or unavailable phone document")
                 }
             },
             dispatch = { task -> val epoch = generation; main.post { if (generation == epoch) task() } },
             initialQuality = { startupCap },
+            canAcceptNavigation = { !hiddenFlag && !WebHost.sessionClearing },
         ), "AAYMirror")
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             handler = WebViewCompat.addDocumentStartJavaScript(w, script(), setOf("https://*.youtube.com"))
@@ -699,7 +716,7 @@ internal object PhoneMirror {
         // YouTube's own fullscreen button works inside the phone player.
         w.webChromeClient = object : WebChromeClient() {
             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-                if (!current(w, t) || customView != null) { callback.onCustomViewHidden(); return }
+                if (!current(w, t) || customView != null || fullscreenClosing) { callback.onCustomViewHidden(); return }
                 val owner = activityOf(wrapper?.baseContext)
                 val host = owner?.window?.decorView as? ViewGroup
                 if (owner == null || host == null || owner.isFinishing || owner.isDestroyed) { callback.onCustomViewHidden(); return }
@@ -711,6 +728,7 @@ internal object PhoneMirror {
 
             override fun onHideCustomView() {
                 if (web !== w) return
+                if (fullscreenClosing) { fullscreenClosing = false; return }
                 val v = customView ?: return
                 customView = null
                 customCallback = null
@@ -740,6 +758,8 @@ internal object PhoneMirror {
                 pageHost = runCatching { Uri.parse(url).host }.getOrNull()
                 if (web !== view) return
                 // A new document invalidates the previous page's navigation and transport authorisation.
+                hideCustomView()
+                fullscreenClosing = false
                 generation++
                 syncSeq++
                 syncInFlight = false
@@ -804,6 +824,7 @@ internal class MirrorBridge(
     private val onIntent: (url: String) -> Unit = {},
     private val dispatch: (() -> Unit) -> Unit = { it() },
     private val initialQuality: () -> String = { "" },
+    private val canAcceptNavigation: () -> Boolean = { true },
 ) {
     private var currentDoc = 0
     private var lastSeq = 0L
@@ -842,7 +863,7 @@ internal class MirrorBridge(
     @Synchronized
     fun intent(url: String?, providedToken: String?, doc: Int): Boolean {
         if (providedToken != token || doc == 0 || doc != currentDoc || url == null || url.length > 2_048) return false
-        if (PhoneMirrorPolicy.navigationKey(url) == null) return false
+        if (!canAcceptNavigation() || !PhoneMirrorPolicy.supportedLink(url)) return false
         dispatch { synchronized(this) { if (doc == currentDoc) onIntent(url) } }
         return true
     }
@@ -1047,6 +1068,7 @@ internal object PhoneMirrorPolicy {
     const val SUSPENDED_RELEASE_MS = 12_000L
     const val MISSING_MEDIA_LIMIT = 4
     const val MAX_CLOCK_FAILURES = 5
+    const val MAX_QUALITY_VIOLATIONS = 5
     const val MAX_MEDIA_RECOVERIES = 2
     const val TRANSPORT_SUPPRESS_MS = 2_500L
     const val THERMAL_DEGRADE = 2   // PowerManager.THERMAL_STATUS_MODERATE
@@ -1114,6 +1136,17 @@ internal object PhoneMirrorPolicy {
         val path = u.rawPath.orEmpty().ifBlank { "/" }
         "$host$path?$query"
     }.getOrNull()
+
+    fun exceedsQualityCap(cap: String, height: Int?): Boolean = cap == "small" && height != null && height > 360
+
+    fun supportedLink(url: String): Boolean = runCatching {
+        if (navigationKey(url) == null) return@runCatching false
+        val u = java.net.URI(url)
+        val p = u.path.orEmpty().ifBlank { "/" }
+        p == "/" || p == "/watch" || p == "/results" || p == "/playlist" ||
+            p.startsWith("/live/") || p.startsWith("/shorts/") || p.startsWith("/@") ||
+            p.startsWith("/channel/") || p.startsWith("/c/") || p.startsWith("/user/") || p == "/feed/subscriptions"
+    }.getOrDefault(false)
 
     /** In step: check rarely (less renderer work); drifting or unknown: check soon. */
     fun nextSyncMs(driftMs: Long?): Long =

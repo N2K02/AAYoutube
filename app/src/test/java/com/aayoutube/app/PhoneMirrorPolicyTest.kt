@@ -410,4 +410,33 @@ class PhoneMirrorPolicyTest {
         assertTrue(bridge.intent("https://m.youtube.com/watch?v=AAAAAAAAAAA&t=42", "secret", doc))
         assertEquals(listOf("https://m.youtube.com/watch?v=AAAAAAAAAAA&t=42"), got)
     }
+
+    @Test fun navigationAcceptanceRequiresSupportedDestinationAndAvailableDocument() {
+        var available = false
+        val selected = mutableListOf<String>()
+        val bridge = MirrorBridge("secret", { !available }, { _, _, _ -> }, { selected += it },
+            canAcceptNavigation = { available })
+        val doc = bridge.open("secret")
+        val link = "https://m.youtube.com/watch?v=AAAAAAAAAAA&t=10"
+        assertFalse(bridge.intent(link, "secret", doc))
+        available = true
+        assertFalse(bridge.intent("https://m.youtube.com/account", "secret", doc))
+        assertTrue(bridge.intent(link, "secret", doc))
+        assertEquals(listOf(link), selected)
+    }
+
+    @Test fun decodedQualityViolationsAreOnlyFlaggedUnderPressure() {
+        assertFalse(PhoneMirrorPolicy.exceedsQualityCap("", 1080))
+        assertFalse(PhoneMirrorPolicy.exceedsQualityCap("small", null))
+        assertFalse(PhoneMirrorPolicy.exceedsQualityCap("small", 360))
+        assertTrue(PhoneMirrorPolicy.exceedsQualityCap("small", 720))
+    }
+
+    @Test fun accountResetCannotFinishWhileCookieRemovalIsPending() {
+        val source = listOf(java.io.File("app/src/main/java/com/aayoutube/app/WebHost.kt"),
+            java.io.File("../app/src/main/java/com/aayoutube/app/WebHost.kt")).first { it.isFile }.readText()
+        assertTrue(source.contains("!sessionHomePending || sessionCookiePending"))
+        assertTrue(source.contains("url == sessionResetUrl && view.url == url"))
+        assertTrue(source.contains("if (!sessionCookiePending)"))
+    }
 }

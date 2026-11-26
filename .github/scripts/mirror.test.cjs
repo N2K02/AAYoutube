@@ -553,3 +553,31 @@ test('startup quality cap is enforced before the first play', async () => {
   await p.video.play();
   assert.deepEqual(p.qualityCalls.at(-1), ['small', 'small']);
 });
+
+test('authoritative pause is not delayed by a phone gesture', () => {
+  const p = page();
+  p.M.sync(0, true, 1, 'AAAAAAAAAAA');
+  p.fire('click', tapTarget());
+  p.M.sync(0, false, 1, 'AAAAAAAAAAA', false, '');
+  assert.equal(p.video.paused, true);
+});
+test('secondary advertisements stay paused during primary pause or buffering', () => {
+  const p = page();
+  p.setAd(true);
+  p.video.paused = false;
+  assert.equal(p.M.sync(0, false, 1, 'AAAAAAAAAAA', false, 'small'), 'ad');
+  assert.equal(p.video.paused, true);
+  assert.equal(p.M.sync(0, true, 1, 'AAAAAAAAAAA', true, 'small'), 'ad');
+  assert.equal(p.video.paused, true);
+  assert.equal(p.M.sync(0, true, 1, 'AAAAAAAAAAA', false, 'small'), 'ad');
+  assert.equal(p.video.paused, false);
+});
+test('rejected native navigation does not consume the click', () => {
+  const p = page();
+  p.sandbox.AAYMirror.intent = () => false;
+  const link = { tagName: 'A', href: 'https://m.youtube.com/watch?v=BBBBBBBBBBB',
+    closest: (sel) => /^a\[href\]/.test(sel) ? link : null };
+  let prevented = false;
+  p.fire('click', link, { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false);
+});
