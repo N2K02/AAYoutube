@@ -929,7 +929,7 @@ object WebHost {
      * The engine's real media clock with its identity and health. The answer is dropped if the
      * engine's renderer was replaced while the request was pending.
      */
-    fun mediaClock(result: (EngineClock) -> Unit) {
+    internal fun mediaClock(result: (EngineClock) -> Unit) {
         val w = web ?: return
         val gen = webGeneration
         w.evaluateJavascript("(function(){var v=document.querySelector('video.html5-main-video')||" +
