@@ -138,7 +138,7 @@ class DefaultSabrSegmentFetcher(
         response.use { resp ->
             if (!resp.isSuccessful) {
                 logger.e(TAG) { "SABR request failed code=${resp.code} key=${request.key}" }
-                throw IOException("SABR request failed with HTTP ${resp.code}")
+                throw SabrHttpException(resp.code)
             }
 
             val umpResult = when (responseHandlingMode) {

@@ -201,8 +201,10 @@ internal class NativeAudioEngine(
 
         override fun onPlayerError(error: PlaybackException) {
             val s = stream ?: return
-            val wasOffloaded = offloadActive || (offloadRequested && error.errorCode in 5001..5004)
-            listener.log("event=error code=${error.errorCodeName} offloadActive=$offloadActive offloadRequested=$offloadRequested")
+            val rejected = SabrRejectionPolicy.terminalStatus(error)
+            val detail = rejected?.let { "SABR_HTTP_$it" } ?: error.errorCodeName
+            val wasOffloaded = rejected == null && (offloadActive || (offloadRequested && error.errorCode in 5001..5004))
+            listener.log("event=error code=$detail offloadActive=$offloadActive offloadRequested=$offloadRequested")
             if (wasOffloaded && !retriedWithoutOffload) {
                 // Offload caused (or coincided with) the failure: retry once without it, same position.
                 retriedWithoutOffload = true
@@ -219,7 +221,7 @@ internal class NativeAudioEngine(
                 if (wasStarted && player != null) { started = true; player?.volume = 1f; player?.playWhenReady = resume }
                 return
             }
-            listener.onError(offloaded = false, codecMime = s.codecMime, detail = error.errorCodeName)
+            listener.onError(offloaded = false, codecMime = s.codecMime, detail = detail)
         }
     }
 

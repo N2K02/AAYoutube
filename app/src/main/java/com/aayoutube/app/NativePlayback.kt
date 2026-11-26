@@ -31,6 +31,7 @@ internal object NativePlayback {
     private var capabilities: AudioCapabilities? = null
     private var capabilitiesRoute: AudioRoute? = null
     private var attemptedVideo = ""
+    private val sabrRejections = SabrRejectionPolicy.Blocks()
     private var configuredProvider: Pair<String, Boolean>? = null
     private var resolveSerial = 0
     private var nativePos = 0L
@@ -87,6 +88,7 @@ internal object NativePlayback {
         val config = flags.nativeAudioProviderUrl to flags.localSabr
         if (configuredProvider == config) return
         configuredProvider = config
+        sabrRejections.clear()
         returnToWeb("provider-changed")
         val provider = AuthorizedAudioProvider.create(config.first)
             ?: if (config.second) LocalSabrProvider() else null
@@ -109,6 +111,7 @@ internal object NativePlayback {
         if (!audioOnlyAllowed()) return
         if (coordinator?.phase?.let { it != PlaybackEngineCoordinator.Phase.WEB } == true) return
         if (s.id == attemptedVideo) return
+        if (sabrRejections.blocked(s.id, SystemClock.elapsedRealtime())) return
         val decision = PlaybackHandoffPolicy.canHandToNative(s, featureOn = true)
         if (!decision.allowed) return
         attemptedVideo = s.id
@@ -194,6 +197,12 @@ internal object NativePlayback {
                 AppLog.add("NATIVE-AUDIO", "offload=disabled-after-failure codec=$codecMime route=$route detail=$detail retry=no-offload")
                 return
             }
+            if (SabrRejectionPolicy.isTerminalDetail(detail)) {
+                coordinator?.nativeVideoId?.takeIf { it.isNotBlank() }?.let {
+                    sabrRejections.record(it, SystemClock.elapsedRealtime())
+                    AppLog.add("NATIVE-AUDIO", "source=rejected reason=$detail fallback=web retry=blocked-for-session")
+                }
+            }
             coordinator?.onNativeError(detail)
         }
 
@@ -213,6 +222,7 @@ internal object NativePlayback {
     }
 
     fun release() {
+        sabrRejections.clear()
         resolveSerial++
         coordinator?.release()
         attemptedVideo = ""

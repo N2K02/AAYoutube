@@ -102,3 +102,6 @@ Enable Native audio engine and On-device SABR in its settings (only for content 
 
 ### Review hardening
 Native handoff is limited to unbuffered 1× playback until speed synchronization is implemented. User transport aborts preparation, permanent native pauses survive a return to WebView, and unexpected WebView playback immediately stops native audio. SABR diagnostics no longer retain raw protobuf request JSON; processor logs are muted. Malformed stream expiry is rejected. CI and device playback remain subject to verification.
+
+### Server rejection handling
+A device test reached native SABR initialization but returned HTTP 403 before audio decoding. HTTP 401/403/410 now fail without Media3 retries, record a status-only reason, keep the WebView engine, and suppress repeated attempts for that video for up to 30 minutes or until the provider is changed/session released. No authorization bypass is attempted. Successful native playback still requires a server-accepted session.

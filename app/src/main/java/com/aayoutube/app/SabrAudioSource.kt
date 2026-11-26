@@ -8,6 +8,10 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.dash.DefaultDashChunkSource
 import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import androidx.media3.common.C
+import com.googlevideo.sabr.datasource.SabrHttpException
 import com.googlevideo.sabr.SabrSession
 import com.googlevideo.sabr.datasource.DefaultSabrSegmentFetcher
 import com.googlevideo.sabr.datasource.SabrDataSourceFactory
@@ -70,6 +74,11 @@ internal class SabrAudioSource private constructor(
                 segmentFetcher = DefaultSabrSegmentFetcher(callFactory = client, maxFollowUpAttempts = 2))
             val manifest = DataSource.Factory { ByteArrayDataSource(xml.toByteArray(Charsets.UTF_8)) }
             val source = DashMediaSource.Factory(DefaultDashChunkSource.Factory(chunks), manifest)
+                .setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+                    override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long =
+                        if (SabrRejectionPolicy.terminalStatus(loadErrorInfo.exception) != null) C.TIME_UNSET
+                        else super.getRetryDelayMsFor(loadErrorInfo)
+                })
                 .createMediaSource(MediaItem.Builder().setUri("https://example.invalid/aay.sabr.mpd")
                     .setMimeType(MimeTypes.APPLICATION_MPD).build())
             return SabrAudioSource(source, client, manager, closed)
