@@ -68,6 +68,7 @@ data class FeatureFlags(
         .put("hideShorts", hideShorts)
         .put("hidePromos", hidePromos)
         .put("backgroundPlay", backgroundPlay)
+        .put("nativeAudio", nativeAudio) // diagnostic opt-in only; never expose resolver URL
         .put("lowQuality", lowQualityInBackground)
         .put("preferredQuality", preferredQuality)
         .put("autoContinue", autoContinue)

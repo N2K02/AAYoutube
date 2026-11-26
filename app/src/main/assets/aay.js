@@ -1460,6 +1460,30 @@
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
   }
+  // Feasibility probe only. Never transfer signed URLs, tokens or response bodies to Android.
+  // A stale SPA response must not be attributed to the currently playing video.
+  function audioStreamProbe(p) {
+    var out = { audioFormats: -1, audioDirect: -1, audioWrapped: -1, audioAac: -1, audioOpus: -1 };
+    if (!CFG.nativeAudio || BROWSE || isAd()) return out;
+    try {
+      var id = qualityVideoId(), response = p && p.getPlayerResponse ? p.getPlayerResponse() : null;
+      function matches(r) { return r && r.videoDetails && r.videoDetails.videoId === id && id; }
+      if (!matches(response)) response = window.ytInitialPlayerResponse;
+      if (!matches(response)) return out;
+      var formats = response.streamingData && response.streamingData.adaptiveFormats;
+      if (!Array.isArray(formats)) return out;
+      out = { audioFormats: 0, audioDirect: 0, audioWrapped: 0, audioAac: 0, audioOpus: 0 };
+      formats.slice(0, 256).forEach(function (f) {
+        if (!f || typeof f.mimeType !== 'string' || !/^audio\//i.test(f.mimeType)) return;
+        out.audioFormats++;
+        if (typeof f.url === 'string' && /^https:\/\//i.test(f.url)) out.audioDirect++;
+        else if (f.signatureCipher || f.cipher) out.audioWrapped++;
+        if (/mp4a|audio\/aac/i.test(f.mimeType)) out.audioAac++;
+        if (/opus/i.test(f.mimeType)) out.audioOpus++;
+      });
+    } catch (e) {}
+    return out;
+  }
   function applyPlayerPrefs() {
     if (BROWSE) return;
     var v = getVideo(), p = ytPlayer();
@@ -2047,6 +2071,7 @@
       var displayed = perf.rvfcTotal >= 0 && perf.rvfcPrev >= 0 && perf.rvfcTotal >= perf.rvfcPrev ?
         perf.rvfcTotal - perf.rvfcPrev : -1;
       if (playing && N && typeof N.perf === 'function') try {
+        var audioProbe = audioStreamProbe(p);
         N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
           tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
           sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
@@ -2059,7 +2084,9 @@
           clockStallMs: clockStallMs,
           dupReports: perf.dupReports, observed: pageObserved, level: perfState.level,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, audioOnly: !!A.audioOnly }), BRIDGE_TOKEN);
+          codec: codec, tier: tier, audioOnly: !!A.audioOnly,
+          audioFormats: audioProbe.audioFormats, audioDirect: audioProbe.audioDirect,
+          audioWrapped: audioProbe.audioWrapped, audioAac: audioProbe.audioAac, audioOpus: audioProbe.audioOpus }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;

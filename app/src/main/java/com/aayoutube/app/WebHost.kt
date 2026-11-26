@@ -1326,6 +1326,12 @@ object WebHost {
                 "audioOnly=${d.optBoolean("audioOnly", false)} car=$carShown mode=${mode.value} " +
                 "javaHeapKb=${(Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }) / 1024} " +
                 "nativeHeapKb=${android.os.Debug.getNativeHeapAllocatedSize() / 1024}")
+            if (Features.current.nativeAudio) {
+                fun audioCount(key: String) = d.optInt(key, -1).coerceIn(-1, 256)
+                AppLog.add("NATIVE-AUDIO", "probe=metadata-only audioFormats=${audioCount("audioFormats")} " +
+                    "direct=${audioCount("audioDirect")} wrapped=${audioCount("audioWrapped")} " +
+                    "aac=${audioCount("audioAac")} opus=${audioCount("audioOpus")}")
+            }
             AppLog.add("PERF", "engine ${PerformanceMonitor.summary()} " +
                 "rendererCpuPct=adb-only(${PerformanceMonitor.diagnostics.liveRenderers()} live)")
         }

@@ -73,3 +73,7 @@ Settings → Native audio engine → Authorized HTTPS resolver URL. Save the URL
 ```
 
 The resolver must use HTTPS without redirects; audio URLs must be HTTPS. No custom headers, credentials or stream URLs are logged by the provider. Missing, invalid or unauthorized manifests fall back to WebView. The authorization field is an operator assertion, not automatic verification of rights. The official YouTube API does not offer general separate audio playback. Native offload remains unverified until a real source is configured and tested.
+
+## First-party WebView resolver feasibility probe
+
+With Native audio enabled, existing playback diagnostics report aggregate audio format counts from matching current-player metadata: `probe=metadata-only audioFormats=… direct=… wrapped=… aac=… opus=…`. -1 means unavailable or not attributable to the active video. The probe never exports stream URLs, signatures, credentials or raw responses and never starts native playback. A positive direct count establishes only that a URL is present, not that it is transferable, licensed, valid for the native client or offload-capable. No signature or challenge handling is implemented.

@@ -2551,3 +2551,27 @@ test('repeated background reports keep the saver timer and heat reduces the hidd
   p.window.__aay.setBg(false);
   assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
 });
+
+
+test('native audio feasibility probe reports counts only and refuses stale video metadata', () => {
+  const p = playerPage({ quality: true, cfg: { nativeAudio: true } });
+  p.flush();
+  const response = { videoDetails: { videoId: '86p7SP34qSc' }, streamingData: { adaptiveFormats: [
+    { mimeType: 'audio/mp4; codecs="mp4a.40.2"', url: 'https://example.org/private-token' },
+    { mimeType: 'audio/webm; codecs="opus"', signatureCipher: 'private-cipher' },
+    { mimeType: 'video/mp4', url: 'https://example.org/video' },
+  ] } };
+  p.player.getPlayerResponse = () => response;
+  p.advance(30000); p.runIntervals();
+  let r = p.perfReports.at(-1);
+  assert.equal(r.audioFormats, 2); assert.equal(r.audioDirect, 1); assert.equal(r.audioWrapped, 1);
+  assert.equal(r.audioAac, 1); assert.equal(r.audioOpus, 1);
+  assert.equal(JSON.stringify(r).includes('private'), false);
+  response.videoDetails.videoId = 'stale';
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).audioFormats, -1);
+  response.videoDetails.videoId = '86p7SP34qSc';
+  p.window.__aay.config({ nativeAudio: false });
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).audioFormats, -1);
+});
