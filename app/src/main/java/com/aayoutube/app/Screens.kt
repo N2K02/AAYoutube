@@ -167,7 +167,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
     // Append to preserve previously saved tab ordinals when updating the app.
-    // (Ordinal 6 was the removed "Experimental video" page; a saved tab there opens this.)
+    // (Ordinal 6 was the removed Experimental video page; a saved tab there opens this.)
     NativeAudio("Native audio engine", Icons.Filled.GraphicEq),
     InstallationHelp("Android Auto installation", Icons.Filled.InstallMobile),
     SleepTimer("Sleep timer", Icons.Filled.Timer),

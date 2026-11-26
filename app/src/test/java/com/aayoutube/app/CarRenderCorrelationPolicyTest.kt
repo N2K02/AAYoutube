@@ -124,9 +124,10 @@ class CarRenderCorrelationPolicyTest {
         assertTrue(genericCopy.contains("CarVideoPatternProbe.state.value.visible"))
         assertTrue(genericCopy.contains("CarDirectSurfaceProbe.state.value.visible"))
         assertTrue(window.contains("CarDirectSurfaceProbe.state.value.visible"))
-        assertTrue(ui.contains("CarRenderCorrelationPolicy.assess("))
-        assertTrue(ui.contains("CarRenderCorrelationPolicy.report("))
-        assertTrue(ui.contains("CLIPBOARD_SERVICE"))
+        // The settings page that showed the correlation report was removed with Experimental video.
+        assertFalse(ui.contains("CarRenderCorrelationPolicy.assess("))
+        assertFalse(ui.contains("CarRenderCorrelationPolicy.report("))
+        assertFalse(ui.contains("CLIPBOARD_SERVICE"))
         assertFalse(ui.contains("windowReadback.contains(\"detected\")"))
     }
 }

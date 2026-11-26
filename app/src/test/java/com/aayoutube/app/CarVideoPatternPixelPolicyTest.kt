@@ -83,8 +83,6 @@ class CarVideoPatternPixelPolicyTest {
         assertTrue(car.contains("delay(450L)"))
         // Manual car diagnostics were only reachable from the removed Experimental video page.
         assertFalse(ui.contains("carPattern.windowReadback"))
-        assertTrue(ui.contains("Visible"))
-        assertTrue(ui.contains("Not visible"))
         assertFalse(probe.contains("WebView("))
         assertFalse(probe.contains("WebHost.cmd("))
         assertFalse(probe.contains("writeBytes("))
