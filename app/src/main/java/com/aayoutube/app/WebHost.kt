@@ -2207,7 +2207,7 @@ object WebHost {
         }
     }
 
-    private val droppedResume = Runnable {
+    private val droppedResume: Runnable = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         // Allow native playback state to settle before checking other media.
@@ -2215,7 +2215,7 @@ object WebHost {
         main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)
     }
 
-    private val droppedResumeJudge = Runnable {
+    private val droppedResumeJudge: Runnable = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         // A pause right after a connection loss or network switch is the network's: recover the
