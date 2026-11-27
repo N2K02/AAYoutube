@@ -44,7 +44,7 @@ class OtherMediaHoldPolicyTest {
         fun read(p: String) = listOf(File(p), File("../$p")).first { it.isFile }.readText()
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)"))
-        val judge = web.substringAfter("private val droppedResumeJudge = Runnable {").substringBefore("\n    }")
+        val judge = web.substringAfter("private val droppedResumeJudge: Runnable = Runnable {").substringBefore("\n    }")
         assertTrue(judge.contains("val active = otherMediaActive()"))
         // Recovery resumes as an automatic Play (a real hold still wins over it).
         assertTrue(judge.contains("if (active) startOtherMediaHold(\"native resume\") else autoPlay()"))

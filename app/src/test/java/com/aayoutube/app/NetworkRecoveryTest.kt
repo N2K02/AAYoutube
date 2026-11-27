@@ -57,9 +57,9 @@ class NetworkRecoveryTest {
         val h = host()
         val resume = h.substringAfter("private fun resumeIfDropped(").substringBefore("private fun cancelOtherMediaWork")
         assertTrue(resume.indexOf("if (!NetworkMonitor.online)") < resume.indexOf("resumeTries++"))
-        val judge = h.substringAfter("private val droppedResumeJudge = Runnable {").substringBefore("// ----")
+        val judge = h.substringAfter("private val droppedResumeJudge: Runnable = Runnable {").substringBefore("// ----")
         assertTrue(judge.indexOf("NetworkMonitor.recentlyDisrupted()") < judge.indexOf("startOtherMediaHold(\"native resume\")"))
-        assertTrue(h.contains("!NetworkMonitor.recentlyDisrupted() && otherMediaActive()"))
+        assertTrue(h.contains("!NetworkMonitor.recentlyDisrupted() && qualityReloadDelay() == 0L && otherMediaActive()"))
         // Reconnect: budget reset, settle, recover the same video at its last good position.
         val restored = h.substringAfter("internal fun onNetworkRestored(outageMs: Long)").substringBefore("private val networkResume")
         assertTrue(restored.contains("resetResumeBudget()"))
