@@ -226,7 +226,8 @@
     layoutChanges: 0, refits: 0, paintRecoveries: 0, longTasks: 0, lastAt: Date.now(),
     lastFrames: -1, lastDropped: -1, dupReports: 0, stalls: 0, stallMs: 0, stallAt: 0,
     lastClock: -1, lastClockSrc: null, rvfcTotal: -1, rvfcPrev: -1,
-    rvfcSrc: null, rvfcHandle: 0, rvfcPending: false };
+    rvfcSrc: null, rvfcHandle: 0, rvfcPending: false, rvfcAt: 0, rvfcPrevAt: 0,
+    frameWindow: null, confirmedDropPct: -1, confirmedDropAt: 0, confirmedDropSrc: null, confirmedDropId: '' };
   /* Adaptive performance level from the app (0 normal, 1 elevated, 2 high, 3 severe):
    * scales nonessential DOM work, sets a primary quality ceiling (high 1080p, severe 720p;
    * Auto stays adaptive under it) and the diagnostics window. Playback events stay immediate. */
@@ -310,13 +311,17 @@
     A.transit(4000);
     console.log('[aay] car mode handoff started');
   };
-  A.audioMode = function (on) {
-    var next = !!on && !BROWSE;
-    if (next === A.audioOnly) return;
+  A.audioMode = function (retained, background) {
+    var bg = !!background && !BROWSE && CFG.backgroundPlay !== false && !A.inPip && !A.isCar;
+    var next = (!!retained && !BROWSE) || bg;
+    if (next === A.audioOnly && bg === !!A.backgroundAudioMode) return;
+    A.backgroundAudioMode = bg;
     A.audioOnly = next;
-    console.log('[aay] audio-only mode=' + next);
+    console.log('[aay] lightweight audio mode=' + next + ' background=' + bg);
     // Leaving audio-only: catch up with the DOM once (car/phone layout, ads, dialogs).
     if (!next) lastNonCriticalDomAt = 0;
+    if (!retained) { qualityApply.key = ''; applyPreferredQuality(); }
+    refreshPageObserver();
     if (tickTimer) { clearTimeout(tickTimer); tickTimer = 0; }
     schedTick();
   };
@@ -329,10 +334,46 @@
   // unrelated DOM clicks must not disable interruption recovery.
   var PLAY_PAUSE_BUTTON = '.ytp-play-button, #play-pause-button, .play-pause-button,' +
     'ytm-play-pause-button, .ytm-player-controls-play-pause-button,' +
-    '.player-play-pause-button, .player-play-pause-icon,' +
+    '.player-play-pause-button, .player-play-pause-icon, .player-control-play-pause-icon,' +
     'button[aria-label*="pause" i], button[aria-label*="play" i],' +
     'button[title*="pause" i], button[title*="play" i],' +
     '[data-testid="control-button-pause"], [data-testid="control-button-playpause"]';
+  var MOBILE_CENTER = '.player-control-play-pause-icon,.player-play-pause-icon,.player-play-pause-button,.ytm-player-controls-play-pause-button,ytm-play-pause-button,.ytp-large-play-button,.ytp-play-button';
+  var centerNodes = [];
+  var centerCount = 0;
+  function mobileCenterButton(target) {
+    var control = target && typeof target.closest === 'function' ? target.closest(MOBILE_CENTER) : null;
+    // Independently validate the matched element; a quality/menu control is never transport.
+    return control && typeof control.matches === 'function' && control.matches(MOBILE_CENTER) ? control : null;
+  }
+  function updateCenterTransport(v) {
+    var root = document.documentElement;
+    if (!root) return;
+    var active = !BROWSE && !A.audioOnly && !nativeAudio.owned && !isAd() && !!v && !v.ended && /^\/(watch|live\/)/.test(location.pathname);
+    root.classList.toggle('aay-center-transport', active);
+    root.classList.toggle('aay-center-playing', active && !v.paused);
+    // Reconcile replacement nodes as YouTube rebuilds the player during a resize.
+    var next = [];
+    if (active) {
+      var candidates = document.querySelectorAll(MOBILE_CENTER);
+      for (var i = 0; i < candidates.length; i++) {
+        var button = candidates[i];
+        if (!button.classList || !button.matches || !button.matches(MOBILE_CENTER)) continue;
+        // Avoid nested duplicate glyphs; prefer the outer interactive control.
+        if (button.parentElement && mobileCenterButton(button.parentElement)) continue;
+        if (button.style && getComputedStyle(button).position === 'static') button.classList.add('aay-center-relative');
+        button.classList.add('aay-center-control');
+        next.push(button);
+      }
+    }
+    centerNodes.forEach(function (node) {
+      if (next.indexOf(node) < 0 && node.classList) {
+        node.classList.remove('aay-center-control');
+        node.classList.remove('aay-center-relative');
+      }
+    });
+    centerNodes = next; centerCount = next.length;
+  }
   function actualPlayPauseButton(target) {
     return target && typeof target.closest === 'function' ? target.closest(PLAY_PAUSE_BUTTON) : null;
   }
@@ -371,6 +412,8 @@
       lastTransportPointer = { video: v, target: t, at: now };
     if (v.paused && (playerControl || insideVideo || playerSurface)) {
       userResumeEligibleUntil = Date.now() + 1500;
+      // The user's own Play beats an "other app is playing" hold (it may be a false positive).
+      if (bgWatch.held) { bgWatch.held = false; console.log('[aay] user Play ends media hold'); }
       PAUSED = false;
       bgWatch.explicitPause = false;
       bgWatch.wanted = true;
@@ -387,9 +430,19 @@
   // Letting YouTube handle this click calls Play again instead of Pause.
   // Intercept only a genuine Play/Pause control when its state is proven stale.
   document.addEventListener('click', function (e) {
-    if (BROWSE || e.isTrusted === false || !actualPlayPauseButton(e.target)) return;
+    if (BROWSE || e.isTrusted === false || typeof e.preventDefault !== 'function' ||
+        typeof e.stopImmediatePropagation !== 'function') return;
+    var center = mobileCenterButton(e.target);
+    if (!center && !actualPlayPauseButton(e.target)) return;
     var v = getVideo(), p = ytPlayer();
-    if (!v || v.paused || v.ended || !p || typeof p.getPlayerState !== 'function') return;
+    if (!v || v.ended || A.audioOnly || nativeAudio.owned || isAd()) return;
+    if (center) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (!v.paused) { noteManualPause(); A.cmd('pause'); }
+      else A.cmd('play', 'user');
+      updateCenterTransport(v); schedReport(0); return;
+    }
+    if (v.paused || !p || typeof p.getPlayerState !== 'function') return;
     var st;
     try { st = p.getPlayerState(); } catch (err) { return; }
     if (st !== 2) return; // consistent player state: let YouTube handle the click
@@ -410,6 +463,7 @@
         PAUSED = false;
         bgWatch.explicitPause = false;
         bgWatch.wanted = true;
+        bgWatch.held = false;
         userResumeEligibleUntil = Date.now() + 1500;
         userPauseEligibleUntil = 0;
       } else userPauseEligibleUntil = Date.now() + 2000;
@@ -431,11 +485,14 @@
     HTMLMediaElement.prototype.pause = function () {
       var manual = !allowPause && Date.now() <= userPauseEligibleUntil;
       if (!allowPause && !manual && holding() && !this.ended) {
+        if (this.paused) return; // repeated pause on a silent element is a no-op
         ignored++;
         // YouTube already marked itself paused: resync its UI once the pause is dropped.
         // A blocked pause can be generated by playVideo() itself. Never reset
         // the cooldown here or the repair becomes a self-sustaining loop.
-        scheduleStateRepair(400);
+        // No visible icon to repair in background/audio-only mode; an already paused element
+        // cannot need a Play-state repair. Real resume is handled by the bounded watchdog.
+        if (!this.paused && !A.audioOnly && (!A.isBg || A.inPip || A.isCar)) scheduleStateRepair(400);
         // Some YouTube builds request hundreds of pauses during a PiP resize.
         // Capturing an Error stack on every intercepted call causes real UI jank.
         if (ignored <= 2 || ignored % 250 === 0) {
@@ -1030,7 +1087,12 @@
     root.classList.toggle('aay-vstretch', CFG.videoFit === 'stretch');
   }
   function applyCss() {
-    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS;
+    var css = CSS_PIP + CSS_CAR + CSS_CAR_GUARD + CSS_UNMUTE + CSS_VFIT + CSS_EFFECTS +
+      // CSS geometry, not data: SVG URLs (which may be blocked by the page's CSP).
+      'html.aay-center-transport .aay-center-relative {position:relative!important;}' +
+      'html.aay-center-transport .aay-center-control > * {visibility:hidden!important;}' +
+      'html.aay-center-transport .aay-center-control::after {content:"";display:block;position:absolute;left:50%;top:50%;width:44%;height:52%;transform:translate(-50%,-50%);pointer-events:none;box-sizing:border-box;background:white;clip-path:polygon(16% 0,100% 50%,16% 100%);}' +
+      'html.aay-center-transport.aay-center-playing .aay-center-control::after {clip-path:none;background:linear-gradient(to right,white 0%,white 34%,transparent 34%,transparent 66%,white 66%,white 100%);}';
     applyVideoFit();
     // Hide promos must control the app-install banners as well as upsell dialogs.
     if (CFG.hidePromos) css += CSS_OPEN_APP;
@@ -1177,11 +1239,20 @@
   }
   var lastSent = null;
   var lastStateJson = '', lastStateAt = 0, STATE_REPEAT_MS = 15000;
+  /* Experimental native audio: while the app's Media3 engine owns playback of `id`, the web
+   * video stays paused (explicit pause: no background recovery resumes it) at the lowest
+   * quality so it neither sounds nor downloads/decodes video. Metadata and queue still report. */
+  var nativeAudio = { owned: false, id: '' };
   // Nothing on screen shows the position while hidden (Android extrapolates the
   // media-session position): send progress less often; state changes stay instant.
   var BG_PROGRESS_MS = 10000;
   function report() {
     if (!N) return;
+    // The page moved to another video: native ownership was only for the previous one.
+    if (nativeAudio.owned && nativeAudio.id && qualityVideoId() && qualityVideoId() !== nativeAudio.id) {
+      nativeAudio.owned = false; nativeAudio.id = '';
+      console.log('[aay] native audio released: page changed video');
+    }
     // Away from a watch page, only small feed previews play: they are not "the video". Tell the app
     // nothing is playing (no picture in picture, no media controls for a preview).
     if (!/^\/(watch|live\/)/.test(location.pathname)) {
@@ -1209,6 +1280,7 @@
       if (pv.author) mi.a = pv.author;
     }
     var d = v.duration;
+    if (v.currentTime > 0 && !isAd()) { net.lastPos = v.currentTime; net.lastId = urlId(); }
     var state = {
       id: id, title: mi.t, artist: mi.a, art: mi.art, queue: queueFor(id, mi),
       playing: !v.paused && !v.ended,
@@ -1222,7 +1294,8 @@
       dur: isFinite(d) ? d : 0,
       rate: v.playbackRate || 1,
       next: !!H.nexttrack,
-      prev: !!H.previoustrack
+      prev: !!H.previoustrack,
+      native: !!nativeAudio.owned, qualityReloadMs: qualityReloadRemaining(v)
     };
     var json = JSON.stringify(state), sentAt = Date.now();
     lastSent = state;
@@ -1417,16 +1490,17 @@
     stateRepairPending = true;
     later(function () { stateRepairPending = false; syncPlayerState(); }, delay);
   }
-  function syncPlayerState() {
-    if (BROWSE) return;
+  function syncPlayerState(transitionRepair) {
+    if (BROWSE || A.audioOnly || nativeAudio.owned) return;
     var v = getVideo(), p = ytPlayer();
     if (!v || !p || typeof p.getPlayerState !== 'function' || typeof p.playVideo !== 'function') return;
-    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()) return;
+    if (v.paused || v.ended || v.readyState < 3 || PAUSED || bgWatch.explicitPause || bgWatch.held ||
+        Date.now() <= userPauseEligibleUntil || isAd()) return;
     var st;
     try { st = p.getPlayerState(); } catch (e) { return; }
     if (st !== 2) return; // 2 = paused
     var now = Date.now();
-    if (now - stateFixAt < 12000) return; // avoid retrying playVideo every watchdog tick
+    if (!transitionRepair && now - stateFixAt < 12000) return; // normal watchdog cooldown
     stateFixAt = now;
     try {
       p.playVideo();
@@ -1444,6 +1518,66 @@
   }
   function ytPlayer() {
     return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+  }
+  // Feasibility probe only. Never log signed URLs, tokens or response bodies.
+  // A stale SPA response must not be attributed to the currently playing video.
+  // Explicit opt-in only. Use only fields already supplied to this active player.
+  // No cookies, client impersonation, challenge computation or signature deciphering.
+  A.localAudioDescriptor = function (id) {
+    if (!CFG.nativeAudio || !CFG.localSabr || BROWSE || !A.backgroundAudioMode ||
+        A.inPip || A.isCar || isAd() || !id || qualityVideoId() !== id) return null;
+    try {
+      var p = ytPlayer(), v = getVideo(), r = p && p.getPlayerResponse ? p.getPlayerResponse() : null;
+      function matches(x) { return x && x.videoDetails && x.videoDetails.videoId === id; }
+      if (!matches(r)) r = window.ytInitialPlayerResponse;
+      if (!matches(r) || !v || v.ended || v.paused || !isFinite(v.duration) || v.duration <= 0 ||
+          r.videoDetails.isLiveContent || !r.playabilityStatus || r.playabilityStatus.status !== 'OK') return null;
+      var data = r.streamingData || {}, config = r.playerConfig || {};
+      var media = config.mediaCommonConfig || {}, us = media.mediaUstreamerRequestConfig || {};
+      var uc = us.videoPlaybackUstreamerConfig || data.videoPlaybackUstreamerConfig || '';
+      var formats = (Array.isArray(data.adaptiveFormats) ? data.adaptiveFormats : []).slice(0, 64);
+      var audio = [];
+      formats.forEach(function (f) {
+        if (!f || typeof f.mimeType !== 'string' || !/^audio\//i.test(f.mimeType) ||
+            f.isDrc || (f.audioTrack && f.audioTrack.audioIsDefault !== true)) return;
+        audio.push({itag: Number(f.itag), mimeType: f.mimeType.slice(0, 128),
+          bitrate: Number(f.bitrate), audioSampleRate: Number(f.audioSampleRate), audioChannels: Number(f.audioChannels),
+          contentLength: String(f.contentLength || '').slice(0, 24), lastModified: String(f.lastModified || '').slice(0, 24),
+          approxDurationMs: String(f.approxDurationMs || '').slice(0, 24), xtags: String(f.xtags || '').slice(0, 256),
+          initRange: f.initRange ? {start: String(f.initRange.start), end: String(f.initRange.end)} : null,
+          indexRange: f.indexRange ? {start: String(f.indexRange.start), end: String(f.indexRange.end)} : null,
+          url: typeof f.url === 'string' ? f.url.slice(0, 8192) : ''});
+      });
+      return {videoId: id, durationMs: Math.round(v.duration * 1000), audio: audio.slice(0, 16),
+        serverAbrStreamingUrl: typeof data.serverAbrStreamingUrl === 'string' ? data.serverAbrStreamingUrl.slice(0, 8192) : '',
+        ustreamerConfig: typeof uc === 'string' ? uc.slice(0, 16384) : ''};
+    } catch (e) { return null; }
+  };
+  function audioStreamProbe(p) {
+    var out = { audioFormats: -1, audioDirect: -1, audioWrapped: -1, audioAac: -1, audioOpus: -1, audioSabr: -1, audioHls: -1, audioDash: -1 };
+    if (!CFG.nativeAudio || BROWSE || isAd()) return out;
+    try {
+      var id = qualityVideoId(), response = p && p.getPlayerResponse ? p.getPlayerResponse() : null;
+      function matches(r) { return r && r.videoDetails && r.videoDetails.videoId === id && id; }
+      if (!matches(response)) response = window.ytInitialPlayerResponse;
+      if (!matches(response)) return out;
+      var data = response.streamingData || {};
+      var formats = data.adaptiveFormats;
+      out.audioSabr = typeof data.serverAbrStreamingUrl === 'string' && data.serverAbrStreamingUrl.length > 0 ? 1 : 0;
+      out.audioHls = typeof data.hlsManifestUrl === 'string' && data.hlsManifestUrl.length > 0 ? 1 : 0;
+      out.audioDash = typeof data.dashManifestUrl === 'string' && data.dashManifestUrl.length > 0 ? 1 : 0;
+      if (!Array.isArray(formats)) return out;
+      out.audioFormats = 0; out.audioDirect = 0; out.audioWrapped = 0; out.audioAac = 0; out.audioOpus = 0;
+      formats.slice(0, 256).forEach(function (f) {
+        if (!f || typeof f.mimeType !== 'string' || !/^audio\//i.test(f.mimeType)) return;
+        out.audioFormats++;
+        if (typeof f.url === 'string' && /^https:\/\//i.test(f.url)) out.audioDirect++;
+        else if (f.signatureCipher || f.cipher) out.audioWrapped++;
+        if (/mp4a|audio\/aac/i.test(f.mimeType)) out.audioAac++;
+        if (/opus/i.test(f.mimeType)) out.audioOpus++;
+      });
+    } catch (e) {}
+    return out;
   }
   function applyPlayerPrefs() {
     if (BROWSE) return;
@@ -1541,6 +1675,12 @@
    * Never restore after a seek gesture, a different video, or genuine completion.
    */
   var qualityState = { id: '', position: 0, element: null, reset: null, seekAt: 0 };
+  var qualityReload = { id: '', until: 0, observed: false };
+  function qualityReloadRemaining(v) {
+    if (!v || !v.paused || v.ended || PAUSED || bgWatch.explicitPause || bgWatch.held ||
+        nativeAudio.owned || !bgWatch.wanted || !qualityReload.observed || qualityReload.id !== qualityVideoId()) return 0;
+    return Math.max(0, qualityReload.until - Date.now());
+  }
   function qualityVideoId() {
     var pv = playerVideo();
     return (pv && pv.video_id) || urlId();
@@ -1561,6 +1701,7 @@
   }
   function rememberSourceChange(v, reason) {
     var id = qualityVideoId();
+    if (id && id === qualityReload.id && Date.now() < qualityReload.until) qualityReload.observed = true;
     if (BROWSE || !id || id !== qualityState.id || v.ended ||
         qualityState.position < 10 || Date.now() - qualityState.seekAt < 3500) return;
     qualityState.reset = { id: id, seconds: qualityState.position, started: Date.now(), tries: 0 };
@@ -1656,7 +1797,7 @@
   };
 
   function backgroundWatchdog() {
-    if (!A.audioOnly) {
+    if (!A.audioOnly || A.backgroundAudioMode) {
       bgSaverCheck();
       try { overloadCheck(getVideo()); } catch (e) {}
       try { logPlayingFormat(getVideo()); } catch (e) {}
@@ -1700,6 +1841,8 @@
     }
     if (bgWatch.explicitPause || !bgWatch.wanted) return;
     if (bgWatch.held) return;
+    // Wait for a known background quality reload to finish before asking Android about residual output.
+    if (qualityReloadRemaining(v) > 0) { schedReport(0); return; }
     // Source replacement can abort play() while the media element is empty.
     if (v.readyState === 0 && !v.currentSrc && !v.src) return;
     // Let an audio-focus handoff settle: the other app starts its output shortly
@@ -1714,6 +1857,9 @@
         return;
       }
     } catch (e) {}
+    // Offline: a retry cannot succeed. Keep the intent without growing the backoff; the
+    // connection's return resumes playback (A.recoverNetwork / 'online').
+    if (!net.online || navigator.onLine === false) return;
     // Never give up solely because a retry limit was reached. Use exponential
     // backoff (up to 60 s) instead of busy-looping when a stream is unavailable.
     var now = Date.now();
@@ -1729,6 +1875,61 @@
     schedReport(150);
   }
   A.checkBackgroundPlayback = backgroundWatchdog;
+
+  /* Connection loss: YouTube stalls, then errors and may reset the video to 0 with no
+   * duration. On reconnect the same video resumes at its last good position; an explicit
+   * user pause is kept. One recovery per reconnect (native callback and 'online' event). */
+  var net = { online: true, lastPos: 0, lastId: '', recoveredAt: 0 };
+  A.network = function (on) {
+    net.online = !!on;
+    console.log('[aay] network ' + (on ? 'restored' : 'lost'));
+  };
+  function playerErrored(v, p) {
+    if (v && v.error) return true;
+    if (document.querySelector('.ytp-error, .ytm-player-error-message-renderer, .player-error-message-container')) return true;
+    var st = null;
+    try { st = p && typeof p.getPlayerState === 'function' ? p.getPlayerState() : null; } catch (e) {}
+    return !!(v && v.readyState === 0 && !v.currentSrc && !v.src && st !== 1 && st !== 3);
+  }
+  A.recoverNetwork = function (posSec) {
+    net.online = true;
+    if (PAUSED || bgWatch.explicitPause) return 'user-paused';
+    if (Date.now() - net.recoveredAt < 3000) return 'recent';
+    if (!/^\/(watch|live\/)/.test(location.pathname)) return 'not-watch';
+    var v = getVideo();
+    var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    var id = urlId();
+    var known = id && id === net.lastId ? net.lastPos : 0;
+    var start = Math.max(0, Math.floor(posSec > 0 ? posSec : (known || (v && v.currentTime) || 0)));
+    net.recoveredAt = Date.now();
+    bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; bgWatch.wanted = true; bgWatch.held = false;
+    var result;
+    if (playerErrored(v, p) && p && typeof p.loadVideoById === 'function' && id) {
+      // The player gave up: load the same video again where it was.
+      try { p.loadVideoById({ videoId: id, startSeconds: start }); result = 'reloaded@' + start; }
+      catch (e) { result = 'reload-failed'; }
+    } else if (v && v.paused) {
+      if (start > 0 && v.currentTime < 1 && start - v.currentTime > 2) { try { v.currentTime = start; } catch (e) {} }
+      requestPlayerPlay(v);
+      result = 'resumed@' + start;
+    } else if (v && v.readyState < 3) {
+      // Still "playing" but starved: re-seek in place so the player fetches again.
+      try { v.currentTime = v.currentTime; } catch (e) {}
+      result = 'nudged';
+    } else {
+      result = 'playing';
+    }
+    console.log('[aay] network recovery: ' + result);
+    stateFixAt = 0; scheduleStateRepair(1200); // YouTube's icon after its error screen
+    schedReport(300);
+    return result;
+  };
+  window.addEventListener('offline', function () { net.online = false; });
+  window.addEventListener('online', function () {
+    net.online = true;
+    // Fallback for the native callback (e.g. WebView-only); the 3 s guard avoids a double resume.
+    setTimeout(function () { if (bgWatch.wanted && !PAUSED) A.recoverNetwork(-1); }, 1500);
+  });
   setInterval(backgroundWatchdog, 5000);
 
   // Capturing media events arrive for a newly-created <video> even if the
@@ -1759,7 +1960,11 @@
         if (ev === 'emptied' || ev === 'loadstart') rememberSourceChange(v, ev);
         if (ev === 'ended') { qualityState.reset = null; bgWatch.wanted = false; }
         if (ev === 'play') {
-          if (bgWatch.held) {
+          if (bgWatch.held && Date.now() <= userResumeEligibleUntil) {
+            // A play the user just asked for: the hold ends, the app learns it from the report.
+            bgWatch.held = false;
+            PAUSED = false; bgWatch.wanted = true; bgWatch.explicitPause = false;
+          } else if (bgWatch.held) {
             // YouTube can issue a delayed play() after another app takes audio.
             allowPause = true;
             try { v.pause(); } finally { allowPause = false; }
@@ -1786,7 +1991,9 @@
           }
         }
         if (ev === 'pause' && Date.now() <= userPauseEligibleUntil) noteManualPause();
+        updateCenterTransport(v);
         if (ev === 'seeked') {
+          resetOverloadWindow();
           if (qualityState.reset) restoreAfterSourceChange(v);
           else notePosition(v);
         }
@@ -1856,9 +2063,10 @@
     try {
       var v = getVideo();
       if (v) bind(v);
+      updateCenterTransport(v);
       // Background audio still needs player bindings and quality recovery,
       // but visual DOM work is unnecessary when the phone is hidden.
-      if (v && !BROWSE && !A.audioOnly && A.applyQuality) A.applyQuality();
+      if (v && !BROWSE && (!A.audioOnly || A.backgroundAudioMode) && A.applyQuality) A.applyQuality();
       // Hidden phone, or an audio-only renderer in no window: no visual DOM work.
       if ((A.isBg || A.audioOnly) && !A.inPip && !A.isCar) return;
       // Playback and ad handling stay responsive. Heavier noncritical UI
@@ -1946,9 +2154,12 @@
       } catch (e) {}
       var frames = q && isFinite(q.totalVideoFrames) ? q.totalVideoFrames : -1;
       var dropped = q && isFinite(q.droppedVideoFrames) ? q.droppedVideoFrames : -1;
-      var df = frames >= 0 && perf.lastFrames >= 0 ? Math.max(0, frames - perf.lastFrames) : 0;
-      var dd = dropped >= 0 && perf.lastDropped >= 0 ? Math.max(0, dropped - perf.lastDropped) : 0;
-      var droppedPct = df ? Math.round(Math.min(100, dd / df * 100)) : -1;
+      var frameId = qualityVideoId();
+      var same = v && perf.lastClockSrc === v && perf.frameWindow && perf.frameWindow.id === frameId;
+      var countersValid = same && perf.lastFrames >= 0 && perf.lastDropped >= 0 && frames >= perf.lastFrames && dropped >= perf.lastDropped;
+      var df = countersValid ? frames - perf.lastFrames : 0;
+      var dd = countersValid ? dropped - perf.lastDropped : 0;
+      var droppedPct = df && dd <= df ? Math.round(dd / df * 100) : -1;
       var playing = !!(v && !v.paused && !v.ended);
       // Media clock: a player claiming enough data (readyState >= 3, no 'waiting') whose clock
       // still did not move is a silent clock stall, not buffering.
@@ -1964,16 +2175,36 @@
       if (perf.rvfcSrc !== (v || null)) {
         if (perf.rvfcHandle && perf.rvfcSrc && typeof perf.rvfcSrc.cancelVideoFrameCallback === 'function')
           try { perf.rvfcSrc.cancelVideoFrameCallback(perf.rvfcHandle); } catch (e) {}
-        perf.rvfcHandle = 0; perf.rvfcTotal = -1; perf.rvfcPrev = -1; perf.rvfcSrc = v || null;
+        perf.rvfcHandle = 0; perf.rvfcTotal = -1; perf.rvfcPrev = -1; perf.rvfcAt = 0; perf.rvfcPrevAt = 0; perf.rvfcSrc = v || null;
       }
       var displayed = perf.rvfcTotal >= 0 && perf.rvfcPrev >= 0 && perf.rvfcTotal >= perf.rvfcPrev ?
         perf.rvfcTotal - perf.rvfcPrev : -1;
+      // The RVFC delta belongs to the PREVIOUS diagnostics window, not df/dd from this one.
+      // Only compare samples with matching timestamps, source and identity. Hidden rendering
+      // may intentionally skip frames, so it must never drive visible-video quality pressure.
+      var visible = !A.audioOnly && (!A.isBg || A.inPip || A.isCar);
+      var prior = perf.frameWindow, policyDrop = -1;
+      if (playing && visible && same && prior.visible && !v.seeking && !nativeAudio.owned) {
+        if (typeof v.requestVideoFrameCallback !== 'function') {
+          policyDrop = droppedPct; // legacy browsers without compositor samples
+        } else if (prior.pct >= 0 && displayed >= 0 &&
+            Math.abs(perf.rvfcPrevAt - prior.start) <= 2000 &&
+            Math.abs(perf.rvfcAt - prior.end) <= 2000 &&
+            Math.abs(displayed - (prior.frames - prior.dropped)) <= Math.max(10, prior.frames * 0.10)) {
+          policyDrop = prior.pct;
+        }
+      }
+      perf.confirmedDropPct = policyDrop; perf.confirmedDropAt = now;
+      perf.confirmedDropSrc = v; perf.confirmedDropId = frameId;
+      perf.frameWindow = { id: frameId, start: perf.lastAt, end: now, frames: df, dropped: dd,
+        pct: droppedPct, visible: visible && playing && !v.seeking };
       if (playing && N && typeof N.perf === 'function') try {
+        var audioProbe = audioStreamProbe(p);
         N.perf(JSON.stringify({ sec: Math.round(span / 1000), ticks: perf.ticks,
           tickMs: Math.round(perf.tickMs), mutations: perf.mutations,
           sourceLoads: perf.sourceLoads, layout: perf.layoutChanges,
           refits: perf.refits, recoveries: perf.paintRecoveries,
-          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct,
+          longTasks: perf.longTasks, frames: df, droppedPct: droppedPct, dropPolicyPct: policyDrop,
           // Decoded; presentedEst = decoded minus dropped (an estimate); displayed = compositor count.
           decoded: df, presentedEst: Math.max(0, df - dd), displayed: displayed,
           // Buffering ('waiting' -> 'playing') and silent clock stalls are reported separately.
@@ -1981,14 +2212,18 @@
           clockStallMs: clockStallMs,
           dupReports: perf.dupReports, observed: pageObserved, level: perfState.level,
           width: v.videoWidth || 0, height: v.videoHeight || 0,
-          codec: codec, tier: tier, audioOnly: !!A.audioOnly }), BRIDGE_TOKEN);
+          codec: codec, tier: tier, audioOnly: !!A.audioOnly, nativeAudioOwns: !!nativeAudio.owned,
+          audioFormats: audioProbe.audioFormats, audioDirect: audioProbe.audioDirect,
+          audioWrapped: audioProbe.audioWrapped, audioAac: audioProbe.audioAac, audioOpus: audioProbe.audioOpus,
+          audioSabr: audioProbe.audioSabr, audioHls: audioProbe.audioHls, audioDash: audioProbe.audioDash,
+          centerCount: centerCount, centerPlaying: !v.paused }), BRIDGE_TOKEN);
       } catch (e) {}
       perf.lastAt = now; perf.lastFrames = frames; perf.lastDropped = dropped;
       perf.ticks = 0; perf.tickMs = 0; perf.mutations = 0; perf.sourceLoads = 0;
       perf.layoutChanges = 0; perf.refits = 0; perf.paintRecoveries = 0; perf.longTasks = 0;
       perf.dupReports = 0; perf.stalls = 0; perf.stallMs = 0; if (perf.stallAt) perf.stallAt = now;
       perf.lastClock = ct; perf.lastClockSrc = v || null;
-      perf.rvfcPrev = perf.rvfcTotal;
+      perf.rvfcPrev = perf.rvfcTotal; perf.rvfcPrevAt = perf.rvfcAt;
       // At most one outstanding request: a hidden or paused video never fires it, and requests
       // must not pile up window after window.
       if (playing && !perf.rvfcHandle && typeof v.requestVideoFrameCallback === 'function') try {
@@ -1997,7 +2232,7 @@
         var handle = v.requestVideoFrameCallback(function (t, md) {
           if (src !== perf.rvfcSrc) return; // obsolete element
           perf.rvfcHandle = 0; perf.rvfcPending = false;
-          if (md && isFinite(md.presentedFrames)) perf.rvfcTotal = md.presentedFrames;
+          if (md && isFinite(md.presentedFrames)) { perf.rvfcTotal = md.presentedFrames; perf.rvfcAt = Date.now(); }
         });
         // A synchronous callback already cleared the request; otherwise keep its handle.
         if (perf.rvfcPending) perf.rvfcHandle = handle || -1;
@@ -2152,7 +2387,7 @@
     var v = getVideo();
     try {
       switch (c) {
-        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held) { console.log('[aay] Play deferred while other media holds focus'); break; } if (!v) AUTO = true; else requestPlayerPlay(v); break;
+        case 'play': ++skipSerial; PAUSED = false; bgWatch.explicitPause = false; bgWatch.wanted = true; bgWatch.attempts = 0; bgWatch.lastAttemptAt = 0; if (bgWatch.held && arg !== 'user') { console.log('[aay] Play deferred while other media holds focus'); break; } if (bgWatch.held) { bgWatch.held = false; userResumeEligibleUntil = Date.now() + 1500; console.log('[aay] user Play ends media hold'); } if (!v) AUTO = true; else requestPlayerPlay(v); stateFixAt = 0; scheduleStateRepair(800); break;
         case 'pause': AUTO = false; selectedWatch.at = 0; PAUSED = true; userPauseEligibleUntil = 0; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial; if (v) enforceExplicitPause(v); break;
         case 'seek': if (v) v.currentTime = arg; break;
         case 'rate': if (v) v.playbackRate = arg; break;
@@ -2162,6 +2397,36 @@
     } catch (e) {}
     schedReport(200);
   };
+
+  /* on: the native engine owns playback of the current video (pause, lowest quality, no recovery).
+   * off: continue at posSec (-1 keeps position), playing only when resume. */
+  A.nativeAudio = function (on, posSec, resume) {
+    var v = getVideo();
+    if (on) {
+      nativeAudio.owned = true;
+      nativeAudio.id = qualityVideoId();
+      AUTO = false; PAUSED = true; bgWatch.explicitPause = true; bgWatch.wanted = false; ++skipSerial;
+      if (v) enforceExplicitPause(v);
+      console.log('[aay] native audio owns playback; web paused');
+    } else {
+      var was = nativeAudio.owned;
+      nativeAudio.owned = false; nativeAudio.id = '';
+      if (v && posSec >= 0 && isFinite(posSec)) v.currentTime = posSec;
+      if (resume) A.cmd('play');
+      if (was) console.log('[aay] web engine owns playback again');
+    }
+    qualityApply.key = '';
+    applyPreferredQuality();
+    schedReport(0);
+  };
+  A.confirmNativeSilence = function (id) {
+    var v = getVideo();
+    if (BROWSE || !v || v.ended || isAd() || !id || qualityVideoId() !== id) return false;
+    A.nativeAudio(true, -1, false);
+    updateCenterTransport(v);
+    return nativeAudio.owned && v.paused && qualityVideoId() === id;
+  };
+  A.nativeOwned = function () { return nativeAudio.owned; };
 
   A.__cfg = function () { return CFG; };
   A.config = function (c) {
@@ -2613,6 +2878,10 @@
     var serial = ++miniExpandSerial;
     if (leavingMini) A.transit(3800); // includes native resize and the last delayed layout correction
     A.isMini = !!on;
+    // The fullscreen layout can invalidate YouTube's control state more than once.
+    // Reconcile at the existing bounded post-resize checkpoints below, independently
+    // of a previous watchdog repair (which has a 12 s cooldown).
+    var expandId = leavingMini ? qualityVideoId() : '', expandRoute = leavingMini ? urlId() : '';
     miniSized.since = on ? Date.now() : 0;
     var wasSized = miniSized.active;
     miniSized.active = false;
@@ -2624,12 +2893,21 @@
     smallLayout();
     carLayout();
     A.setBg(A.isBg);
-    if (leavingMini && resume) {
+    if (leavingMini && v) {
       [500, 1400, 2900].forEach(function (ms) { later(function () {
-        if (serial !== miniExpandSerial || A.isMini || A.inPip || PAUSED ||
-            bgWatch.explicitPause || bgWatch.held) return;
+        if (serial !== miniExpandSerial || A.isMini || A.inPip || A.audioOnly || nativeAudio.owned || PAUSED ||
+            bgWatch.explicitPause || bgWatch.held || Date.now() <= userPauseEligibleUntil || isAd()) return;
         var current = getVideo();
-        if (!current || current !== v || current.ended || !current.paused) return;
+        if (!current || current !== v || current.ended || qualityVideoId() !== expandId || urlId() !== expandRoute) return;
+        updateCenterTransport(current);
+        if (!current.paused) {
+          // The final viewport/quality change can mark YouTube paused again after an earlier
+          // repair. At most three checks per expansion, and only if the media is really playing.
+          syncPlayerState(true);
+          schedReport(0);
+          return;
+        }
+        if (!resume) return; // expanding a paused video never starts it
         // Reset only an involuntary transition pause. No seeking or reloading.
         console.log('[aay] mini expand: restoring interrupted playback');
         bgWatch.wanted = true;
@@ -2681,14 +2959,17 @@
    *  - circuit breaker: if audio stalls after the switch, go back to the saved
    *    quality and do not try again in this session. */
   var BG_SAVER_DELAY = 60000, BG_SAVER_QUALITY = 'tiny';
+  // Only an already enabled background battery saver may react earlier under pressure.
+  // Never change the visible player's quality or flip a saver already armed during a cool-down.
+  function bgSaverDelay() { return perfState.level >= 2 ? 20000 : perfState.level === 1 ? 30000 : BG_SAVER_DELAY; }
   var bgSaver = { since: 0, timer: 0, switchedAt: 0, at: 0, pos: -1, broken: false, armed: false };
   function realHidden() {
     try { return Object.getOwnPropertyDescriptor(Document.prototype, 'hidden').get.call(document); }
     catch (e) { return false; }
   }
   function bgSaverActive() {
-    if (A.audioOnly || !A.isBg || A.isCar || A.inPip || A.isMini || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
-    if (bgSaver.broken || !bgSaver.since || Date.now() - bgSaver.since < BG_SAVER_DELAY) return false;
+    if ((A.audioOnly && !A.backgroundAudioMode) || !A.isBg || A.isCar || A.inPip || (A.isMini && !A.backgroundAudioMode) || !CFG.lowQuality || CFG.backgroundPlay === false) return false;
+    if (bgSaver.broken || !bgSaver.since || (!bgSaver.armed && Date.now() - bgSaver.since < bgSaverDelay())) return false;
     if (isAd()) return false;
     var v = getVideo();
     if (!v || !isFinite(v.duration)) return false; // never on live streams
@@ -2784,6 +3065,7 @@
     console.log('[aay] performance level ' + perfState.level + ' -> ' + next);
     perfState.level = next;
     if (capChanged) { qualityApply.key = ''; applyPreferredQuality(); }
+    if (A.isBg && bgSaver.since && !bgSaver.armed) armBgSaverTimer();
   };
   function capForDevice(q) {
     var cap = effectiveCap();
@@ -2802,26 +3084,38 @@
   var OVERLOAD_WINDOW_MS = 8000, OVERLOAD_COOLDOWN_MS = 60000, OVERLOAD_RECOVER_MS = 180000;
   var stepDown = { 4320: 2160, 2880: 2160, 2160: 1440, 1440: 1080, 1080: 720 };
   var stepUp = { 720: 1080, 1080: 1440, 1440: 2160, 2160: 4320 };
-  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0 };
+  var overload = { at: 0, t: 0, frames: 0, dropped: 0, bad: 0, coolUntil: 0, goodSince: 0, video: null, id: '' };
+  function resetOverloadWindow() {
+    overload.at = 0; overload.bad = 0; overload.goodSince = 0;
+  }
   function overloadSample(v, now, frames, dropped) {
     overload.at = now; overload.t = v.currentTime; overload.frames = frames; overload.dropped = dropped;
   }
   function overloadCheck(v) {
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    if (!p || !v || v.paused || v.ended || isAd()) { overload.at = 0; overload.bad = 0; return; }
+    if (!p || !v || v.paused || v.ended || v.seeking || isAd() || nativeAudio.owned) { resetOverloadWindow(); return; }
+    var id = qualityVideoId();
+    if (overload.video !== v || overload.id !== id) {
+      resetOverloadWindow(); overload.video = v; overload.id = id;
+    }
     var cur = '';
     try { if (typeof p.getPlaybackQuality === 'function') cur = p.getPlaybackQuality(); } catch (e) {}
     var h = qualityHeight[cur] || 0;
     var now = Date.now(), q = null;
     try { q = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null; } catch (e) {}
     var frames = q ? q.totalVideoFrames : 0, dropped = q ? q.droppedVideoFrames : 0;
+    // Decoder replacement/seek resets counters; never interpret that as overload.
+    if (frames < overload.frames || dropped < overload.dropped || v.currentTime < overload.t - 0.5) resetOverloadWindow();
     if (!overload.at) { overloadSample(v, now, frames, dropped); return; }
     if (now - overload.at < OVERLOAD_WINDOW_MS) return;
     var ahead = 0;
     try { if (v.buffered && v.buffered.length) ahead = v.buffered.end(v.buffered.length - 1) - v.currentTime; } catch (e) {}
     var moved = v.currentTime - overload.t, df = frames - overload.frames, dd = dropped - overload.dropped;
     var stalled = ahead > 3 && moved < (now - overload.at) / 1000 * 0.25;
-    var dropping = df > 60 && dd / df > 0.5;
+    var visible = !A.audioOnly && (!A.isBg || A.inPip || A.isCar);
+    var corroborated = typeof v.requestVideoFrameCallback !== 'function' ||
+        (perf.confirmedDropSrc === v && perf.confirmedDropId === id && now - perf.confirmedDropAt <= perfState.diagMs * 2 && perf.confirmedDropPct > 50);
+    var dropping = visible && corroborated && df > 60 && dd <= df && dd / df > 0.5;
     overloadSample(v, now, frames, dropped);
     if (!stalled && !dropping) {
       overload.bad = 0;
@@ -2875,6 +3169,7 @@
   }
   A.logPlayingFormat = logPlayingFormat;
   function desiredQuality() {
+    if (nativeAudio.owned) return 'tiny';
     if (bgSaverActive()) return BG_SAVER_QUALITY;
     var q = capForDevice(savedQuality());
     // Phone mini player shown for a sustained period: decode for its real size (240p-480p).
@@ -2922,7 +3217,7 @@
   }
   function applyPreferredQuality() {
     // Preserve the already buffered stream while the renderer is detached.
-    if (A.audioOnly) return;
+    if (A.audioOnly && !A.backgroundAudioMode) return;
     if (BROWSE) return;
     var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     if (!p) return;
@@ -2933,8 +3228,14 @@
     var adaptive = savedQuality() === 'auto' && !bgSaverActive();
     var low = adaptive ? 'tiny' : chosen;
     var high = adaptive ? (chosen === 'auto' ? 'highres' : chosen) : chosen;
-    var key = qualityVideoId() + ':' + low + '-' + high;
+    var qualityId = qualityVideoId();
+    var key = qualityId + ':' + low + '-' + high;
     if (qualityApply.player === p && qualityApply.key === key) return;
+    var activeVideo = getVideo();
+    if (A.backgroundAudioMode && qualityId && qualityApply.last.indexOf(qualityId + ':') === 0 &&
+        qualityApply.last !== key && activeVideo && !activeVideo.paused && !activeVideo.ended && !nativeAudio.owned) {
+      qualityReload = { id: qualityId, until: Date.now() + 12000, observed: false };
+    }
     try {
       if (typeof p.setPlaybackQualityRange === 'function') {
         p.setPlaybackQualityRange(low, high);
@@ -3094,18 +3395,25 @@
     }, true);
   });
 
+  function armBgSaverTimer() {
+    clearTimeout(bgSaver.timer);
+    bgSaver.timer = 0;
+    if (!A.isBg || !bgSaver.since || bgSaver.armed || bgSaver.broken) return;
+    bgSaver.timer = setTimeout(function () {
+      bgSaver.timer = 0;
+      if (!bgSaverActive()) return;
+      qualityApply.key = '';
+      applyPreferredQuality();
+    }, Math.max(0, bgSaverDelay() - (Date.now() - bgSaver.since)) + 500);
+  }
   A.setBg = function (on) {
     var wasBg = A.isBg;
     A.isBg = !!on;
-    clearTimeout(bgSaver.timer);
     if (A.isBg && !wasBg) {
       bgSaver.since = Date.now();
-      bgSaver.timer = setTimeout(function () {
-        if (!bgSaverActive()) return;
-        qualityApply.key = '';
-        applyPreferredQuality();
-      }, BG_SAVER_DELAY + 500);
+      armBgSaverTimer();
     } else if (!A.isBg) {
+      clearTimeout(bgSaver.timer); bgSaver.timer = 0;
       bgSaver.since = 0; bgSaver.switchedAt = 0; bgSaver.pos = -1; bgSaver.armed = false;
       if (wasBg) qualityApply.key = ''; // visible again: saved quality right away
     }

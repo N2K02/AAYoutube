@@ -19,7 +19,7 @@ class PlayerLifecycleContractTest {
         assertTrue(web.contains("appendQueryParameter(\"aay\", \"1\")"))
         assertTrue(web.contains("Reusing current video instead of reloading"))
         assertTrue(web.contains("snapshot.value.id == id && isOnWatchPage()"))
-        assertTrue(web.contains("if (!snapshot.value.playing) cmd(\"play\")"))
+        assertTrue(web.contains("if (!snapshot.value.playing) autoPlay()"))
         val primary = source("BackgroundWebView.kt")
         assertTrue(primary.contains("override fun onPause()"))
         assertTrue(primary.contains("super.onWindowVisibilityChanged(View.VISIBLE)"))

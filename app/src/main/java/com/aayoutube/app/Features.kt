@@ -56,12 +56,22 @@ data class FeatureFlags(
     val seekSeconds: Int = PlayerPrefsPolicy.YOUTUBE_SEEK_SECONDS,
     val hideComments: Boolean = false,
     val hideEndCards: Boolean = false,
+    /**
+     * Experimental Media3 audio engine (off until validated). Needs an authorized stream
+     * source; without one the WebView engine keeps playing.
+     */
+    val nativeAudio: Boolean = false,
+    val nativeAudioProviderUrl: String = "",
+    /** Explicit opt-in for authorized content available in the current WebView session. */
+    val localSabr: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("blockAds", blockAds)
         .put("hideShorts", hideShorts)
         .put("hidePromos", hidePromos)
         .put("backgroundPlay", backgroundPlay)
+        .put("nativeAudio", nativeAudio)
+        .put("localSabr", localSabr) // never expose the configured external resolver URL
         .put("lowQuality", lowQualityInBackground)
         .put("preferredQuality", preferredQuality)
         .put("autoContinue", autoContinue)
@@ -125,7 +135,8 @@ object Features {
             controlsOnLeft = prefs.getBoolean("controlsOnLeft", d.controlsOnLeft),
             controlsPosPortrait = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosPortrait", d.controlsPosPortrait)),
             controlsPosLandscape = ControlsSidePolicy.normalize(prefs.getFloat("controlsPosLandscape", d.controlsPosLandscape)),
-            experimentalVideo = prefs.getBoolean("experimentalVideo", d.experimentalVideo),
+            // The Experimental video page was removed: the car recovery tests stay off for everyone.
+            experimentalVideo = false.also { if (prefs.contains("experimentalVideo")) prefs.edit().remove("experimentalVideo").apply() },
             playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(prefs.getFloat("playbackSpeed", d.playbackSpeed)),
             rememberSpeed = prefs.getBoolean("rememberSpeed", d.rememberSpeed),
             loopVideo = prefs.getBoolean("loopVideo", d.loopVideo),
@@ -135,6 +146,9 @@ object Features {
             seekSeconds = PlayerPrefsPolicy.normalizeSeek(prefs.getInt("seekSeconds", d.seekSeconds)),
             hideComments = prefs.getBoolean("hideComments", d.hideComments),
             hideEndCards = prefs.getBoolean("hideEndCards", d.hideEndCards),
+            nativeAudio = prefs.getBoolean("nativeAudio", d.nativeAudio),
+            localSabr = prefs.getBoolean("localSabr", false),
+            nativeAudioProviderUrl = AuthorizedAudioProvider.normalizeEndpoint(prefs.getString("nativeAudioProviderUrl", "").orEmpty()).orEmpty(),
         )
     }
 
@@ -144,7 +158,8 @@ object Features {
                 preferredQuality = VideoQualityPolicy.normalize(it.preferredQuality),
                 playbackSpeed = PlayerPrefsPolicy.normalizeSpeed(it.playbackSpeed),
                 seekSeconds = PlayerPrefsPolicy.normalizeSeek(it.seekSeconds),
-                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions))
+                captions = PlayerPrefsPolicy.normalizeCaptions(it.captions),
+                nativeAudioProviderUrl = AuthorizedAudioProvider.normalizeEndpoint(it.nativeAudioProviderUrl).orEmpty())
         }
         _state.value = n
         prefs.edit()
@@ -166,7 +181,6 @@ object Features {
             .putBoolean("controlsOnLeft", n.controlsOnLeft)
             .putFloat("controlsPosPortrait", n.controlsPosPortrait)
             .putFloat("controlsPosLandscape", n.controlsPosLandscape)
-            .putBoolean("experimentalVideo", n.experimentalVideo)
             .putFloat("playbackSpeed", n.playbackSpeed)
             .putBoolean("rememberSpeed", n.rememberSpeed)
             .putBoolean("loopVideo", n.loopVideo)
@@ -176,6 +190,9 @@ object Features {
             .putInt("seekSeconds", n.seekSeconds)
             .putBoolean("hideComments", n.hideComments)
             .putBoolean("hideEndCards", n.hideEndCards)
+            .putBoolean("nativeAudio", n.nativeAudio)
+            .putBoolean("localSabr", n.localSabr)
+            .putString("nativeAudioProviderUrl", n.nativeAudioProviderUrl)
             .apply()
     }
 }

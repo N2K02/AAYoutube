@@ -239,7 +239,7 @@ object WebHost {
         if (!carAudioRetained.value && !retainedRendererDetached) return
         carAudioRetained.value = false
         retainedRendererDetached = false
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(false)")
+        syncWebAudioMode()
         AppLog.add("CAR", "Audio retention ended: $reason")
         if (reattachPhone && !carShown) webVersion.update { it + 1 }
         refreshBackgroundQuality()
@@ -345,9 +345,10 @@ object WebHost {
     fun setCarScreen(on: Boolean) {
         if (carScreen.value == on) return
         carScreen.value = on
+        NativePlayback.onVisibilityChanged()
         AppLog.add("VIEW", if (on) "On the car display: videos fill the screen" else "On the phone screen")
         web?.let { installScript(it) }
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
+        syncWebAudioMode()
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
     }
     val shown: Boolean get() = activityVisible || carShown
@@ -411,6 +412,7 @@ object WebHost {
         webGeneration++
         PerformanceMonitor.diagnostics.rendererAllocations++
         PerformanceMonitor.onPrimaryRendererCreated()
+        NetworkMonitor.start(app)
         bridgeToken = java.util.UUID.randomUUID().toString()
         w.setBackgroundColor(Color.BLACK)
         // Actual WebView geometry changes are a cheap proxy for potential
@@ -548,6 +550,7 @@ object WebHost {
     }
 
     private fun applyFeatures(f: FeatureFlags) {
+        NativePlayback.onVisibilityChanged()
         val desktopChanged = f.desktopSite != lastDesktop
         lastDesktop = f.desktopSite
         // The mini-player BrowseHost shares the same features and YouTube session.
@@ -564,6 +567,7 @@ object WebHost {
         w.settings.textZoom = if (webDisplayId != Display.DEFAULT_DISPLAY) 100 else f.pageZoom
         installScript(w)
         js("window.__aay&&window.__aay.config(${f.toJson()})")
+        syncWebAudioMode()
     }
 
     private fun js(code: String) {
@@ -1023,9 +1027,22 @@ object WebHost {
         refreshBackgroundQuality()
     }
 
+    /** Set while the app itself resumes playback (recovery), so it is not taken for the user's Play. */
+    private var automaticPlay = false
+    private fun autoPlay() {
+        automaticPlay = true
+        try { cmd("play") } finally { automaticPlay = false }
+    }
+
     /** Player buttons for the car screen: play, pause, next, prev. */
     fun cmd(name: String) {
         if (sessionClearing && name != "pause") return
+        // Experimental native audio owns playback: play/pause go to it; next/prev hand the
+        // queue back to the page (the coordinator silences native first, never two engines).
+        if (NativePlayback.command(name)) {
+            if (name in setOf("play", "pause")) PhoneMirror.onExplicitTransport()
+            return
+        }
         if (name == "pause") {
             playbackWanted = false
             userPausedAt = SystemClock.elapsedRealtime()
@@ -1036,7 +1053,11 @@ object WebHost {
             playbackWanted = true
             snapshot.value = snapshot.value.copy(userPaused = false)
         }
-        js("window.__aay&&window.__aay.cmd('$name')")
+        // Play from the app, notification, car or headset is the user's: it ends an
+        // "other app is playing" hold instead of being deferred by it (one press is enough).
+        val userPlay = name == "play" && !automaticPlay
+        if (userPlay && otherMediaHeldSince != 0L) endOtherMediaHold("user pressed Play")
+        js(if (userPlay) "window.__aay&&window.__aay.cmd('play','user')" else "window.__aay&&window.__aay.cmd('$name')")
         if (name in setOf("play", "pause", "next", "prev")) PhoneMirror.onExplicitTransport()
     }
 
@@ -1082,6 +1103,10 @@ object WebHost {
         val s = snapshot.value
         if (s.id.isBlank() || s.live || s.durMs <= 0L) return
         val target = positionMs.coerceIn(0L, s.durMs)
+        if (NativePlayback.seek(target)) {
+            snapshot.value = s.copy(posMs = target)
+            return
+        }
         cmd("seek", (target / 1000.0).toString())
         snapshot.value = s.copy(posMs = target)
         PhoneMirror.onExplicitTransport()
@@ -1116,7 +1141,7 @@ object WebHost {
         }
         carProjectionActive.value = carShown
         AppLog.add("CAR", "Projection ${owner}=" + on + " active=" + carOwners.size)
-        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})")
+        syncWebAudioMode()
         js("window.__aay&&window.__aay.car(${carDisplay || carShown})")
         if (carShown) {
             main.removeCallbacks(freezeSoon)
@@ -1162,7 +1187,11 @@ object WebHost {
         js("window.__aay&&window.__aay.showCarControls&&window.__aay.showCarControls()")
     }
 
-    fun pip(on: Boolean) = js("window.__aay&&window.__aay.pip($on)")
+    fun pip(on: Boolean) {
+        if (on) NativePlayback.returnToWeb("pip-visible")
+        js("window.__aay&&window.__aay.pip($on)")
+        syncWebAudioMode(pipEntering = on)
+    }
 
     /** Use the measured native video/WebView bounds as the Android PiP source. */
     fun pipSourceRect(out: android.graphics.Rect): Boolean {
@@ -1176,8 +1205,17 @@ object WebHost {
         return StandardPipPolicy.isValidSource(out.width(), out.height(), density)
     }
 
+    private fun backgroundWebAudio(): Boolean = PlaybackHandoffPolicy.backgroundWebAudio(
+        Features.current.backgroundPlay, shown, inPip.value, carProjectionActive() || carDisplay)
+
+    private fun syncWebAudioMode(pipEntering: Boolean = false) {
+        js("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value},${!pipEntering && backgroundWebAudio()})")
+    }
+
     fun refreshBackgroundQuality() {
+        NativePlayback.onVisibilityChanged()
         js("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})")
+        syncWebAudioMode()
     }
 
     fun openUrl(url: String) {
@@ -1220,7 +1258,7 @@ object WebHost {
                 js("window.__aay&&window.__aay.mini(false)")
             }
             if (startMs != null) seekTo(startMs)
-            if (!snapshot.value.playing) cmd("play")
+            if (!snapshot.value.playing) autoPlay()
             return
         }
         val autoplayUrl = if (playRoute && !explicitPaused && target.getQueryParameter("aay") == null)
@@ -1277,8 +1315,9 @@ object WebHost {
             val avg = if (recentWebCpu.isEmpty()) -1 else recentWebCpu.sum() / recentWebCpu.size
             val peak = recentWebCpu.maxOrNull() ?: -1
             val droppedPct = d.optInt("droppedPct", -1).coerceIn(-1, 100)
-            // Audio-only windows decode no frames: -1 never counts as dropping.
-            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("audioOnly", false)) -1 else droppedPct)
+            // Raw browser counters remain diagnostic; only a validated visible window drives throttling.
+            val dropPolicyPct = d.optInt("dropPolicyPct", -1).coerceIn(-1, 100)
+            PerformanceMonitor.onDroppedFrames(if (d.optBoolean("audioOnly", false) || d.optBoolean("nativeAudioOwns", false)) -1 else dropPolicyPct)
             val tier = d.optString("tier").take(12).filter { it.isLetterOrDigit() }
             val codec = d.optString("codec").take(45).filter { it.isLetterOrDigit() || it in ".,- " }
             AppLog.add("PERF", "sec=$sec webCpuPct=$pct webAvgPct=$avg webPeakPct=$peak previewPressure=${previewPressure.active(now)} " +
@@ -1286,7 +1325,7 @@ object WebHost {
                 "mutations=${metric("mutations")} resourceLoads=${metric("sourceLoads")} " +
                 "layoutChanges=${metric("layout")} refits=${metric("refits")} " +
                 "recoveries=${metric("recoveries")} longTasks=${metric("longTasks")} " +
-                "frames=${metric("frames")} droppedPct=$droppedPct " +
+                "frames=${metric("frames")} droppedPct=$droppedPct dropPolicyPct=$dropPolicyPct " +
                 "decodedFrames=${metric("decoded")} presentedEstFrames=${metric("presentedEst")} " +
                 "displayedFrames=${d.optInt("displayed", -1).coerceIn(-1, 1_000_000)} " +
                 "bufferEvents=${metric("bufferEvents", 1_000)} bufferMs=${metric("bufferMs", 600_000)} " +
@@ -1298,6 +1337,14 @@ object WebHost {
                 "audioOnly=${d.optBoolean("audioOnly", false)} car=$carShown mode=${mode.value} " +
                 "javaHeapKb=${(Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }) / 1024} " +
                 "nativeHeapKb=${android.os.Debug.getNativeHeapAllocatedSize() / 1024}")
+            if (Features.current.nativeAudio) {
+                fun audioCount(key: String) = d.optInt(key, -1).coerceIn(-1, 256)
+                AppLog.add("NATIVE-AUDIO", "probe=metadata-only audioFormats=${audioCount("audioFormats")} " +
+                    "direct=${audioCount("audioDirect")} wrapped=${audioCount("audioWrapped")} " +
+                    "aac=${audioCount("audioAac")} opus=${audioCount("audioOpus")} " +
+                    "sabr=${audioCount("audioSabr")} hls=${audioCount("audioHls")} dash=${audioCount("audioDash")}")
+            }
+            AppLog.add("PLAYER-UI", "centerCount=${metric("centerCount", 20)} centerPlaying=${d.optBoolean("centerPlaying", false)} mode=${mode.value}")
             AppLog.add("PERF", "engine ${PerformanceMonitor.summary()} " +
                 "rendererCpuPct=adb-only(${PerformanceMonitor.diagnostics.liveRenderers()} live)")
         }
@@ -1503,6 +1550,7 @@ object WebHost {
     }
 
     private fun resetSessionPlayback() {
+        NativePlayback.release()
         playbackWanted = false
         mainFrameAllowsPlayback = false
         expectedWatchVideoId = null
@@ -1658,6 +1706,9 @@ object WebHost {
         }
         // No renderer, no playback session: the performance engine stops with it (any release).
         PerformanceMonitor.reset()
+        NativePlayback.release()
+        NetworkMonitor.stop()
+        main.removeCallbacks(networkResume)
         main.removeCallbacks(freezeSoon)
         main.removeCallbacks(backgroundPlaybackProbe)
         playbackWanted = false
@@ -1830,7 +1881,7 @@ object WebHost {
             val currentSec = snapshot.value.posMs.coerceAtLeast(0L) / 1000
             if (startSec > 0 && kotlin.math.abs(startSec - currentSec) > 4)
                 cmd("seek", startSec.toString())
-            if (!snapshot.value.playing) cmd("play")
+            if (!snapshot.value.playing) autoPlay()
             return
         }
         val base = if (Features.current.desktopSite) "https://www.youtube.com" else "https://m.youtube.com"
@@ -1927,8 +1978,12 @@ object WebHost {
     /** Called on a WebView thread by [WebBridge]. */
     fun onJsState(json: String, generation: Int = webGeneration) {
         if (generation != webGeneration) return
+        var webNativeMarker = false
+        var qualityReloadMs = 0L
         val s = runCatching {
             val o = JSONObject(json)
+            webNativeMarker = o.optBoolean("native")
+            qualityReloadMs = o.optLong("qualityReloadMs").coerceIn(0L, OtherMediaHoldPolicy.QUALITY_RELOAD_MAX_MS)
             Snap(
                 id = o.optString("id"),
                 title = o.optString("title"),
@@ -1959,9 +2014,57 @@ object WebHost {
                 AppLog.add("MEDIA", "Ignored stale video report after watch navigation")
                 return@post
             }
-            publish(s)
+            qualityReloadUntil = if (!s.playing && !s.userPaused && !s.ended && !webNativeMarker &&
+                s.id.isNotBlank() && qualityReloadMs > 0L && !shown && !inPip.value && !carShown)
+                SystemClock.elapsedRealtime() + qualityReloadMs else 0L
+            // Native audio (experimental): the web's metadata with the native clock while it owns.
+            publish(NativePlayback.mergeWebState(s, webNativeMarker))
         }
     }
+
+    /** Native engine state for the media session; merged onto the web's metadata. */
+    internal fun publishFromNative(update: (Snap) -> Snap) {
+        main.post { if (!sessionClearing && NativePlayback.nativeOwns) publish(update(snapshot.value)) }
+    }
+
+    /**
+     * Native audio ownership in the page: on = pause the web video and stop its loading
+     * (no duplicate audio, no video download/decoding); off = continue at [positionMs]
+     * (-1 keeps position) and play only when [resume].
+     */
+    internal fun nativeAudioOwner(on: Boolean, positionMs: Long, resume: Boolean) {
+        val sec = if (positionMs < 0L) -1.0 else positionMs / 1000.0
+        js("window.__aay&&window.__aay.nativeAudio&&window.__aay.nativeAudio($on,$sec,$resume)")
+    }
+
+    /** Read a minimal authorized session descriptor directly from the current document.
+     * Never log the returned body or store it on disk.
+     */
+    internal fun requestLocalAudio(videoId: String, done: (String?) -> Unit) {
+        val w = web ?: run { done(null); return }
+        val gen = webGeneration
+        if (sessionClearing || shown || inPip.value || carProjectionActive() ||
+            !Features.current.nativeAudio || !Features.current.localSabr ||
+            !isYouTubeHost(runCatching { Uri.parse(w.url.orEmpty()).host }.getOrNull())) { done(null); return }
+        val id = JSONObject.quote(videoId)
+        w.evaluateJavascript("window.__aay&&window.__aay.localAudioDescriptor&&window.__aay.localAudioDescriptor($id)") { value ->
+            done(value?.takeIf { web === w && webGeneration == gen && !sessionClearing &&
+                !shown && !inPip.value && !carProjectionActive() &&
+                Features.current.nativeAudio && Features.current.localSabr &&
+                snapshot.value.id == videoId && it.length in 2..131072 && it != "null" })
+        }
+    }
+
+    internal fun confirmNativeSilence(videoId: String, confirmed: (Boolean) -> Unit) {
+        val w = web ?: run { confirmed(false); return }
+        val gen = webGeneration
+        val id = JSONObject.quote(videoId)
+        w.evaluateJavascript("!!(window.__aay&&window.__aay.confirmNativeSilence&&window.__aay.confirmNativeSilence($id))") { value ->
+            confirmed(web === w && webGeneration == gen && !sessionClearing && value == "true")
+        }
+    }
+
+    internal fun carProjectionActive(): Boolean = carShown || carAudioRetained.value
 
     // JavaScript timers can be delayed after screen-off. Native probes keep
     // recovery checks scheduled while playback is wanted; JS respects Pause.
@@ -2018,6 +2121,12 @@ object WebHost {
         val mini = mode.value == PlayerMode.MINI && !inPip.value
         if (new.userPaused || !playbackWanted || now - userPausedAt <= 5_000L) return
         unexpectedPauseRecoveryUntil = now + 120_000L
+        // The connection dropped: retrying now fails and would use up the budget, and our own
+        // residual output would pass for another app's audio. Resume when it returns.
+        if (!NetworkMonitor.online) {
+            AppLog.add("PLAY", "Pause while offline: resume deferred until the connection returns")
+            return
+        }
         // During the bounded car handoff the page owns fast recovery. Avoid
         // competing native Play commands while the decoder is changing surfaces.
         if (modeHandoffStartedAt != 0L && now - modeHandoffStartedAt < 4_000L) {
@@ -2042,6 +2151,7 @@ object WebHost {
     }
 
     private fun cancelOtherMediaWork(reason: String) {
+        qualityReloadUntil = 0L
         main.removeCallbacks(droppedResume)
         main.removeCallbacks(droppedResumeJudge)
         endOtherMediaHold(reason)
@@ -2077,12 +2187,17 @@ object WebHost {
     private fun thermalStatus(): Int = if (android.os.Build.VERSION.SDK_INT < 29) 0 else
         runCatching { app.getSystemService(android.os.PowerManager::class.java).currentThermalStatus }.getOrDefault(0)
 
+    private var qualityReloadUntil = 0L
+    private fun qualityReloadDelay(): Long = OtherMediaHoldPolicy.qualityReloadDelay(
+        qualityReloadUntil, SystemClock.elapsedRealtime())
+
     internal fun postOtherMediaHold(generation: Int) {
         main.post {
             if (generation != webGeneration) return@post
             val current = snapshot.value
             if (!current.playing && !current.buffering && !current.userPaused &&
-                !current.ended && current.id.isNotBlank() && playbackWanted && otherMediaActive()) {
+                !current.ended && current.id.isNotBlank() && playbackWanted &&
+                !NetworkMonitor.recentlyDisrupted() && qualityReloadDelay() == 0L && otherMediaActive()) {
                 startOtherMediaHold("page watchdog")
             } else if (otherMediaHeldSince == 0L) {
                 // The bridge returned a provisional hold to JS. Release it if
@@ -2092,7 +2207,7 @@ object WebHost {
         }
     }
 
-    private val droppedResume = Runnable {
+    private val droppedResume: Runnable = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
         // Allow native playback state to settle before checking other media.
@@ -2100,12 +2215,25 @@ object WebHost {
         main.postDelayed(droppedResumeJudge, OtherMediaHoldPolicy.SELF_SILENCE_MS)
     }
 
-    private val droppedResumeJudge = Runnable {
+    private val droppedResumeJudge: Runnable = Runnable {
         val s = snapshot.value
         if (s.playing || s.buffering || !playbackWanted || s.userPaused || s.ended || s.id.isBlank()) return@Runnable
+        // A pause right after a connection loss or network switch is the network's: recover the
+        // stream (the player may have reset after its error) instead of holding for "other media".
+        if (NetworkMonitor.recentlyDisrupted()) {
+            AppLog.add("FOCUS", "Native recovery decision: network disruption, no other-media hold online=${NetworkMonitor.online}")
+            if (NetworkMonitor.online) recoverAfterNetwork("recent disruption")
+            return@Runnable
+        }
+        val qualityDelay = qualityReloadDelay()
+        if (qualityDelay > 0L) {
+            AppLog.add("FOCUS", "Recovery deferred during background quality reload remainingMs=$qualityDelay")
+            main.postDelayed(droppedResume, qualityDelay)
+            return@Runnable
+        }
         val active = otherMediaActive()
         AppLog.add("FOCUS", "Native recovery decision: external audio or residual output=$active")
-        if (active) startOtherMediaHold("native resume") else cmd("play")
+        if (active) startOtherMediaHold("native resume") else autoPlay()
     }
 
     // ------------------------------------------------- other app's media (audio focus)
@@ -2117,8 +2245,49 @@ object WebHost {
         OtherMediaHoldPolicy.othersActive(am.isMusicActive, am.mode)
     }.getOrDefault(false)
 
+    // ---------------------------------------------------------------- connection loss
+    private var lastGoodId = ""
+    private var lastGoodPosMs = 0L
+
+    /** Called from the connectivity thread. */
+    internal fun onNetworkLost() = main.post {
+        if (web == null) return@post
+        val s = snapshot.value
+        AppLog.add("NET", "Connection lost wanted=$playbackWanted playing=${s.playing} posMs=${s.posMs}")
+        js("window.__aay&&window.__aay.network&&window.__aay.network(false)")
+    }
+
+    /** Called from the connectivity thread when a validated connection returns or the network switches. */
+    internal fun onNetworkRestored(outageMs: Long) = main.post {
+        if (web == null) return@post
+        js("window.__aay&&window.__aay.network&&window.__aay.network(true)")
+        val s = snapshot.value
+        val resume = NetworkRecoveryPolicy.shouldResume(s, playbackWanted, otherMediaHeldSince != 0L)
+        AppLog.add("NET", "Connection restored outageMs=$outageMs resume=$resume wanted=$playbackWanted " +
+            "playing=${s.playing} buffering=${s.buffering} userPaused=${s.userPaused}")
+        if (!resume) return@post
+        resetResumeBudget() // failures while offline do not count
+        unfreeze()
+        main.removeCallbacks(networkResume)
+        main.postDelayed(networkResume, NetworkRecoveryPolicy.SETTLE_MS)
+    }
+
+    private val networkResume = Runnable { recoverAfterNetwork("connection restored") }
+
+    /** Resume the same video at its last good position (YouTube may have reset it after the error). */
+    private fun recoverAfterNetwork(reason: String) {
+        val s = snapshot.value
+        if (!NetworkRecoveryPolicy.shouldResume(s, playbackWanted, otherMediaHeldSince != 0L)) return
+        if (NativePlayback.nativeOwns) { autoPlay(); return }
+        val posMs = NetworkRecoveryPolicy.resumePositionMs(s, lastGoodId, lastGoodPosMs)
+        AppLog.add("PLAY", "Network recovery ($reason) id=${s.id} posMs=$posMs")
+        js("window.__aay&&window.__aay.recoverNetwork&&window.__aay.recoverNetwork(${posMs / 1000.0})")
+    }
+
     internal fun startOtherMediaHold(reason: String) {
         if (otherMediaHeldSince != 0L || !playbackWanted) return
+        // Native audio is the media heard now (Media3 handles focus itself): not "other media".
+        if (NativePlayback.nativeOwns) return
         otherMediaHeldSince = SystemClock.elapsedRealtime()
         otherMediaQuietSince = 0L
         main.removeCallbacks(droppedResume)
@@ -2203,7 +2372,7 @@ object WebHost {
                     OtherMediaHoldPolicy.pollDelay(active, otherMediaQuietSince, now))
                 OtherMediaHoldPolicy.Step.RESUME -> {
                     endOtherMediaHold("other media stopped")
-                    if (keepRecovering()) cmd("play")
+                    if (keepRecovering()) autoPlay()
                 }
                 OtherMediaHoldPolicy.Step.GIVE_UP -> {
                     endOtherMediaHold("hold expired", giveUp = true)
@@ -2272,6 +2441,7 @@ object WebHost {
             lastLogged = key
             AppLog.add("PLAY", "id=${s.id} \"${s.title}\" playing=${s.playing} buffering=${s.buffering} ad=${s.ad} ended=${s.ended} live=${s.live} pos=${s.posMs / 1000}s/${s.durMs / 1000}s rate=${s.rate} next=${s.canNext} prev=${s.canPrev}")
         }
+        if (s.id.isNotBlank() && s.posMs > 0L && !s.ad) { lastGoodId = s.id; lastGoodPosMs = s.posMs }
         snapshot.value = s
         updateBackgroundPlaybackProbe()
         PhoneMirror.onEngineState(previous, s)
@@ -2394,7 +2564,8 @@ object WebHost {
             if (sessionClearing) return
             if (mode.value == PlayerMode.MINI) view.evaluateJavascript("window.__aay&&window.__aay.mini(true)", null)
             if (inPip.value) view.evaluateJavascript("window.__aay&&window.__aay.pip(true)", null)
-            view.evaluateJavascript("window.__aay&&window.__aay.audioMode&&window.__aay.audioMode(${carAudioRetained.value})", null)
+            view.evaluateJavascript("window.__aay&&window.__aay.setBg(${!shown && !inPip.value})", null)
+            syncWebAudioMode()
             view.evaluateJavascript("window.__aay&&window.__aay.car(${carDisplay || carShown})", null)
             if (landscapeFill.value) view.evaluateJavascript("window.__aay&&window.__aay.land&&window.__aay.land(true)", null)
             if (lyricsTracking) view.evaluateJavascript("window.__aay&&window.__aay.lyricsSync(true)", null)

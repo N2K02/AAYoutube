@@ -70,9 +70,10 @@ class CarDirectSurfacePolicyTest {
         assertTrue(activity.contains("CarDirectSurfaceProbe.stopForPlayback(carToken)"))
         assertTrue(activity.contains("CarDirectSurfaceView("))
         assertTrue(activity.contains("onRelease = { it.stopRendering() }"))
-        assertTrue(settings.contains("CarDirectSurfaceProbe.request()"))
-        assertTrue(settings.contains("Test direct surface"))
-        assertTrue(settings.contains("Moving image visible"))
+        // Manual car diagnostics were only reachable from the removed Experimental video page.
+        assertFalse(settings.contains("CarDirectSurfaceProbe.request()"))
+        assertFalse(settings.contains("Test direct surface"))
+        assertFalse(settings.contains("Moving image visible"))
         assertFalse(renderer.contains("WebView("))
         assertFalse(renderer.contains("WebHost.cmd("))
         assertFalse(renderer.contains("MediaCodec("))

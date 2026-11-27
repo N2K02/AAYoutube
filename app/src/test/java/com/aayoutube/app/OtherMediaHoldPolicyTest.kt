@@ -8,6 +8,13 @@ import org.junit.Test
 import com.aayoutube.app.OtherMediaHoldPolicy.Step
 
 class OtherMediaHoldPolicyTest {
+    @Test fun knownQualityReloadDeferralIsBounded() {
+        assertEquals(0L, OtherMediaHoldPolicy.qualityReloadDelay(0L, 500L))
+        assertEquals(7_000L, OtherMediaHoldPolicy.qualityReloadDelay(12_000L, 5_000L))
+        assertEquals(0L, OtherMediaHoldPolicy.qualityReloadDelay(12_000L, 12_001L))
+        assertEquals(12_000L, OtherMediaHoldPolicy.qualityReloadDelay(30_000L, 1L))
+    }
+
     @Test fun musicOrCallCountsAsOtherMedia() {
         assertTrue(OtherMediaHoldPolicy.othersActive(true, 0))
         assertTrue(OtherMediaHoldPolicy.othersActive(false, 2)) // in call
@@ -37,9 +44,10 @@ class OtherMediaHoldPolicyTest {
         fun read(p: String) = listOf(File(p), File("../$p")).first { it.isFile }.readText()
         val web = read("app/src/main/java/com/aayoutube/app/WebHost.kt")
         assertTrue(web.contains("main.postDelayed(droppedResume, OtherMediaHoldPolicy.SETTLE_MS)"))
-        val judge = web.substringAfter("private val droppedResumeJudge = Runnable {").substringBefore("\n    }")
+        val judge = web.substringAfter("private val droppedResumeJudge: Runnable = Runnable {").substringBefore("\n    }")
         assertTrue(judge.contains("val active = otherMediaActive()"))
-        assertTrue(judge.contains("if (active) startOtherMediaHold(\"native resume\") else cmd(\"play\")"))
+        // Recovery resumes as an automatic Play (a real hold still wins over it).
+        assertTrue(judge.contains("if (active) startOtherMediaHold(\"native resume\") else autoPlay()"))
         assertTrue(judge.indexOf("val active = otherMediaActive()") < judge.indexOf("if (active)"))
         assertTrue(web.contains("fun otherMediaHold(token: String?): Boolean"))
         val js = read("app/src/main/assets/aay.js")

@@ -2308,3 +2308,393 @@ test('at most one outstanding frame callback; a new video element cancels and in
   p.advance(31000); p.runIntervals();
   assert.equal(p.perfReports.at(-1).displayed, 30, 'new element readings only');
 });
+
+test('native audio ownership pauses the web video at the lowest quality and blocks recovery', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  assert.equal(p.video.paused, false);
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  assert.equal(p.video.paused, true, 'web silent while native plays');
+  assert.equal(p.window.__aay.nativeOwned(), true);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'no video bandwidth while native owns');
+  assert.equal(p.stateReports.at(-1).native, true, 'the app knows the page is deliberately silent');
+  // Background recovery must not bring the web audio back (no duplicate audible playback).
+  p.window.__aay.checkBackgroundPlayback && p.window.__aay.checkBackgroundPlayback();
+  p.advance(20000);
+  p.runIntervals();
+  p.flush();
+  assert.equal(p.video.paused, true, 'still silent after recovery checks');
+});
+
+test('native audio hands back at the native position and keeps a paused intent paused', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  p.window.__aay.nativeAudio(false, 95.5, false);
+  p.flush();
+  assert.equal(p.video.currentTime, 95.5);
+  assert.equal(p.video.paused, true, 'user had paused native: web stays paused');
+  assert.equal(p.window.__aay.nativeOwned(), false);
+  assert.notDeepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'saved quality restored');
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.window.__aay.nativeAudio(false, 120, true);
+  p.flush();
+  assert.equal(p.video.currentTime, 120);
+  assert.equal(p.video.paused, false, 'resumes when the user wanted playback');
+  assert.equal(p.stateReports.at(-1).native, false);
+});
+
+test('page navigation to another video drops native ownership of the old one', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.nativeAudio(true, -1, false);
+  p.flush();
+  p.location.search = '?v=anotherVideo';
+  p.location.href = 'https://m.youtube.com/watch?v=anotherVideo';
+  p.video.trigger('loadedmetadata');
+  p.flush();
+  assert.equal(p.window.__aay.nativeOwned(), false);
+  assert.equal(p.stateReports.at(-1).native, false);
+});
+
+test('the user\'s Play ends an other-media hold at once (one press), automatic Play still waits', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  assert.equal(p.video.paused, true);
+  p.window.__aay.cmd('play'); // app recovery
+  assert.equal(p.video.paused, true, 'automatic Play respects the hold');
+  p.window.__aay.cmd('play', 'user'); // notification / car / headset / app button
+  assert.equal(p.video.paused, false, 'one user press resumes');
+  // YouTube's late play event no longer re-pauses: the hold is over.
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false);
+  p.runIntervals();
+  assert.equal(p.video.paused, false, 'watchdogs do not pause again');
+});
+
+test('a play the user just tapped in the page is not paused again by a hold', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.mediaHold(true);
+  p.window.__aay.cmd('play', 'user');
+  p.window.__aay.mediaHold(true); // a later hold (e.g. still-reported output)
+  p.window.__aay.cmd('play', 'user');
+  p.video.paused = false;
+  p.video.trigger('play');
+  assert.equal(p.video.paused, false);
+});
+
+test('offline: no resume attempts are spent; the connection\'s return resumes at the last position', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.currentTime = 95;
+  p.video.trigger('timeupdate');
+  p.flush();
+  p.window.__aay.network(false);
+  // YouTube's error resets the element and pauses it.
+  p.video.currentTime = 0;
+  p.video.paused = true;
+  p.video.trigger('pause');
+  let plays = 0;
+  const origPlay = p.video.play.bind(p.video);
+  p.video.play = () => { plays++; return origPlay(); };
+  p.advance(30000);
+  p.runIntervals();
+  assert.equal(plays, 0, 'no futile retries while offline');
+  assert.equal(p.video.paused, true);
+  const r = p.window.__aay.recoverNetwork(-1);
+  assert.match(r, /^resumed@95/);
+  assert.equal(p.video.currentTime, 95, 'same video, same place');
+  assert.equal(p.video.paused, false);
+  assert.equal(p.window.__aay.recoverNetwork(-1), 'recent', 'one recovery per reconnect');
+});
+
+test('network recovery keeps an explicit user pause and reloads a player that gave up', () => {
+  const p = playerPage();
+  p.flush();
+  p.window.__aay.cmd('pause');
+  assert.equal(p.window.__aay.recoverNetwork(50), 'user-paused');
+  assert.equal(p.video.paused, true);
+
+  const q = playerPage({ quality: true });
+  q.flush();
+  const player = q.document.getElementById('movie_player');
+  const loads = [];
+  player.loadVideoById = (o) => loads.push(o);
+  q.video.error = { code: 2 }; // MEDIA_ERR_NETWORK
+  q.video.paused = true;
+  const r = q.window.__aay.recoverNetwork(123.4);
+  assert.equal(r, 'reloaded@123');
+  assert.equal(loads.length, 1);
+  assert.equal(loads[0].videoId, '86p7SP34qSc');
+  assert.equal(loads[0].startSeconds, 123);
+});
+
+test('starved playback is nudged to fetch again after reconnect', () => {
+  const p = playerPage();
+  p.flush();
+  p.video.readyState = 2;
+  assert.equal(p.window.__aay.recoverNetwork(-1), 'nudged');
+});
+
+test('leaving the mini player repairs YouTube\'s stale centre Play icon promptly', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.document.getElementById('movie_player');
+  let repairs = 0;
+  player.getPlayerState = () => 2; // YouTube thinks paused
+  player.playVideo = () => { repairs++; };
+  player.getPlayerState(); // video element is playing
+  p.window.__aay.mini(true);
+  p.flush();
+  const before = repairs;
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.ok(repairs > before, 'icon reconciled on return to full player');
+});
+
+
+test('mini expansion repairs a late stale state despite a recent watchdog repair', () => {
+  const p = playerPage({ quality: true });
+  p.flush();
+  const player = p.player;
+  let state = 2, repairs = 0;
+  player.getPlayerState = () => state;
+  player.playVideo = () => { repairs++; state = 1; };
+  p.window.__aay.mini(true);
+  p.flush();
+  p.runIntervals();
+  assert.equal(state, 1);
+  const before = repairs;
+  // Full-size geometry changes can invalidate the player after the first repair.
+  player.setSize = () => { state = 2; };
+  player.getBoundingClientRect = () => ({ width: 320, height: 180 });
+  p.window.__aay.mini(false);
+  p.flush();
+  assert.equal(state, 1, 'the late resize must not leave a Play icon');
+  assert.ok(repairs > before && repairs <= before + 3, 'bounded transition repairs');
+  assert.equal(p.video.paused, false);
+  assert.equal(p.video.currentTime, 20);
+});
+
+test('mini icon reconciliation respects Pause, native ownership and superseded transitions', () => {
+  for (const [reason, cancel] of [
+    ['user pause', p => p.window.__aay.cmd('pause')],
+    ['native audio', p => p.window.__aay.nativeAudio(true, -1, false)],
+    ['audio focus', p => p.window.__aay.mediaHold(true)],
+    ['new mini transition', p => p.window.__aay.mini(true)],
+    ['new video route', p => {
+      // The fixture uses a plain object rather than a real Location, so both
+      // properties must change together; urlId() parses href, not search.
+      p.location.search = '?v=anotherVideo';
+      p.location.href = 'https://m.youtube.com/watch?v=anotherVideo';
+    }],
+  ]) {
+    const p = playerPage({ quality: true });
+    p.flush();
+    const player = p.player;
+    let state = 2, repairs = 0;
+    player.getPlayerState = () => state;
+    player.playVideo = () => { repairs++; state = 1; };
+    p.window.__aay.mini(true);
+    p.flush();
+    p.runIntervals();
+    p.window.__aay.mini(false);
+    cancel(p);
+    state = 2;
+    const before = repairs;
+    p.flush();
+    assert.equal(repairs, before, 'no delayed repair after ' + reason);
+  }
+});
+
+
+test('decoder overload does not inherit bad windows after a video or counter reset', () => {
+  for (const reset of ['route', 'element', 'counters', 'seek']) {
+    const p = overloadPage('hd2160');
+    let v = p.video, f = 1000, d = 100;
+    const install = () => { v.getVideoPlaybackQuality = () => ({ totalVideoFrames: f, droppedVideoFrames: d }); };
+    install(); p.runIntervals();
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    if (reset === 'route') { p.location.search = '?v=newVideo'; p.location.href = 'https://m.youtube.com/watch?v=newVideo'; }
+    if (reset === 'element') { v = p.replaceVideo(); install(); }
+    if (reset === 'counters') { f = 0; d = 0; }
+    if (reset === 'seek') { v.trigger('seeked'); }
+    p.advance(9000); p.runIntervals(); // fresh baseline
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    assert.notDeepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], reset + ': old bad sample discarded');
+    f += 300; d += 240; v.currentTime += 9; p.advance(9000); p.runIntervals();
+    assert.deepEqual(p.qualityCalls.at(-1), ['hd1440', 'hd1440'], reset + ': sustained new overload still handled');
+  }
+});
+
+
+test('repeated background reports keep the saver timer and heat reduces the hidden-only delay', () => {
+  const p = playerPage({ quality: true, cfg: { lowQuality: true } });
+  p.flush();
+  p.window.__aay.setBg(true);
+  p.advance(10000);
+  p.window.__aay.setBg(true);
+  p.advance(51000); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'duplicate background report preserves deadline');
+  p.window.__aay.setBg(false);
+  p.window.__aay.perfLevel(1);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720'], 'visible quality unchanged');
+  p.window.__aay.setBg(true);
+  p.advance(31000); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'elevated heat shortens hidden grace');
+  p.window.__aay.perfLevel(0);
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny', 'tiny'], 'cooling does not reverse an armed saver');
+  p.window.__aay.setBg(false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720', 'hd720']);
+});
+
+
+test('native audio feasibility probe reports counts only and refuses stale video metadata', () => {
+  const p = playerPage({ quality: true, cfg: { nativeAudio: true } });
+  p.flush();
+  const response = { videoDetails: { videoId: '86p7SP34qSc' }, streamingData: { adaptiveFormats: [
+    { mimeType: 'audio/mp4; codecs="mp4a.40.2"', url: 'https://example.org/private-token' },
+    { mimeType: 'audio/webm; codecs="opus"', signatureCipher: 'private-cipher' },
+    { mimeType: 'video/mp4', url: 'https://example.org/video' },
+  ] } };
+  p.player.getPlayerResponse = () => response;
+  p.advance(30000); p.runIntervals();
+  let r = p.perfReports.at(-1);
+  assert.equal(r.audioFormats, 2); assert.equal(r.audioDirect, 1); assert.equal(r.audioWrapped, 1);
+  assert.equal(r.audioAac, 1); assert.equal(r.audioOpus, 1);
+  assert.equal(JSON.stringify(r).includes('private'), false);
+  response.videoDetails.videoId = 'stale';
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).audioFormats, -1);
+  response.videoDetails.videoId = '86p7SP34qSc';
+  p.window.__aay.config({ nativeAudio: false });
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).audioFormats, -1);
+});
+
+
+test('mobile centre icon tracks actual media even when YouTube reports playing', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  p.player.getPlayerState = () => 1;
+  p.window.__aay.mini(true); p.window.__aay.mini(false); p.flush();
+  assert.ok(p.classNames.has('aay-center-transport'));
+  assert.ok(p.classNames.has('aay-center-playing'));
+  const target = { closest: selector => selector.includes('player-control-play-pause-icon') ? target : null,
+    matches: selector => selector.includes('player-control-play-pause-icon') };
+  let stopped = false;
+  p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
+  assert.ok(stopped); assert.ok(p.video.paused); assert.ok(!p.classNames.has('aay-center-playing'));
+  p.emit('click', { target, isTrusted: true, preventDefault() {}, stopImmediatePropagation() {} });
+  assert.equal(p.video.paused, false); assert.ok(p.classNames.has('aay-center-playing'));
+});
+
+
+test('native silence confirms matching paused element and rejects stale video', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  assert.equal(p.window.__aay.confirmNativeSilence('wrong'), false);
+  assert.equal(p.video.paused, false);
+  assert.equal(p.window.__aay.confirmNativeSilence('86p7SP34qSc'), true);
+  assert.equal(p.video.paused, true); assert.equal(p.window.__aay.nativeOwned(), true);
+});
+
+
+test('non-transport menu click is never intercepted as mobile center', () => {
+  const p = playerPage({ quality: true }); p.flush();
+  const menu = { tagName: 'BUTTON', textContent: '720p', matches: () => false,
+    getAttribute: () => null, closest: sel => sel.includes('[role="option"]') ? menu : null };
+  let stopped = false;
+  p.emit('click', { target: menu, isTrusted: true, preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
+  assert.equal(stopped, false); assert.equal(p.video.paused, false);
+});
+
+test('native probe distinguishes SABR, HLS, DASH without recording URL values', () => {
+  const p = playerPage({ quality: true, cfg: { nativeAudio: true } }); p.flush();
+  p.player.getPlayerResponse = () => ({videoDetails: {videoId: '86p7SP34qSc'}, streamingData: {
+    serverAbrStreamingUrl: 'https://example.invalid/private-sabr',
+    adaptiveFormats: [{mimeType: 'audio/mp4; codecs="mp4a.40.2"'}]}});
+  p.advance(30000); p.runIntervals();
+  const r = p.perfReports.at(-1);
+  assert.equal(r.audioFormats, 1); assert.equal(r.audioDirect, 0);
+  assert.equal(r.audioSabr, 1); assert.equal(r.audioHls, 0); assert.equal(r.audioDash, 0);
+  assert.equal(JSON.stringify(r).includes('private-sabr'), false);
+});
+
+
+test('background lightweight audio preserves quality saver and restores video on return', () => {
+  const p = playerPage({quality: true, cfg: {backgroundPlay: true, lowQuality: true, preferredQuality: 'hd720'}});
+  p.flush(); p.window.__aay.setBg(true); p.window.__aay.audioMode(false, true);
+  assert.equal(p.window.__aay.audioOnly, true); assert.equal(p.window.__aay.backgroundAudioMode, true);
+  assert.equal(p.video.paused, false);
+  p.advance(65000); p.runIntervals(); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny','tiny']);
+  p.window.__aay.setBg(false); p.window.__aay.audioMode(false, false);
+  assert.equal(p.window.__aay.audioOnly, false);
+  assert.deepEqual(p.qualityCalls.at(-1), ['hd720','hd720']);
+  assert.equal(p.video.paused, false);
+});
+
+
+test('local audio descriptor requires opt-in, hidden player and matching playable metadata', () => {
+  const p = playerPage({quality:true,cfg:{nativeAudio:true,localSabr:true,backgroundPlay:true}});
+  p.flush();
+  p.player.getPlayerResponse = () => ({videoDetails:{videoId:'86p7SP34qSc'},playabilityStatus:{status:'OK'},
+    streamingData:{serverAbrStreamingUrl:'https://r1.googlevideo.com/x',adaptiveFormats:[
+      {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',bitrate:128000,audioSampleRate:'44100',audioChannels:2},
+      {itag:137,mimeType:'video/mp4'}, {itag:141,mimeType:'audio/mp4',isDrc:true}
+    ]},playerConfig:{mediaCommonConfig:{mediaUstreamerRequestConfig:{videoPlaybackUstreamerConfig:'YWJj'}}}});
+  assert.equal(p.window.__aay.localAudioDescriptor('86p7SP34qSc'),null);
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  const d = p.window.__aay.localAudioDescriptor('86p7SP34qSc');
+  assert.equal(d.audio.length,1); assert.equal(d.audio[0].itag,140); assert.equal(d.ustreamerConfig,'YWJj');
+  assert.equal(p.window.__aay.localAudioDescriptor('wrong'),null);
+  p.window.__aay.config({localSabr:false});
+  assert.equal(p.window.__aay.localAudioDescriptor('86p7SP34qSc'),null);
+});
+
+
+test('background quality source reload defers other-media judgement, but a real user pause wins', () => {
+  const other = { active: true };
+  const p = playerPage({quality: true, cfg:{backgroundPlay:true, lowQuality:true, preferredQuality:'hd720'}, otherMedia:other});
+  p.flush();
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  p.advance(65000); p.runIntervals(); p.flush();
+  assert.deepEqual(p.qualityCalls.at(-1), ['tiny','tiny']);
+  p.video.paused = true; p.video.readyState = 1; p.video.trigger('emptied');
+  p.advance(2000); p.window.__aay.checkBackgroundPlayback(); p.flush();
+  assert.ok(p.stateReports.at(-1).qualityReloadMs > 0);
+  p.window.__aay.cmd('pause'); p.flush();
+  assert.equal(p.stateReports.at(-1).qualityReloadMs, 0);
+  p.advance(15000); p.window.__aay.checkBackgroundPlayback(); p.flush();
+  assert.equal(p.video.paused, true);
+});
+
+
+test('contradictory frame estimates and hidden samples never drive drop throttling', () => {
+  const p = playerPage({quality:true});
+  let frames = 0, dropped = 0, displayed = 0;
+  p.video.getVideoPlaybackQuality = () => ({totalVideoFrames:frames,droppedVideoFrames:dropped});
+  p.video.requestVideoFrameCallback = cb => { cb(0,{presentedFrames:displayed}); return 1; };
+  p.flush();
+  function windowSample(d, shown) {
+    frames += 1800; dropped += d; displayed += shown; p.video.currentTime += 30;
+    p.advance(30000); p.runIntervals();
+    return p.perfReports.at(-1);
+  }
+  windowSample(0,1800); // baseline
+  windowSample(800,1800); // raw 44%, compositor contradicts
+  const conflict = windowSample(800,1800);
+  assert.equal(conflict.droppedPct,44);
+  assert.equal(conflict.dropPolicyPct,-1);
+  windowSample(900,900);
+  assert.equal(windowSample(900,900).dropPolicyPct,50);
+  p.window.__aay.setBg(true); p.window.__aay.audioMode(false,true);
+  assert.equal(windowSample(900,900).dropPolicyPct,-1);
+  const fresh = p.replaceVideo();
+  fresh.getVideoPlaybackQuality = () => ({totalVideoFrames:99999,droppedVideoFrames:9999});
+  p.advance(30000); p.runIntervals();
+  assert.equal(p.perfReports.at(-1).dropPolicyPct,-1);
+});

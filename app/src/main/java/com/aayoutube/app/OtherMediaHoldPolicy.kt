@@ -11,6 +11,10 @@ internal object OtherMediaHoldPolicy {
     const val QUIET_MS = 2_000L
     /** Allow playback state to settle before judging other media. */
     const val SELF_SILENCE_MS = 400L
+    const val QUALITY_RELOAD_MAX_MS = 12_000L
+    /** Delay only a known source reload. Never infer ownership from global isMusicActive. */
+    fun qualityReloadDelay(deadline: Long, now: Long): Long =
+        (deadline - now).coerceIn(0L, QUALITY_RELOAD_MAX_MS)
     /** Timed wake lock per playback/mode callback: enough for the quiet check. */
     const val WAKE_CHECK_MS = 5_000L
     const val MAX_HOLD_MS = 30 * 60_000L

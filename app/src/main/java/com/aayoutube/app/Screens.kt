@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Article
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -93,6 +94,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -166,7 +168,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Info("About", Icons.Filled.Info),
     Settings("Settings", Icons.Filled.Settings),
     // Append to preserve previously saved tab ordinals when updating the app.
-    ExperimentalVideo("Experimental video", Icons.Filled.OndemandVideo),
+    // (Ordinal 6 was the removed Experimental video page; a saved tab there opens this.)
+    NativeAudio("Native audio engine", Icons.Filled.GraphicEq),
     InstallationHelp("Android Auto installation", Icons.Filled.InstallMobile),
     SleepTimer("Sleep timer", Icons.Filled.Timer),
 }
@@ -242,13 +245,7 @@ private fun AAYoutubePageHeader(
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AppRoot(activity: MainActivity) {
     val context = LocalContext.current
-    // Debug-only entry point for repeatable phone screenshots of the car-layout preview.
-    // A normal launch and all release builds still start on YouTube Home.
-    val openCarPreview = BuildConfig.DEBUG &&
-        activity.intent?.getBooleanExtra("com.aayoutube.app.EXTRA_CAR_PREVIEW", false) == true
-    var tab by rememberSaveable {
-        mutableIntStateOf(if (openCarPreview) Tab.ExperimentalVideo.ordinal else 0)
-    }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     val sharedLinkOpened by activity.sharedLinkOpened
     LaunchedEffect(sharedLinkOpened) {
         if (sharedLinkOpened) {
@@ -559,7 +556,7 @@ fun AppRoot(activity: MainActivity) {
                     ).wrapContentSize().zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
-                val updateStatus by LiveUpdater.controller.status.collectAsState()
+                val updateStatus = LiveUpdater.controllerOrNull?.status?.collectAsState()?.value
                 FloatingVideoBar(
                     playing = snap.playing,
                     playbackId = snap.id,
@@ -606,12 +603,12 @@ fun AppRoot(activity: MainActivity) {
                         // A text badge can cover a compact gear. Keep its indicator
                         // inside the fixed Settings slot without obscuring the icon.
                         if (phoneLandscape) {
-                            if (updateStatus.hasPendingUpdate()) {
+                            if (updateStatus?.hasPendingUpdate() == true) {
                                 androidx.compose.material3.Badge(
                                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
                                 )
                             }
-                        } else {
+                        } else if (updateStatus != null) {
                             dev.n2k02.updater.N2K02UpdateBadge(
                                 updateStatus,
                                 modifier = Modifier.align(Alignment.TopEnd),
@@ -959,7 +956,7 @@ private fun SettingsPageContent(page: Tab, onSelect: (Tab) -> Unit) {
     when (page) {
         Tab.Watch -> Unit
         Tab.Features -> FeaturesPage()
-        Tab.ExperimentalVideo -> ExperimentalVideoPage()
+        Tab.NativeAudio -> NativeAudioPage()
         Tab.InstallationHelp -> AndroidAutoInstallationPage()
         Tab.SleepTimer -> SleepTimerPage()
         Tab.Lyrics -> LyricsSettingsPage()
@@ -1012,7 +1009,7 @@ internal fun CarSettingsPanel(state: SettingsPanelState, modifier: Modifier = Mo
 private fun AAYoutubeSettingsMenu(
     onSelect: (Tab) -> Unit,
 ) {
-    val updateStatus by LiveUpdater.controller.status.collectAsState()
+    val updateStatus = LiveUpdater.controllerOrNull?.status?.collectAsState()?.value
     Column(Modifier.fillMaxSize()) {
         // No bottom bar: system Back returns to the video, Quit is on the floating rail.
         Column(
@@ -1026,7 +1023,7 @@ private fun AAYoutubeSettingsMenu(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp, bottom = 12.dp),
             )
-            listOf(Tab.Features, Tab.SleepTimer, Tab.ExperimentalVideo, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
+            listOf(Tab.Features, Tab.SleepTimer, Tab.NativeAudio, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update).forEach { destination ->
                 if (destination == Tab.Update) HorizontalDivider()
                 ListItem(
                     headlineContent = {
@@ -1035,7 +1032,7 @@ private fun AAYoutubeSettingsMenu(
                     supportingContent = {
                         Text(when (destination) {
                             Tab.Features -> "Playback, video and display preferences"
-                            Tab.ExperimentalVideo -> "Optional Android Auto video recovery tests"
+                            Tab.NativeAudio -> "Experimental Media3 audio with hardware offload"
                             Tab.InstallationHelp -> "Video not showing? Installation methods and updates"
                             Tab.SleepTimer -> "Pause playback after a set number of minutes or hours"
                             Tab.Lyrics -> "Lyrics provider and overlay preferences"
@@ -1046,8 +1043,10 @@ private fun AAYoutubeSettingsMenu(
                     },
                     leadingContent = { Icon(destination.icon, contentDescription = null) },
                     trailingContent = {
-                        if (destination == Tab.Update)
-                            dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                        if (destination == Tab.Update) {
+                            if (updateStatus != null)
+                                dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                        }
                     },
                     modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
                 )
@@ -1228,320 +1227,78 @@ fun FeaturesPage() {
     }
 }
 
-// ---------------------------------------------------------------------------- experimental video
+// ---------------------------------------------------------------------------- native audio
 
-/**
- * This switch is deliberately separate from Updater's experimental APK channel.
- * It changes only the legacy Android Auto video window, never phone playback
- * or the native audio/media session. It takes effect on the next car connection.
- */
+/** Settings → Native audio engine: the experimental Media3 engine, off by default. */
 @Composable
-fun ExperimentalVideoPage() {
+private fun NativeAudioPage() {
     val flags by Features.state.collectAsState()
-    val diagnostics by ExperimentalCarVideoMonitor.state.collectAsState()
-    val virtualProbe by CarVirtualDisplayProbe.state.collectAsState()
-    val carWindowProbe by CarWindowPixelProbe.state.collectAsState()
-    val carPattern by CarVideoPatternProbe.state.collectAsState()
-    val directSurface by CarDirectSurfaceProbe.state.collectAsState()
-    val videoSnapshot by WebHost.snapshot.collectAsState()
-    val context = LocalContext.current
-    val renderEvidence = CarRenderEvidence(
-        active = diagnostics.active,
-        experimental = diagnostics.enabled,
-        windowBuffer = if (carPattern.owner == diagnostics.owner)
-            carPattern.windowPatternDetected else null,
-        windowSeen = if (carPattern.owner == diagnostics.owner)
-            carPattern.observedVisible else null,
-        surfaceBuffer = if (directSurface.owner == diagnostics.owner)
-            directSurface.surfacePatternDetected else null,
-        surfaceSeen = if (directSurface.owner == diagnostics.owner)
-            directSurface.observedVisible else null,
-        surfaceFrames = if (directSurface.owner == diagnostics.owner)
-            directSurface.frameCount else 0,
-        frameHealth = diagnostics.frameHealth,
-        checks = diagnostics.checks,
-        repairs = diagnostics.repairs,
-        frameSize = diagnostics.frameSize,
-        playerSize = diagnostics.playerSize,
-    )
-    val renderAssessment = CarRenderCorrelationPolicy.assess(renderEvidence)
-    DisposableEffect(Unit) {
-        onDispose { CarVirtualDisplayProbe.cancel() }
-    }
+    var endpoint by rememberSaveable(flags.nativeAudioProviderUrl) { mutableStateOf(flags.nativeAudioProviderUrl) }
+    val validEndpoint = AuthorizedAudioProvider.normalizeEndpoint(endpoint)
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Card {
             ListItem(
-                headlineContent = { Text("Experimental video") },
+                headlineContent = { Text("Native audio engine") },
                 supportingContent = {
                     Text(
-                        "Android Auto only. Tries bounded, non-destructive surface recovery " +
-                            "when the projected video view is missing or has invalid geometry. " +
-                            "Reconnect Android Auto after changing this switch."
+                        "Experimental. Plays audio with Android's media player instead of the web " +
+                            "player, without downloading video, and uses hardware audio offload where " +
+                            "supported. Needs an authorized stream source; without one the web player " +
+                            "keeps playing."
                     )
                 },
-                leadingContent = { Icon(Icons.Filled.OndemandVideo, contentDescription = null) },
+                leadingContent = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
                 trailingContent = {
                     Switch(
-                        checked = flags.experimentalVideo,
+                        checked = flags.nativeAudio,
                         onCheckedChange = { enabled ->
-                            Features.update { it.copy(experimentalVideo = enabled) }
-                            AppLog.add("CAR", "Experimental video preference=" + enabled +
-                                "; takes effect on next car video connection")
+                            Features.update { it.copy(nativeAudio = enabled) }
+                            if (!enabled) NativePlayback.returnToWeb("feature-off")
+                            AppLog.add("NATIVE-AUDIO", "preference=$enabled provider=${StreamProviders.current.id}")
                         },
                     )
                 },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         }
-        CarVideoViewportPreview()
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Synthetic virtual-display test",
-                    style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Checks whether Android can draw a test pattern into a private " +
-                        "virtual display, without launching YouTube or using Shizuku. " +
-                        "This is not Android Auto video rendering.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(virtualProbe.message, style = MaterialTheme.typography.bodyMedium)
-                Button(
-                    onClick = { CarVirtualDisplayProbe.start(context) },
-                    enabled = flags.experimentalVideo && !diagnostics.active && !virtualProbe.running,
-                ) { Text(if (virtualProbe.running) "Checking…" else "Test virtual display") }
-                if (diagnostics.active) Text(
-                    "Disconnect Android Auto video before running this isolated test.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        Card {
+            ListItem(
+                headlineContent = { Text("Stream source") },
+                supportingContent = {
+                    Text(
+                        if (flags.nativeAudioProviderUrl.isNotBlank()) "Authorized HTTPS resolver configured."
+                        else if (flags.localSabr) "On-device SABR (experimental)."
+                        else "No source configured. Web playback remains available."
+                    )
+                },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
         }
-        Card(Modifier.fillMaxWidth()) {
-            Column(
-                Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text("Car video diagnostics", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    diagnostics.state,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    "Connection: " + if (diagnostics.active) "active" else "inactive",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Mode: " + if (diagnostics.enabled) "experimental" else "standard",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Checks: ${diagnostics.checks}  ·  Repairs: ${diagnostics.repairs}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Display ID: ${diagnostics.displayId}  ·  Frame: ${diagnostics.frameSize}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "WebView: ${diagnostics.playerSize}  ·  Visible: ${diagnostics.visibleArea}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Expected 16:9 region: ${diagnostics.referenceVideoArea}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Decoder: ${diagnostics.decoderSize}  ·  Decoded: ${diagnostics.decodedFrames}  ·  Dropped: ${diagnostics.droppedFrames}",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Text(
-                    "Frame health: ${diagnostics.frameHealth}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "Decoder paused: ${diagnostics.decoderPaused ?: "unknown"}. " +
-                        "Frame health is diagnostic only and does not prove a visible car image.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (diagnostics.active) {
-                    OutlinedButton(onClick = {
-                        WebHost.logCarRenderProbe()
-                        AppLog.add("CAR", "User requested manual render probe")
-                    }, enabled = diagnostics.enabled) {
-                        Text("Check decoder health")
-                    }
-                    Text(
-                        "Car display visual test",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        carPattern.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(
-                        onClick = { CarVideoPatternProbe.request() },
-                        enabled = diagnostics.enabled && carPattern.available &&
-                            !carPattern.visible && !videoSnapshot.playing &&
-                            !carWindowProbe.running && !directSurface.visible,
-                    ) { Text(if (carPattern.visible) "Showing test bars…" else "Show test bars on car") }
-                    Text(
-                        "Window readback: " + carPattern.windowReadback,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (videoSnapshot.playing) Text(
-                        "Pause playback before showing the short test image.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (carPattern.awaitingFeedback) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(true) }) {
-                                Text("Visible")
-                            }
-                            OutlinedButton(onClick = { CarVideoPatternProbe.reportSeen(false) }) {
-                                Text("Not visible")
-                            }
-                        }
-                    }
-                    Text(
-                        "Test bars appear for 3 seconds in the existing car window. " +
-                            "A tiny in-memory window readback compares known colors only. " +
-                            "Neither test proves what the physical head unit displays.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "Direct Surface rendering test",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        "Renders an animated synthetic pattern through a separate " +
-                            "SurfaceView layer for five seconds, without creating " +
-                            "another video player or changing audio.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        directSurface.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(
-                        onClick = { CarDirectSurfaceProbe.request() },
-                        enabled = diagnostics.enabled && directSurface.available &&
-                            !directSurface.visible && !videoSnapshot.playing &&
-                            !carPattern.visible && !carWindowProbe.running,
-                    ) {
-                        Text(if (directSurface.visible)
-                            "Rendering moving pattern…" else "Test direct surface")
-                    }
-                    Text(
-                        "Submitted: ${directSurface.frameCount} frames · " +
-                            "~${directSurface.estimatedFps} fps · " +
-                            "max gap ${directSurface.maxFrameGapMs} ms",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        directSurface.readback,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (directSurface.awaitingFeedback) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = {
-                                CarDirectSurfaceProbe.reportSeen(true)
-                            }) { Text("Moving image visible") }
-                            OutlinedButton(onClick = {
-                                CarDirectSurfaceProbe.reportSeen(false)
-                            }) { Text("Not visible") }
-                        }
-                    }
-                    Text(
-                        "This checks SurfaceView composition, not YouTube video " +
-                            "or physical-screen frames. Test only while parked.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "Car-window pixels: " + carWindowProbe.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (carWindowProbe.darkPercent != null) {
-                        Text(
-                            "Dark pixels: ${carWindowProbe.darkPercent}% · " +
-                                "Brightness range: ${carWindowProbe.brightnessRange ?: 0}",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = { CarWindowPixelProbe.request() },
-                        enabled = diagnostics.enabled && carWindowProbe.available &&
-                            !carWindowProbe.running && !carPattern.visible &&
-                            !directSurface.visible,
-                    ) {
-                        Text(if (carWindowProbe.running) "Checking…" else "Check car-window pixels")
-                    }
-                    Text(
-                        "This manual test reads only a tiny, temporary car-window sample. " +
-                            "No image is saved. Dark pixels may be normal video, and a " +
-                            "successful sample does not prove the head unit displays it.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        Card {
+            ListItem(
+                headlineContent = { Text("On-device SABR") },
+                supportingContent = { Text("Attempt native audio from the current player's available stream metadata, with no external resolver. Enable only for content you are authorized to play separately. Falls back automatically; no access checks are bypassed.") },
+                leadingContent = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
+                trailingContent = { Switch(checked = flags.localSabr, onCheckedChange = { enabled ->
+                    Features.update { it.copy(localSabr = enabled) }
+                    NativePlayback.onVisibilityChanged()
+                }) },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            )
+        }
+        Card {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = endpoint, onValueChange = { endpoint = it }, label = { Text("Authorized HTTPS resolver URL") }, singleLine = true, isError = endpoint.isNotBlank() && validEndpoint == null, modifier = Modifier.fillMaxWidth())
+                Text("Use only a trusted source authorized for direct playback. The resolver receives the video ID, never YouTube login cookies.", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = validEndpoint != null && validEndpoint != flags.nativeAudioProviderUrl, onClick = { Features.update { it.copy(nativeAudioProviderUrl = validEndpoint.orEmpty()) }; NativePlayback.onVisibilityChanged() }) { Text("Save") }
+                    OutlinedButton(onClick = { endpoint = ""; Features.update { it.copy(nativeAudioProviderUrl = "") }; NativePlayback.onVisibilityChanged() }) { Text("Clear") }
                 }
             }
         }
-        if (diagnostics.active && diagnostics.enabled) {
-            Card(Modifier.fillMaxWidth()) {
-                Column(
-                    Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text("Rendering-path assessment",
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(renderAssessment.summary,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Text(renderAssessment.nextStep,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    OutlinedButton(onClick = {
-                        val clipboard = context.getSystemService(
-                            android.content.Context.CLIPBOARD_SERVICE
-                        ) as? android.content.ClipboardManager
-                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(
-                            "AAYouTube car rendering diagnostics",
-                            CarRenderCorrelationPolicy.report(renderEvidence),
-                        ))
-                        AppLog.add("CAR", "User copied sanitized renderer correlation report")
-                    }) { Text("Copy rendering report") }
-                    Text(
-                        "Report contains aggregate diagnostic signals only—" +
-                            "no URLs, video identifiers or screenshots.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        Text(
-            "Standard projection is always the fallback. This experiment adds " +
-                "bounded surface recovery and diagnostics, not AnyAuto's virtual-display " +
-                "or Shizuku backend. Music and steering-wheel controls are unchanged. " +
-                "Detailed CAR messages are available in Android logcat (AAYouTube-CAR).",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -1549,9 +1306,21 @@ fun ExperimentalVideoPage() {
 
 @Composable
 fun UpdatePage() {
+    val context = LocalContext.current
+    val controller = LiveUpdater.controllerOrNull
+    if (controller == null) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Updates are temporarily unavailable. Playback is unaffected.")
+            Button(onClick = { LiveUpdater.init(context) }) { Text("Retry") }
+        }
+        return
+    }
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
     dev.n2k02.updater.N2K02UpdatePage(
-        controller = LiveUpdater.controller,
+        controller = controller,
         installGuard = LiveUpdater.installGuard,
         modifier = Modifier.fillMaxSize(),
         experimentalEnabled = experimental,

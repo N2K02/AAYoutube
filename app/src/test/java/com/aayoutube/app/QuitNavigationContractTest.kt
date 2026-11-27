@@ -43,7 +43,7 @@ class QuitNavigationContractTest {
             .substringBefore("// ---------------------------------------------------------------------------- features")
         assertFalse(menu.contains("NavigationBar("))
         assertFalse(menu.contains("Triple(\"Quit\""))
-        assertTrue(menu.contains("listOf(Tab.Features, Tab.SleepTimer, Tab.ExperimentalVideo, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update)"))
+        assertTrue(menu.contains("listOf(Tab.Features, Tab.SleepTimer, Tab.NativeAudio, Tab.InstallationHelp, Tab.Lyrics, Tab.Info, Tab.Update)"))
         val header = phone.substringAfter("private fun AAYoutubePageHeader(").substringBefore("fun AppRoot(")
         assertFalse("no settings gear in the page header", header.contains("Icons.Filled.Settings"))
         assertFalse(header.contains("onSettings"))

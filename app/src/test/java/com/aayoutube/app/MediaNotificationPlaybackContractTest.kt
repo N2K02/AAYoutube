@@ -26,7 +26,7 @@ class MediaNotificationPlaybackContractTest {
 
     @Test fun playerStateResyncDoesNotOverrideExplicitPauseOrCarPlayback() {
         val js = source("app/src/main/assets/aay.js")
-        assertTrue(js.contains("function syncPlayerState()"))
+        assertTrue(js.contains("function syncPlayerState("))
         assertTrue(js.contains("if (st !== 2) return"))
         assertTrue(js.contains("#movie_player, .html5-video-player, .html5-video-container"))
         assertTrue(js.contains("PAUSED || bgWatch.explicitPause || bgWatch.held || isAd()"))
