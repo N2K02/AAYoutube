@@ -556,7 +556,7 @@ fun AppRoot(activity: MainActivity) {
                     ).wrapContentSize().zIndex(20f),
             ) {
                 val canLyrics = lyricsAvailable && playerMode == WebHost.PlayerMode.FULL
-                val updateStatus by LiveUpdater.controller.status.collectAsState()
+                val updateStatus = LiveUpdater.controllerOrNull?.status?.collectAsState()?.value
                 FloatingVideoBar(
                     playing = snap.playing,
                     playbackId = snap.id,
@@ -603,12 +603,12 @@ fun AppRoot(activity: MainActivity) {
                         // A text badge can cover a compact gear. Keep its indicator
                         // inside the fixed Settings slot without obscuring the icon.
                         if (phoneLandscape) {
-                            if (updateStatus.hasPendingUpdate()) {
+                            if (updateStatus?.hasPendingUpdate() == true) {
                                 androidx.compose.material3.Badge(
                                     modifier = Modifier.align(Alignment.TopEnd).padding(2.dp),
                                 )
                             }
-                        } else {
+                        } else if (updateStatus != null) {
                             dev.n2k02.updater.N2K02UpdateBadge(
                                 updateStatus,
                                 modifier = Modifier.align(Alignment.TopEnd),
@@ -1009,7 +1009,7 @@ internal fun CarSettingsPanel(state: SettingsPanelState, modifier: Modifier = Mo
 private fun AAYoutubeSettingsMenu(
     onSelect: (Tab) -> Unit,
 ) {
-    val updateStatus by LiveUpdater.controller.status.collectAsState()
+    val updateStatus = LiveUpdater.controllerOrNull?.status?.collectAsState()?.value
     Column(Modifier.fillMaxSize()) {
         // No bottom bar: system Back returns to the video, Quit is on the floating rail.
         Column(
@@ -1043,8 +1043,10 @@ private fun AAYoutubeSettingsMenu(
                     },
                     leadingContent = { Icon(destination.icon, contentDescription = null) },
                     trailingContent = {
-                        if (destination == Tab.Update)
-                            dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                        if (destination == Tab.Update) {
+                            if (updateStatus != null)
+                                dev.n2k02.updater.N2K02UpdateBadge(updateStatus)
+                        }
                     },
                     modifier = Modifier.fillMaxWidth().clickable { onSelect(destination) },
                 )
@@ -1304,9 +1306,21 @@ private fun NativeAudioPage() {
 
 @Composable
 fun UpdatePage() {
+    val context = LocalContext.current
+    val controller = LiveUpdater.controllerOrNull
+    if (controller == null) {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Updates are temporarily unavailable. Playback is unaffected.")
+            Button(onClick = { LiveUpdater.init(context) }) { Text("Retry") }
+        }
+        return
+    }
     val experimental by LiveUpdater.experimentalEnabled.collectAsState()
     dev.n2k02.updater.N2K02UpdatePage(
-        controller = LiveUpdater.controller,
+        controller = controller,
         installGuard = LiveUpdater.installGuard,
         modifier = Modifier.fillMaxSize(),
         experimentalEnabled = experimental,

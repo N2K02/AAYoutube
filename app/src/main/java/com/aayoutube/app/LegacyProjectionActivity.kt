@@ -332,6 +332,8 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
         AppLog.add("CAR", "Video CarActivity launching")
         setTheme(R.style.Theme_AAYoutube)
         super.onCreate(bundle)
+        // Retry optional updater initialization if process startup could not create it.
+        LiveUpdater.init(this)
         // The new car connection wins: stop any phone-only test display before
         // Android Auto claims the live video host.
         CarVirtualDisplayProbe.cancel()
@@ -684,7 +686,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     ).then(railDrag).zIndex(20f),
             ) {
                 val fitShown = VideoFitPolicy.buttonShown(filled = !mini && !carWatchPage, playing = playing.playing)
-                val updateStatus by LiveUpdater.controller.status.collectAsState()
+                val updateStatus = LiveUpdater.controllerOrNull?.status?.collectAsState()?.value
                 FloatingVideoBar(
                     playing = playing.playing,
                     playbackId = playing.id,
@@ -714,7 +716,7 @@ class LegacyProjectionActivity : CarActivity(), LifecycleOwner, ViewModelStoreOw
                     Box(Modifier.size(size.button), contentAlignment = Alignment.Center) {
                         BarIcon(Icons.Filled.Settings, "Settings", size,
                             onClick = { carSettings.openMenu(); controlsVersion++ })
-                        if (updateStatus.hasPendingUpdate())
+                        if (updateStatus?.hasPendingUpdate() == true)
                             androidx.compose.material3.Badge(Modifier.align(Alignment.TopEnd).padding(2.dp))
                     }
                     BarIcon(

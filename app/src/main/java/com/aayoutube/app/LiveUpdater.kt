@@ -5,7 +5,6 @@ import android.content.Context
 import android.os.Build
 import dev.n2k02.updater.UpdateConfig
 import dev.n2k02.updater.UpdateInstallGuard
-import dev.n2k02.updater.UpdateStatus
 import dev.n2k02.updater.UpdaterController
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.runtime.mutableStateOf
@@ -20,10 +19,16 @@ internal object LiveUpdater {
     val installGuard = UpdateInstallGuard { true }
 
     fun init(context: Context) {
-        app = context.applicationContext
         if (instance != null) return
-        experimentalEnabled.value = prefs().getBoolean("experimentalEnabled", false)
-        instance = create()
+        instance = UpdaterInitialization.ensure(
+            existing = instance,
+            create = {
+                app = context.applicationContext
+                experimentalEnabled.value = prefs().getBoolean("experimentalEnabled", false)
+                create()
+            },
+            onFailure = ::logInitializationFailure,
+        )
     }
 
     private fun prefs() = app.getSharedPreferences("app_updater", Context.MODE_PRIVATE)
@@ -34,29 +39,40 @@ internal object LiveUpdater {
         return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
     }
 
-    private fun create() = UpdaterController(
+    private fun create(enabled: Boolean = experimentalEnabled.value) = UpdaterController(
         context = app,
         config = UpdateConfig(
             repository = "N2K02/AAYoutube",
             packageName = app.packageName,
             installedVersionCode = versionCode(),
-            experimentalEnabled = experimentalEnabled.value,
+            experimentalEnabled = enabled,
         ),
         offerPreferences = prefs(),
     )
 
-    val controller: UpdaterController get() = requireNotNull(instance)
+    private fun logInitializationFailure(error: Exception) {
+        AppLog.add("UPDATER", "Controller initialization failed: " + error.javaClass.simpleName)
+    }
+
+    // Updater availability must never be a prerequisite for playback or UI rendering.
+    val controllerOrNull: UpdaterController? get() = instance
 
     fun setExperimentalEnabled(enabled: Boolean) {
         if (enabled == experimentalEnabled.value) return
-        controller.cancel()
+        val previous = instance ?: return
+        val next = UpdaterInitialization.ensure<UpdaterController>(
+            existing = null,
+            create = { create(enabled) },
+            onFailure = ::logInitializationFailure,
+        ) ?: return
+        previous.cancel()
         prefs().edit().putBoolean("experimentalEnabled", enabled).apply()
         experimentalEnabled.value = enabled
-        instance = create()
-        controller.check(manual = true)
+        instance = next
+        next.check(manual = true)
     }
 
     fun onResume(activity: Activity) {
-        controller.onHostResume(activity, installGuard)
+        instance?.onHostResume(activity, installGuard)
     }
 }

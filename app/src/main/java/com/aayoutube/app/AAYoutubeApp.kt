@@ -8,6 +8,8 @@ class AAYoutubeApp : Application() {
         // One process, as in AABrowser: screens, WebView, car projection and media service.
         // The WebViews themselves are still created lazily, on first use.
         AppLog.init(this)
+        // Android Auto can cold-start the process without ever creating MainActivity.
+        LiveUpdater.init(this)
         SleepTimer.init(this)
         Features.init(this)
         LyricsPrefs.init(this)
